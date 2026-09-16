@@ -98,12 +98,12 @@ The expected label is `Mobile Webcam`.
 
 ## Wi-Fi usage
 
-1. Open the Android app and press **Wi-Fiで接続**.
+1. Open the Android app and press **Connect Wi-Fi**.
 2. The phone shows one or more local IPv4 endpoints and a six-digit PIN.
 3. Open **Mobile Webcam** on Linux, select **Wi-Fi / LAN**, and enter the phone
    IP and PIN.
-4. Keep decode mode at **自動** unless you are diagnosing a backend.
-5. Press **カメラブリッジ開始**, then start the camera on the phone.
+4. Keep decode mode at **Auto** unless you are diagnosing a backend.
+5. Press **Start bridge**, then start the camera on the phone.
 
 The CLI equivalent is:
 
@@ -129,7 +129,7 @@ List devices without sending AOA vendor requests:
 ```
 
 If the phone is still in its manufacturer USB mode, select it in the GUI and
-press **AOAへ切替**, or use the CLI with its exact VID:PID:
+press **Switch to AOA**, or use the CLI with its exact VID:PID:
 
 ```fish
 sudo ./build/host/amb-aoa-probe --device 0fce:XXXX --switch

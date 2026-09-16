@@ -70,33 +70,33 @@ class MainActivity : Activity() {
             setTextIsSelectable(true)
         }
         val usbMode = Button(this).apply {
-            text = "USBで接続"
+            text = "Connect USB"
             setOnClickListener { startUsbMode() }
         }
         val lanMode = Button(this).apply {
-            text = "Wi-Fiで接続"
+            text = "Connect Wi-Fi"
             setOnClickListener { startLanMode() }
         }
         val disconnect = Button(this).apply {
-            text = "接続を停止"
+            text = "Disconnect"
             setOnClickListener {
                 stopConnections()
-                show("接続を停止しました")
+                show("Disconnected")
             }
         }
         val cameras = Button(this).apply {
-            text = "カメラ情報"
+            text = "Camera info"
             setOnClickListener { showCameras() }
         }
         val startCamera = Button(this).apply {
-            text = "カメラ開始 720p30"
+            text = "Start camera 720p30"
             setOnClickListener { startCamera720p() }
         }
         val stopCamera = Button(this).apply {
-            text = "カメラ停止"
+            text = "Stop camera"
             setOnClickListener {
                 stopCamera()
-                showConnectionStatus("カメラを停止しました")
+                showConnectionStatus("Camera stopped")
             }
         }
         setContentView(LinearLayout(this).apply {
@@ -147,7 +147,7 @@ class MainActivity : Activity() {
         lanServer = null
         closeSession()
         connectionMode = ConnectionMode.USB
-        show("USB: Android Open Accessory を待っています…")
+        show("USB: waiting for Android Open Accessory…")
         discoverUsb()
     }
 
@@ -176,9 +176,9 @@ class MainActivity : Activity() {
                         closeSession()
                         session = lanSession
                         show(
-                            "Wi-Fi: PC接続済み\n" +
+                            "Wi-Fi: PC connected\n" +
                                 server.endpoints().joinToString() +
-                                "\nPIN ${server.pin}\nカメラ開始を押してください",
+                                "\nPIN ${server.pin}\nPress Start camera",
                         )
                     }
                 }
@@ -190,15 +190,15 @@ class MainActivity : Activity() {
         runCatching { server.start() }
             .onFailure {
                 lanServer = null
-                show("Wi-Fi待受を開始できません: ${it.message}")
+                show("Could not start Wi-Fi server: ${it.message}")
             }
     }
 
     private fun showLanWaiting(server: LanServer, detail: String? = null) {
-        val endpoints = server.endpoints().ifEmpty { listOf("Wi-Fi IPv4を確認してください") }
+        val endpoints = server.endpoints().ifEmpty { listOf("Check the phone Wi-Fi IPv4 address") }
         show(
             buildString {
-                append("Wi-Fi: PCから接続してください\n")
+                append("Wi-Fi: connect from the PC\n")
                 append(endpoints.joinToString("\n"))
                 append("\nPIN ").append(server.pin)
                 if (!detail.isNullOrBlank()) append("\n").append(detail)
@@ -213,7 +213,7 @@ class MainActivity : Activity() {
         val accessory = usb.accessoryList?.firstOrNull()
         if (accessory == null) {
             usbPermissionPending = false
-            show("USB: AOA accessory を待っています…")
+            show("USB: waiting for AOA accessory…")
             scheduleRediscover()
             return
         }
@@ -232,7 +232,7 @@ class MainActivity : Activity() {
             usbPermissionPending = true
             usb.requestPermission(accessory, permissionIntent)
         }
-        show("USB: accessory permission を待っています…")
+        show("USB: waiting for accessory permission…")
     }
 
     private fun scheduleRediscover() {
@@ -247,7 +247,7 @@ class MainActivity : Activity() {
         closeSession()
         val pfd = usb.openAccessory(accessory)
         if (pfd == null) {
-            show("USB accessory を開けません。再試行します…")
+            show("Could not open USB accessory. Retrying…")
             scheduleRediscover()
             return
         }
@@ -259,7 +259,7 @@ class MainActivity : Activity() {
             onProgress = { count ->
                 runOnUiThread {
                     if (session === active) {
-                        show("USB接続済み · control=$count · dropped=${active.droppedVideoFrames()}\nカメラ開始を押してください")
+                        show("USB connected · control=$count · dropped=${active.droppedVideoFrames()}\nPress Start camera")
                     }
                 }
             },
@@ -267,7 +267,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (session === active) {
                         closeSession()
-                        show("USB切断: $error\n再接続を待っています…")
+                        show("USB disconnected: $error\nWaiting to reconnect…")
                         scheduleRediscover()
                     }
                 }
@@ -275,7 +275,7 @@ class MainActivity : Activity() {
         )
         session = active
         active.start()
-        show("USB接続済み · ${accessory.manufacturer} ${accessory.model}\nカメラ開始を押してください")
+        show("USB connected · ${accessory.manufacturer} ${accessory.model}\nPress Start camera")
     }
 
     private fun showCameras() {
@@ -292,12 +292,12 @@ class MainActivity : Activity() {
                 "id=${camera.id} facing=$facing\nMediaCodec: $sizes\nFPS: $fps"
             }
         }.getOrElse { "Camera query failed: ${it.message}" }
-        show(text.ifBlank { "Camera2 device がありません" })
+        show(text.ifBlank { "No Camera2 device found" })
     }
 
     private fun startCamera720p() {
         val activeSession = session ?: run {
-            showConnectionStatus("先にUSBまたはWi-FiでPCへ接続してください")
+            showConnectionStatus("Connect to the PC by USB or Wi-Fi first")
             return
         }
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -315,7 +315,7 @@ class MainActivity : Activity() {
         val camera = cameras.firstOrNull { it.lensFacing == CameraCharacteristics.LENS_FACING_BACK }
             ?: cameras.firstOrNull()
         if (camera == null) {
-            show("Camera2 camera がありません")
+            show("No Camera2 camera found")
             return
         }
 
@@ -323,7 +323,7 @@ class MainActivity : Activity() {
         bridge = CameraBridgeController(
             context = this,
             session = activeSession,
-            onStatus = { message -> runOnUiThread { showConnectionStatus("配信中\n$message") } },
+            onStatus = { message -> runOnUiThread { showConnectionStatus("Streaming\n$message") } },
             onError = { message ->
                 runOnUiThread {
                     if (cameraBridge === bridge) {
