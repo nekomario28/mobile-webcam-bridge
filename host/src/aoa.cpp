@@ -135,14 +135,16 @@ bool request_accessory_mode(libusb_device* dev, std::string& error) {
         return false;
     }
 
-    // IDs 0..5 are defined by the AOA 1.0 protocol.
+    // IDs 0..5 are defined by the AOA 1.0 protocol. Keep this transport
+    // identity stable across product rebrands so already-installed Android
+    // builds can still match the accessory filter and receive an update.
     const std::array<std::string, 6> strings = {
-        "Mobile Webcam",
-        "Mobile Webcam Host",
-        "Android camera to Linux webcam bridge",
+        "Android Media Bridge",
+        "AMB Host",
+        "Low-latency Android to Linux media bridge",
         "0",
-        "https://github.com/nekomario28",
-        "mobile-webcam",
+        "https://github.com/nekomario28/android-media-bridge",
+        "amb-g0",
     };
     for (std::uint16_t i = 0; i < strings.size(); ++i) {
         if (!send_string(handle, i, strings[i], error)) {

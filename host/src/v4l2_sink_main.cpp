@@ -746,6 +746,10 @@ int main(int argc, char** argv) {
                           << " device=" << options.device << "\n";
             }
     }
+    // AccessoryDevice owns a libusb handle. Close it before tearing down the
+    // context; otherwise timeout/error exits can destroy the handle after
+    // libusb_exit() and crash during process cleanup.
+    accessory.reset();
     if (usb_context != nullptr) libusb_exit(usb_context);
     return result;
 }
