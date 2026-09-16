@@ -1,0 +1,173 @@
+name: Xperia hardware gates
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Hardware action to run on the locally attached Xperia
+        required: true
+        type: choice
+        options:
+          - enumerate
+          - g0-switch
+          - g0.5-smoke
+          - g1-dump
+        default: enumerate
+      smoke_iterations:
+        description: G0.5 PING/PONG count
+        required: false
+        default: '1000'
+      g1_frames:
+        description: G1 H.264 access units to capture
+        required: false
+        default: '300'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-webcam-hardware
+  cancel-in-progress: false
+
+jobs:
+  xperia:
+    runs-on: [self-hosted, Linux, X64, mobile-webcam]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Assert exact clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+
+      - name: Build host tools against real libusb
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v cmake
+          command -v c++
+          command -v pkg-config
+          command -v lsusb
+          pkg-config --exists libusb-1.0
+          cmake -S host -B build/host -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/host --parallel
+          ctest --test-dir build/host --output-on-failure
+
+      - name: USB policy preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '--- lsusb ---'
+          lsusb
+          if lsusb | awk '{print tolower($6)}' | grep -qx '18d1:2d01'; then
+            echo 'FAIL: AOA+ADB PID 18d1:2d01 is present. This project requires USB debugging OFF.'
+            exit 23
+          fi
+          echo 'usb_debugging_policy=PASS(no 18d1:2d01 observed)'
+
+      - name: Enumerate with AMB probe
+        if: inputs.action == 'enumerate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ./build/host/amb-aoa-probe --list; then
+            exit 0
+          fi
+          sudo -n ./build/host/amb-aoa-probe --list
+
+      - name: G0 switch to accessory-only AOA
+        if: inputs.action == 'g0-switch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if lsusb | awk '{print tolower($6)}' | grep -qx '18d1:2d00'; then
+            echo '[PASS G0 HOST] already in accessory-only AOA: 18d1:2d00'
+            exit 0
+          fi
+
+          mapfile -t sony < <(lsusb | awk '{id=tolower($6); if (id ~ /^0fce:/) print id}')
+          if (( ${#sony[@]} != 1 )); then
+            echo "Expected exactly one pre-AOA Sony device; found ${#sony[@]}. Refusing mutation."
+            exit 22
+          fi
+          id="${sony[0]}"
+          echo "xperia_candidate=$id"
+
+          run_probe() {
+            if "$@"; then return 0; fi
+            sudo -n "$@"
+          }
+          run_probe ./build/host/amb-aoa-probe --device "$id"
+          run_probe ./build/host/amb-aoa-probe --device "$id" --switch
+
+          found=''
+          for _ in {1..40}; do
+            sleep 0.25
+            found="$(lsusb | awk '{id=tolower($6); if (id=="18d1:2d00" || id=="18d1:2d01") print id}' | head -n1)"
+            [[ -n "$found" ]] && break
+          done
+          lsusb
+          if [[ "$found" == '18d1:2d00' ]]; then
+            echo '[PASS G0 HOST] 18d1:2d00'
+          elif [[ "$found" == '18d1:2d01' ]]; then
+            echo '[FAIL G0 POLICY] AOA+ADB appeared'
+            exit 23
+          else
+            echo '[FAIL G0 HOST] no AOA re-enumeration observed'
+            exit 24
+          fi
+
+      - name: G0.5 framed bulk smoke test
+        if: inputs.action == 'g0.5-smoke'
+        shell: bash
+        env:
+          ITERATIONS: ${{ inputs.smoke_iterations }}
+        run: |
+          set -euo pipefail
+          [[ "$ITERATIONS" =~ ^[1-9][0-9]{0,5}$ ]] || { echo 'invalid smoke_iterations'; exit 2; }
+          lsusb | awk '{print tolower($6)}' | grep -qx '18d1:2d00' || {
+            echo 'G0.5 requires accessory-only AOA 18d1:2d00 and the Android app to have opened the accessory.'
+            exit 25
+          }
+          if ./build/host/amb-aoa-probe --smoke "$ITERATIONS"; then
+            exit 0
+          fi
+          sudo -n ./build/host/amb-aoa-probe --smoke "$ITERATIONS"
+
+      - name: G1 capture raw Annex-B stream
+        if: inputs.action == 'g1-dump'
+        shell: bash
+        env:
+          FRAMES: ${{ inputs.g1_frames }}
+        run: |
+          set -euo pipefail
+          [[ "$FRAMES" =~ ^[1-9][0-9]{0,5}$ ]] || { echo 'invalid g1_frames'; exit 2; }
+          lsusb | awk '{print tolower($6)}' | grep -qx '18d1:2d00' || {
+            echo 'G1 requires accessory-only AOA 18d1:2d00.'
+            exit 25
+          }
+          mkdir -p evidence
+          if ./build/host/amb-video-dump --output evidence/capture.h264 --frames "$FRAMES"; then
+            :
+          else
+            sudo -n ./build/host/amb-video-dump --output evidence/capture.h264 --frames "$FRAMES"
+          fi
+          test -s evidence/capture.h264
+          sha256sum evidence/capture.h264
+          command -v ffprobe >/dev/null && ffprobe -v error -show_streams evidence/capture.h264 || true
+
+      - name: Upload G1 capture
+        if: inputs.action == 'g1-dump' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xperia-g1-capture
+          path: evidence/capture.h264
+          if-no-files-found: error
+          retention-days: 7

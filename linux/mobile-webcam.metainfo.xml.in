@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.nekomario.mobile-webcam</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="github.com/nekomario28">
+    <name>Mobile Webcam contributors</name>
+  </developer>
+  <name>Mobile Webcam</name>
+  <summary>Use an Android phone as a Linux webcam over USB or Wi-Fi</summary>
+  <description>
+    <p>
+      Mobile Webcam streams Camera2 H.264 video over Android Open Accessory USB
+      or a paired local Wi-Fi connection and exposes it as a Linux V4L2 camera.
+    </p>
+    <p>
+      The desktop interface controls transport, hardware decode preference,
+      rotation, and horizontal or vertical flipping while camera applications
+      remain open.
+    </p>
+  </description>
+  <launchable type="desktop-id">dev.nekomario.mobile-webcam.desktop</launchable>
+  <provides>
+    <binary>mobile-webcam</binary>
+  </provides>
+  <url type="homepage">https://github.com/nekomario28</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="@PROJECT_VERSION@" date="2026-09-17" />
+  </releases>
+</component>

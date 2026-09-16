@@ -1,0 +1,7 @@
+# Android Open Accessory devices accepted by the host implementation.
+# Keep USB and the virtual camera usable by the active desktop session.
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d00", MODE="0660", GROUP="video", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d01", MODE="0660", GROUP="video", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d04", MODE="0660", GROUP="video", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d05", MODE="0660", GROUP="video", TAG+="uaccess"
+SUBSYSTEM=="video4linux", KERNEL=="video10", ATTR{name}=="Mobile Webcam", MODE="0660", GROUP="video", TAG+="uaccess"

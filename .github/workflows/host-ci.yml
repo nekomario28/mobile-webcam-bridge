@@ -1,0 +1,63 @@
+name: host-ci
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: host-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: [self-hosted, Linux, X64, mobile-webcam]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Assert exact clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+      - name: Verify host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v cmake
+          command -v c++
+          command -v pkg-config
+          pkg-config --modversion libusb-1.0
+          pkg-config --modversion libavcodec libavutil libswscale
+      - name: Configure
+        run: cmake -S host -B build/host -DCMAKE_BUILD_TYPE=Release -DAMB_BUILD_GUI=ON
+      - name: Build
+        run: cmake --build build/host --parallel
+      - name: Unit tests
+        run: ctest --test-dir build/host --output-on-failure
+      - name: CLI smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./build/host/amb-aoa-probe --help >/dev/null
+          ./build/host/amb-video-dump --help >/dev/null
+          ./build/host/amb-v4l2-sink --help >/dev/null
+      - name: Upload host tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-webcam-host-tools-linux-x86_64
+          path: |
+            build/host/amb-aoa-probe
+            build/host/amb-video-dump
+            build/host/amb-v4l2-sink
+            build/host/mobile-webcam
+          if-no-files-found: error

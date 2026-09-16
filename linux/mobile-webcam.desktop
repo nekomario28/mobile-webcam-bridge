@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Mobile Webcam
+Name[ja]=Mobile Webcam
+Comment=Use an Android phone as a Linux webcam over USB or Wi-Fi
+Comment[ja]=AndroidスマートフォンをUSBまたはWi-Fi経由でLinuxのWebカメラとして使用
+Exec=mobile-webcam
+Icon=mobile-webcam
+Terminal=false
+Categories=AudioVideo;Video;
