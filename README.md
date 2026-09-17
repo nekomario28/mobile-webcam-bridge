@@ -23,70 +23,58 @@ uses English when no Japanese locale is selected.
 
 ## Quick start
 
-1. Download the signed APK and Linux AppImage from the project's
-   [Releases](https://github.com/nekomario28/mobile-webcam-bridge/releases), or
-   build them from source.
-2. Install the Linux packages for your distribution below.
-3. If `/dev/video10` does not exist, or the Android accessory cannot be
-   opened without sudo, install the USB rules and virtual-camera integration
-   once from this checkout:
+### Use a release
+
+1. Install the APK on Android and download the x86_64 AppImage from the
+   project's [Releases](https://github.com/nekomario28/mobile-webcam-bridge/releases).
+2. Install the two Linux runtime requirements: `libusb-1.0` and the
+   `v4l2loopback` kernel module. Package names for common distributions are:
 
    ```sh
-   sudo ./linux/install-host-integration.sh
-   sudo modprobe v4l2loopback
+   # Arch / CachyOS
+   sudo pacman -S --needed libusb v4l2loopback-dkms
+
+   # Ubuntu / Debian
+   sudo apt update
+   sudo apt install libusb-1.0-0 v4l2loopback-dkms
+
+   # Fedora: run after enabling RPM Fusion Free
+   sudo dnf install libusb1 v4l2loopback
    ```
 
-   You can skip this step when `v4l2loopback` and your chosen V4L2 device are
-   already configured. The script is a one-time system setup, not a step to
-   repeat every time the AppImage starts.
+   Fedora needs [RPM Fusion Free](https://rpmfusion.org/Configuration) for
+   `v4l2loopback`. Other distributions need the equivalent runtime packages.
 
-4. Open the APK on Android and start the AppImage on Linux. Choose **USB** or
-   **Wi-Fi** in the Linux GUI, then follow the matching section below.
+3. Make the AppImage executable and start it:
 
-The AppImage includes the bridge application. The kernel module and udev rules
-still come from the distribution and the integration script.
+   ```sh
+   appimage=Mobile_Webcam-0.1.1-x86_64.AppImage
+   chmod +x "$appimage"
+   ./"$appimage"
+   ```
 
-### CachyOS / Arch
+4. Choose **USB** or **Wi-Fi** in the Linux GUI, then start the camera on
+   Android. The AppImage includes the bridge, decoder, and GUI; it does not
+   include the Linux kernel module.
 
-```sh
-sudo pacman -S --needed base-devel cmake pkgconf libusb ffmpeg qt6-base \
-    v4l2loopback-dkms v4l2loopback-utils
-```
-
-### Ubuntu / Debian
-
-```sh
-sudo apt update
-sudo apt install build-essential cmake pkg-config libusb-1.0-0-dev \
-    ffmpeg libavcodec-dev libavutil-dev libswscale-dev qt6-base-dev \
-    v4l2loopback-dkms v4l2loopback-utils
-```
-
-On Ubuntu, enable the repository component that provides `qt6-base-dev` and
-`v4l2loopback-dkms` if your release does not include them by default. Debian
-package names are the same for the packages listed above.
-
-### Fedora
+If `/dev/video10` is missing, or USB access fails without sudo, clone this
+repository and run the following once. Skip it when an existing `v4l2loopback`
+device is already usable; select that `/dev/videoX` in the GUI if necessary.
 
 ```sh
-sudo dnf group install "Development Tools"
-sudo dnf install cmake pkgconf-pkg-config libusb1-devel ffmpeg-free \
-    ffmpeg-free-devel qt6-qtbase-devel v4l-utils
+sudo ./linux/install-host-integration.sh
+sudo modprobe v4l2loopback
 ```
 
-Fedora's base repositories do not provide the kernel module used by this
-project. Enable the matching [RPM Fusion Free repository](https://rpmfusion.org/Configuration),
-then install its `v4l2loopback` package:
-
-```sh
-sudo dnf install v4l2loopback
-```
-
-Other distributions need the equivalent of CMake 3.20+, a C++20 compiler,
-pkg-config, libusb-1.0, FFmpeg `libavcodec`/`libavutil`/`libswscale`, Qt 6
-Widgets 6.5+, and the `v4l2loopback` kernel module.
+The script is a one-time permission and device-name setup. It is not needed
+each time the AppImage starts.
 
 ### Build from source
+
+Install the equivalent development packages for your distribution: CMake 3.20+,
+a C++20 compiler, pkg-config, libusb-1.0 development files, FFmpeg
+`libavcodec`/`libavutil`/`libswscale` development files, Qt 6 Widgets 6.5+,
+and `v4l2loopback`. Then run:
 
 ```sh
 cmake -S host -B build/host -DCMAKE_BUILD_TYPE=Release -DAMB_BUILD_GUI=ON
@@ -95,7 +83,7 @@ ctest --test-dir build/host --output-on-failure
 ./linux/build-appimage.sh
 ```
 
-Run the generated AppImage with `./dist/Mobile_Webcam-<version>-x86_64.AppImage`.
+The generated file is `dist/Mobile_Webcam-<version>-x86_64.AppImage`.
 
 ## USB
 
