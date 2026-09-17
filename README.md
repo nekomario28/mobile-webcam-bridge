@@ -48,9 +48,8 @@ uses English when no Japanese locale is selected.
 3. Make the AppImage executable and start it:
 
    ```sh
-   appimage=Mobile_Webcam-0.1.1-x86_64.AppImage
-   chmod +x "$appimage"
-   ./"$appimage"
+   chmod +x Mobile_Webcam-0.1.1-x86_64.AppImage
+   ./Mobile_Webcam-0.1.1-x86_64.AppImage
    ```
 
 4. Choose **USB** or **Wi-Fi** in the Linux GUI, then start the camera on
