@@ -42,14 +42,15 @@ Fresh host verification on 2026-09-17:
 - `ctest`: 4/4 PASS (`wire`, `yuyv`, `image-transform`, `tcp`).
 - The TCP test covers valid PIN handshake, wrong-PIN rejection, framed PING,
   and an IDR request over localhost.
+- Real Xperia Wi-Fi test passes: `192.168.1.12:48527` pairing, H.264 stream,
+  VAAPI decode, and 60 V4L2 frames with zero discontinuities.
 - On the current Radeon Linux host, `--hw-decode auto` initializes `vaapi`
   before the intentionally unreachable LAN endpoint fails.
 
-Android compilation/device validation for the new Wi-Fi path is still
-**UNVERIFIED** on this checkout because no Android SDK is configured locally.
-The existing Gradle wrapper is ready to use once an SDK is installed. The old
-USB evidence under `docs/evidence/` is retained as predecessor evidence; it is
-not presented as proof of the new Wi-Fi code or this exact repository state.
+Android compilation and the new Wi-Fi path are verified on this checkout. The
+long duration gate and iOS sender remain future work. The old USB evidence under
+`docs/evidence/` is retained as predecessor evidence; it is not presented as
+proof of this exact repository state.
 
 ## Why this architecture
 
@@ -158,8 +159,9 @@ which keeps diagnostics clear.
 
 The current Radeon host exposes `/dev/dri/renderD*`, FFmpeg lists VAAPI, and the
 project decoder reports `decoder=vaapi` during the local initialization probe.
-That proves decoder/device initialization on this host; a real Android Wi-Fi
-stream is still required to prove sustained hardware decoding end to end.
+The real Xperia Wi-Fi test also produced 60 frames through this VAAPI path. A
+long duration throughput and reconnect test is still required before claiming
+production-level network robustness.
 
 ## AppImage
 
@@ -176,11 +178,9 @@ Release signing and GitHub release setup are documented in `docs/RELEASE.md`.
 
 The shortest next device pass is:
 
-1. Configure Android SDK/JDK 21 and run `./gradlew :app:assembleDebug`.
-2. Install the APK on the Xperia.
-3. Validate Wi-Fi PIN pairing -> VIDEO_CONFIG -> first IDR -> continuous video.
-4. Repeat USB accessory-only with the new Mobile Webcam AOA identity.
-5. Run OBS/Chromium/Firefox/Discord against `/dev/videoX` only after the stream
+1. Repeat USB accessory-only with the new Mobile Webcam AOA identity.
+2. Run a longer Wi-Fi throughput and reconnect test.
+3. Run OBS/Chromium/Firefox/Discord against `/dev/videoX` only after the stream
    itself is stable.
 
 See `docs/architecture.md`, `docs/gates.md`, and `docs/provenance.md` for the
