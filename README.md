@@ -1,6 +1,6 @@
 # Mobile Webcam
 
-![Mobile Webcam Linux GUI with an Xperia connected over USB](docs/screenshots/mobile-webcam-linux-gui.png)
+![Mobile Webcam Linux GUI in English with an Xperia connected over USB](docs/screenshots/mobile-webcam-linux-gui-en.png)
 
 *Current AppImage screenshot: Xperia connected through USB AOA.*
 
@@ -23,30 +23,72 @@ uses English when no Japanese locale is selected.
 
 ## Quick start
 
-Install the Linux dependencies on CachyOS/Arch:
+1. Download the signed APK and Linux AppImage from the project's
+   [Releases](https://github.com/nekomario28/mobile-webcam-bridge/releases), or
+   build them from source.
+2. Install the Linux packages for your distribution below.
+3. From this checkout, install the USB rules and virtual-camera integration:
 
-```fish
+   ```sh
+   sudo ./linux/install-host-integration.sh
+   ```
+
+4. Open the APK on Android and start the AppImage on Linux. Choose **USB** or
+   **Wi-Fi** in the Linux GUI, then follow the matching section below.
+
+The AppImage includes the bridge application. The kernel module and udev rules
+still come from the distribution and the integration script.
+
+### CachyOS / Arch
+
+```sh
 sudo pacman -S --needed base-devel cmake pkgconf libusb ffmpeg qt6-base \
     v4l2loopback-dkms v4l2loopback-utils
 ```
 
-Build the host and install its USB/V4L2 integration:
+### Ubuntu / Debian
 
-```fish
+```sh
+sudo apt update
+sudo apt install build-essential cmake pkg-config libusb-1.0-0-dev \
+    ffmpeg libavcodec-dev libavutil-dev libswscale-dev qt6-base-dev \
+    v4l2loopback-dkms v4l2loopback-utils
+```
+
+On Ubuntu, enable the repository component that provides `qt6-base-dev` and
+`v4l2loopback-dkms` if your release does not include them by default. Debian
+package names are the same for the packages listed above.
+
+### Fedora
+
+```sh
+sudo dnf group install "Development Tools"
+sudo dnf install cmake pkgconf-pkg-config libusb1-devel ffmpeg-free \
+    ffmpeg-free-devel qt6-qtbase-devel v4l-utils
+```
+
+Fedora's base repositories do not provide the kernel module used by this
+project. Enable the matching [RPM Fusion Free repository](https://rpmfusion.org/Configuration),
+then install its `v4l2loopback` package:
+
+```sh
+sudo dnf install v4l2loopback
+```
+
+Other distributions need the equivalent of CMake 3.20+, a C++20 compiler,
+pkg-config, libusb-1.0, FFmpeg `libavcodec`/`libavutil`/`libswscale`, Qt 6
+Widgets 6.5+, and the `v4l2loopback` kernel module.
+
+### Build from source
+
+```sh
 cmake -S host -B build/host -DCMAKE_BUILD_TYPE=Release -DAMB_BUILD_GUI=ON
 cmake --build build/host --parallel
 ctest --test-dir build/host --output-on-failure
-sudo ./linux/install-host-integration.sh
-```
-
-Build the Android app with Gradle, or download a signed APK from the project's
-[Releases](https://github.com/nekomario28/mobile-webcam-bridge/releases). The
-Linux AppImage can be built with:
-
-```fish
 ./linux/build-appimage.sh
-./dist/Mobile_Webcam-x86_64.AppImage
 ```
+
+Run the generated AppImage with `./dist/Mobile_Webcam-<version>-x86_64.AppImage`.
 
 ## USB
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 - 2026-09-17
 
 - Use the system language for a simple English/Japanese interface.
 - Remove the Wi-Fi PIN; LAN connections now use a minimal AMB1 handshake.
