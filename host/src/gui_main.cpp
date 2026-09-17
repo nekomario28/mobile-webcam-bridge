@@ -10,6 +10,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
@@ -27,26 +28,26 @@ namespace {
 class BridgeWindow final : public QWidget {
   public:
     BridgeWindow() {
-        setWindowTitle("Mobile Webcam");
+        setWindowTitle(ui("Mobile Webcam", "Mobile Webcam"));
         resize(680, 360);
 
-        auto* title = new QLabel("Mobile Webcam", this);
+        auto* title = new QLabel(ui("Mobile Webcam", "Mobile Webcam"), this);
         QFont title_font = title->font();
         title_font.setPointSize(title_font.pointSize() + 5);
         title_font.setBold(true);
         title->setFont(title_font);
 
-        status_ = new QLabel("Checking USB devices…", this);
+        status_ = new QLabel(ui("Checking USB devices…", "USB機器を確認しています…"), this);
         status_->setWordWrap(true);
 
         transport_ = new QComboBox(this);
-        transport_->addItem("USB", "usb");
-        transport_->addItem("Wi-Fi / LAN", "lan");
+        transport_->addItem(ui("USB", "USB"), "usb");
+        transport_->addItem(ui("Wi-Fi / LAN", "Wi-Fi / LAN"), "lan");
 
         devices_ = new QComboBox(this);
         devices_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        refresh_ = new QPushButton("Refresh", this);
-        switch_ = new QPushButton("Switch to AOA", this);
+        refresh_ = new QPushButton(ui("Refresh", "再読込"), this);
+        switch_ = new QPushButton(ui("Switch to AOA", "AOAへ切替"), this);
         auto* usb_buttons = new QHBoxLayout;
         usb_buttons->addWidget(refresh_);
         usb_buttons->addWidget(switch_);
@@ -54,15 +55,13 @@ class BridgeWindow final : public QWidget {
         usb_buttons_container_->setLayout(usb_buttons);
 
         lan_host_ = new QLineEdit(this);
-        lan_host_->setPlaceholderText("Phone IP (e.g. 192.168.1.42)");
-        lan_pin_ = new QLineEdit(this);
-        lan_pin_->setPlaceholderText("6-digit PIN");
-        lan_pin_->setMaxLength(6);
+        lan_host_->setPlaceholderText(ui("Phone IP (e.g. 192.168.1.42)",
+                                         "Phone IP (例: 192.168.1.42)"));
 
         hw_decode_ = new QComboBox(this);
-        hw_decode_->addItem("Auto", "auto");
-        hw_decode_->addItem("VAAPI", "vaapi");
-        hw_decode_->addItem("Software", "off");
+        hw_decode_->addItem(ui("Auto", "自動"), "auto");
+        hw_decode_->addItem(ui("VAAPI", "VAAPI"), "vaapi");
+        hw_decode_->addItem(ui("Software", "ソフトウェア"), "off");
 
         output_ = new QLineEdit("/dev/video10", this);
         rotation_group_ = new QButtonGroup(this);
@@ -76,17 +75,17 @@ class BridgeWindow final : public QWidget {
             rotation_buttons->addWidget(button);
             if (angle == 0) button->setChecked(true);
         }
-        mirror_ = new QCheckBox("Horizontal", this);
+        mirror_ = new QCheckBox(ui("Horizontal", "左右"), this);
         mirror_->setChecked(true);
-        vertical_flip_ = new QCheckBox("Vertical", this);
+        vertical_flip_ = new QCheckBox(ui("Vertical", "上下"), this);
         auto* flip_controls = new QHBoxLayout;
         flip_controls->addWidget(mirror_);
         flip_controls->addWidget(vertical_flip_);
         flip_controls->addStretch();
 
-        start_ = new QPushButton("Start bridge", this);
+        start_ = new QPushButton(ui("Start bridge", "カメラブリッジ開始"), this);
         start_->setEnabled(false);
-        stop_ = new QPushButton("Stop", this);
+        stop_ = new QPushButton(ui("Stop", "停止"), this);
         stop_->setEnabled(false);
         auto* bridge_buttons = new QHBoxLayout;
         bridge_buttons->addWidget(start_);
@@ -97,19 +96,18 @@ class BridgeWindow final : public QWidget {
         log_->setMaximumBlockCount(1000);
         log_->setVisible(false);
         log_toggle_ = new QToolButton(this);
-        log_toggle_->setText("Details ▾");
+        log_toggle_->setText(ui("Details ▾", "詳細ログ ▾"));
         log_toggle_->setCheckable(true);
 
         form_ = new QFormLayout;
-        form_->addRow("Connection", transport_);
-        form_->addRow("USB device", devices_);
+        form_->addRow(ui("Connection", "接続"), transport_);
+        form_->addRow(ui("USB device", "USB機器"), devices_);
         form_->addRow("", usb_buttons_container_);
-        form_->addRow("Phone IP", lan_host_);
-        form_->addRow("PIN", lan_pin_);
-        form_->addRow("Decode", hw_decode_);
-        form_->addRow("Virtual camera", output_);
-        form_->addRow("Rotation", rotation_buttons);
-        form_->addRow("Flip", flip_controls);
+        form_->addRow(ui("Phone IP", "Phone IP"), lan_host_);
+        form_->addRow(ui("Decode", "デコード"), hw_decode_);
+        form_->addRow(ui("Virtual camera", "仮想カメラ"), output_);
+        form_->addRow(ui("Rotation", "回転"), rotation_buttons);
+        form_->addRow(ui("Flip", "反転"), flip_controls);
 
         auto* layout = new QVBoxLayout(this);
         layout->addWidget(title);
@@ -128,9 +126,6 @@ class BridgeWindow final : public QWidget {
             updateConnectionUi();
         });
         connect(lan_host_, &QLineEdit::textChanged, this, [this] {
-            setBridgeRunning(bridge_.state() != QProcess::NotRunning);
-        });
-        connect(lan_pin_, &QLineEdit::textChanged, this, [this] {
             setBridgeRunning(bridge_.state() != QProcess::NotRunning);
         });
         connect(devices_, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -152,7 +147,8 @@ class BridgeWindow final : public QWidget {
         connect(vertical_flip_, &QCheckBox::toggled, this, [this] { sendTransform(); });
         connect(log_toggle_, &QToolButton::toggled, this, [this](bool visible) {
             log_->setVisible(visible);
-            log_toggle_->setText(visible ? "Details ▴" : "Details ▾");
+            log_toggle_->setText(visible ? ui("Details ▴", "詳細ログ ▴")
+                                         : ui("Details ▾", "詳細ログ ▾"));
         });
         connect(&control_, &QProcess::readyReadStandardOutput, this, [this] {
             const QByteArray bytes = control_.readAllStandardOutput();
@@ -168,7 +164,7 @@ class BridgeWindow final : public QWidget {
                 const QByteArray line = bridge_output_.left(end);
                 bridge_output_.remove(0, end + 1);
                 if (line.startsWith("frames=1 ")) {
-                    status_->setText("Streaming · " + QString::number(rotation_degrees_) +
+                    status_->setText(ui("Streaming · ", "配信中 · ") + QString::number(rotation_degrees_) +
                                      "° · ↔ " + (mirror_->isChecked() ? "ON" : "OFF") +
                                      " · ↕ " + (vertical_flip_->isChecked() ? "ON" : "OFF"));
                 } else if (line.startsWith("transform ")) {
@@ -177,7 +173,7 @@ class BridgeWindow final : public QWidget {
                         "vertical_flip=(on|off)$");
                     const auto match = pattern.match(QString::fromLocal8Bit(line));
                     if (match.hasMatch()) {
-                        status_->setText("Streaming · " + match.captured(1) +
+                        status_->setText(ui("Streaming · ", "配信中 · ") + match.captured(1) +
                                          "° · ↔ " +
                                          (match.captured(2) == "on" ? "ON" : "OFF") +
                                          " · ↕ " +
@@ -194,24 +190,27 @@ class BridgeWindow final : public QWidget {
                 this, [this](int code, QProcess::ExitStatus) {
                     setBridgeRunning(false);
                     if (stop_requested_) {
-                        status_->setText("Bridge stopped.");
+                        status_->setText(ui("Bridge stopped.", "カメラブリッジを停止しました。"));
                     } else {
                         status_->setText(code == 0
-                                             ? "Bridge exited."
-                                             : QString("Bridge exited (code %1).").arg(code));
+                                             ? ui("Bridge exited.", "カメラブリッジを終了しました。")
+                                             : ui("Bridge exited (code %1).", "カメラブリッジが終了しました (code %1)。")
+                                                   .arg(code));
                         if (code != 0) log_toggle_->setChecked(true);
                     }
                     stop_requested_ = false;
                 });
         connect(&control_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
-            status_->setText("Could not start USB control: " + control_.errorString());
+            status_->setText(ui("Could not start USB control: ", "USB操作を開始できません: ") +
+                             control_.errorString());
             if (error == QProcess::FailedToStart) {
                 control_action_ = ControlAction::None;
                 updateUsbActions();
             }
         });
         connect(&bridge_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
-            status_->setText("Could not start bridge: " + bridge_.errorString());
+            status_->setText(ui("Could not start bridge: ", "カメラブリッジを開始できません: ") +
+                             bridge_.errorString());
             if (error == QProcess::FailedToStart) {
                 setBridgeRunning(false);
                 log_toggle_->setChecked(true);
@@ -232,6 +231,12 @@ class BridgeWindow final : public QWidget {
   private:
     enum class ControlAction { None, Refresh, Switch };
 
+    static QString ui(const char* english, const char* japanese) {
+        return QLocale::system().language() == QLocale::Japanese
+                   ? QString::fromUtf8(japanese)
+                   : QString::fromUtf8(english);
+    }
+
     QString toolPath(const QString& name) const {
         return QDir(QCoreApplication::applicationDirPath()).filePath(name);
     }
@@ -251,11 +256,7 @@ class BridgeWindow final : public QWidget {
         return transport_->currentData().toString() == "lan";
     }
 
-    bool lanReady() const {
-        static const QRegularExpression pin_pattern("^[0-9]{6}$");
-        return !lan_host_->text().trimmed().isEmpty() &&
-               pin_pattern.match(lan_pin_->text().trimmed()).hasMatch();
-    }
+    bool lanReady() const { return !lan_host_->text().trimmed().isEmpty(); }
 
     void updateConnectionUi() {
         const bool lan = lanSelected();
@@ -263,12 +264,11 @@ class BridgeWindow final : public QWidget {
         form_->setRowVisible(devices_, !lan);
         form_->setRowVisible(usb_buttons_container_, !lan);
         form_->setRowVisible(lan_host_, lan);
-        form_->setRowVisible(lan_pin_, lan);
         lan_host_->setEnabled(lan);
-        lan_pin_->setEnabled(lan);
         if (bridge_.state() == QProcess::NotRunning) {
-            status_->setText(lan ? "Enter the phone IP and PIN shown on the Wi-Fi screen."
-                                 : "Checking USB devices…");
+            status_->setText(lan ? ui("Enter the phone IP shown on the Wi-Fi screen.",
+                                      "Wi-Fi画面に表示されたPhone IPを入力してください。")
+                                 : ui("Checking USB devices…", "USB機器を確認しています…"));
         }
         setBridgeRunning(bridge_.state() != QProcess::NotRunning);
     }
@@ -281,7 +281,8 @@ class BridgeWindow final : public QWidget {
         }
         const bool idle = control_.state() == QProcess::NotRunning;
         refresh_->setEnabled(idle);
-        switch_->setText(selectedIsAccessory() ? "AOA connected" : "Switch to AOA");
+        switch_->setText(selectedIsAccessory() ? ui("AOA connected", "AOA接続済み")
+                                              : ui("Switch to AOA", "AOAへ切替"));
         switch_->setEnabled(idle && bridge_.state() == QProcess::NotRunning &&
                             devices_->count() > 0 && !selectedIsAccessory());
     }
@@ -293,7 +294,6 @@ class BridgeWindow final : public QWidget {
         output_->setEnabled(!running);
         transport_->setEnabled(!running);
         lan_host_->setEnabled(!running && lanSelected());
-        lan_pin_->setEnabled(!running && lanSelected());
         hw_decode_->setEnabled(!running);
         updateUsbActions();
     }
@@ -304,9 +304,10 @@ class BridgeWindow final : public QWidget {
                                    (mirror_->isChecked() ? "1 " : "0 ") +
                                    (vertical_flip_->isChecked() ? "1\n" : "0\n");
         if (bridge_.write(command) != command.size()) {
-            status_->setText("Could not send orientation change.");
+            status_->setText(ui("Could not send orientation change.", "向きの変更を送信できませんでした。"));
         } else {
-            status_->setText("Updating orientation · " + QString::number(rotation_degrees_) + "°");
+            status_->setText(ui("Updating orientation · ", "向き変更中 · ") +
+                             QString::number(rotation_degrees_) + "°");
         }
     }
 
@@ -324,10 +325,10 @@ class BridgeWindow final : public QWidget {
         if (lanSelected()) return;
         const QString probe = toolPath("amb-aoa-probe");
         if (!QFileInfo::exists(probe)) {
-            status_->setText("amb-aoa-probe not found: " + probe);
+            status_->setText(ui("amb-aoa-probe not found: ", "amb-aoa-probe が見つかりません: ") + probe);
             return;
         }
-        status_->setText("Checking USB devices…");
+        status_->setText(ui("Checking USB devices…", "USB機器を確認しています…"));
         startControl(probe, {"--list"}, ControlAction::Refresh);
     }
 
@@ -358,11 +359,12 @@ class BridgeWindow final : public QWidget {
         setBridgeRunning(bridge_.state() != QProcess::NotRunning);
         if (bridge_.state() != QProcess::NotRunning) return;
         if (!found) {
-            status_->setText("USB: Xperia not found");
+            status_->setText(ui("USB: Xperia not found", "USB: Xperiaが見つかりません"));
         } else if (selectedIsAccessory()) {
-            status_->setText("USB: AOA connected");
+            status_->setText(ui("USB: AOA connected", "USB: AOA接続済み"));
         } else {
-            status_->setText("USB: Xperia connected · switch to AOA");
+            status_->setText(ui("USB: Xperia connected · switch to AOA",
+                                "USB: Xperia接続中 · AOAへ切替"));
         }
     }
 
@@ -370,15 +372,17 @@ class BridgeWindow final : public QWidget {
         const QStringList selected = devices_->currentData().toStringList();
         if (selected.size() != 2) return;
         if (selected[0].startsWith("18d1:2d0")) {
-            status_->setText("Already in AOA accessory mode.");
+            status_->setText(ui("Already in AOA accessory mode.", "すでにAOA accessoryモードです。"));
             return;
         }
         const QString pkexec = QStandardPaths::findExecutable("pkexec");
         if (pkexec.isEmpty()) {
-            status_->setText("pkexec not found. Switch to AOA from a terminal.");
+            status_->setText(ui("pkexec not found. Switch to AOA from a terminal.",
+                                "pkexecが見つかりません。端末からAOAへ切り替えてください。"));
             return;
         }
-        status_->setText("After authentication, switching Xperia to AOA mode…");
+        status_->setText(ui("After authentication, switching Xperia to AOA mode…",
+                            "認証後、XperiaをAOAモードへ切り替えます…"));
         startControl(pkexec,
                      {toolPath("amb-aoa-probe"), "--device", selected[0],
                       "--bus-address", selected[1], "--switch"},
@@ -390,13 +394,16 @@ class BridgeWindow final : public QWidget {
         control_action_ = ControlAction::None;
         if (completed == ControlAction::Refresh) {
             if (code == 0) parseDeviceList();
-            else status_->setText(QString("Could not list USB devices (code %1).").arg(code));
+            else status_->setText(ui("Could not list USB devices (code %1).",
+                                     "USB一覧の取得に失敗しました (code %1)。").arg(code));
         } else if (completed == ControlAction::Switch) {
             if (code == 0) {
-                status_->setText("AOA switch complete. Checking USB devices…");
+                status_->setText(ui("AOA switch complete. Checking USB devices…",
+                                    "AOA切替が完了しました。USB機器を再確認します…"));
                 QTimer::singleShot(1000, this, [this] { refreshDevices(); });
             } else {
-                status_->setText(QString("AOA switch failed (code %1).").arg(code));
+                status_->setText(ui("AOA switch failed (code %1).",
+                                    "AOA切替に失敗しました (code %1)。").arg(code));
             }
         }
         updateUsbActions();
@@ -405,21 +412,21 @@ class BridgeWindow final : public QWidget {
     void startBridge() {
         if (bridge_.state() != QProcess::NotRunning) return;
         if (!lanSelected() && !selectedIsAccessory()) {
-            status_->setText("Switch to AOA first");
+            status_->setText(ui("Switch to AOA first", "先にAOAへ切り替えてください"));
             return;
         }
         if (lanSelected() && !lanReady()) {
-            status_->setText("Enter the phone IP and 6-digit PIN.");
+            status_->setText(ui("Enter the phone IP.", "Phone IPを入力してください。"));
             return;
         }
         const QString sink = toolPath("amb-v4l2-sink");
         if (!QFileInfo::exists(sink)) {
-            status_->setText("amb-v4l2-sink not found: " + sink);
+            status_->setText(ui("amb-v4l2-sink not found: ", "amb-v4l2-sinkが見つかりません: ") + sink);
             return;
         }
         const QString device = output_->text().trimmed();
         if (device.isEmpty()) {
-            status_->setText("Enter a virtual camera path.");
+            status_->setText(ui("Enter a virtual camera path.", "仮想カメラのパスを入力してください。"));
             return;
         }
         QStringList arguments{"--device", device, "--timeout-ms", "120000",
@@ -427,8 +434,7 @@ class BridgeWindow final : public QWidget {
         arguments << "--hw-decode" << hw_decode_->currentData().toString();
         if (lanSelected()) {
             arguments << "--lan" << lan_host_->text().trimmed()
-                      << "--port" << "48527"
-                      << "--pin" << lan_pin_->text().trimmed();
+                      << "--port" << "48527";
         }
         if (!mirror_->isChecked()) arguments << "--no-horizontal-flip";
         if (vertical_flip_->isChecked()) arguments << "--vertical-flip";
@@ -437,7 +443,9 @@ class BridgeWindow final : public QWidget {
         bridge_output_.clear();
         stop_requested_ = false;
         setBridgeRunning(true);
-        status_->setText(lanSelected() ? "Connecting over Wi-Fi…" : "Waiting for USB stream · start the camera on the phone");
+        status_->setText(lanSelected() ? ui("Connecting over Wi-Fi…", "Wi-Fi接続中…")
+                                       : ui("Waiting for USB stream · start the camera on the phone",
+                                           "USB受信待機中 · Phoneでカメラを開始してください"));
         bridge_.start(sink, arguments);
     }
 
@@ -463,7 +471,6 @@ class BridgeWindow final : public QWidget {
     QPushButton* switch_ = nullptr;
     QWidget* usb_buttons_container_ = nullptr;
     QLineEdit* lan_host_ = nullptr;
-    QLineEdit* lan_pin_ = nullptr;
     QComboBox* hw_decode_ = nullptr;
     QLineEdit* output_ = nullptr;
     QButtonGroup* rotation_group_ = nullptr;

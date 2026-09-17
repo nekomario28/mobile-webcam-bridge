@@ -12,7 +12,7 @@ Android sender
          -> LanSession       -> TCP / Wi-Fi
 
 AMB1 framing
-  HELLO / HELLO_ACK   LAN pairing only
+  HELLO / HELLO_ACK   LAN protocol handshake
   PING / PONG         control/health
   VIDEO_CONFIG        dimensions/fps/codec contract
   VIDEO_AU            Annex-B H.264 access units
@@ -52,15 +52,15 @@ recovery keyframe carries codec config and a discontinuity flag.
 Control frames are kept separate from the bounded video queue so PONG,
 VIDEO_CONFIG, and recovery messages are not trapped behind stale video.
 
-## LAN pairing
+## LAN connection
 
 The Android LAN server listens on TCP port `48527` by default and accepts one
-active client. A fresh six-digit PIN is generated when the server object is
-created. The host sends it in an AMB1 `HELLO`; the phone replies with
-`HELLO_ACK` only on an exact match.
+active client. The host sends an empty AMB1 `HELLO`; the phone replies with an
+empty `HELLO_ACK` after validating the frame.
 
-This is lightweight pairing, not transport encryption. The current deployment
-assumption is a trusted local network.
+There is no PIN or encryption in the current transport. Use it on a trusted
+local network. The one-client rule prevents accidental concurrent receivers,
+but it is not an access-control boundary.
 
 ## Hardware decode
 

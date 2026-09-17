@@ -58,7 +58,6 @@ struct Options {
     std::string device = "/dev/video10";
     std::string lan_host;
     std::uint16_t lan_port = 48'527;
-    std::string lan_pin;
     std::string hw_decode = "auto";
     std::size_t frames = 0;
     int timeout_ms = 30'000;
@@ -71,7 +70,7 @@ struct Options {
 void usage(const char* argv0) {
     std::cout
         << "Usage: " << argv0
-        << " [--device /dev/videoX] [--lan HOST --pin 123456 [--port 48527]]"
+        << " [--device /dev/videoX] [--lan HOST [--port 48527]]"
            " [--hw-decode auto|off|vaapi|cuda] [--frames N] [--timeout-ms N]"
            " [--rotate 0|90|180|270] [--no-horizontal-flip] [--vertical-flip]"
            " [--control-stdin]\n\n"
@@ -431,8 +430,6 @@ int main(int argc, char** argv) {
             options.device = argv[++i];
         } else if (arg == "--lan" && i + 1 < argc) {
             options.lan_host = argv[++i];
-        } else if (arg == "--pin" && i + 1 < argc) {
-            options.lan_pin = argv[++i];
         } else if (arg == "--port" && i + 1 < argc) {
             std::size_t parsed = 0;
             if (!parse_nonnegative(argv[++i], parsed) || parsed == 0 || parsed > 65'535) {
@@ -473,17 +470,6 @@ int main(int argc, char** argv) {
             usage(argv[0]);
             return 2;
         }
-    }
-
-    if (!options.lan_host.empty()) {
-        if (options.lan_pin.size() != 6 ||
-            !std::all_of(options.lan_pin.begin(), options.lan_pin.end(), ::isdigit)) {
-            std::cerr << "--lan requires a six-digit --pin\n";
-            return 2;
-        }
-    } else if (!options.lan_pin.empty()) {
-        std::cerr << "--pin requires --lan\n";
-        return 2;
     }
 
     StdinControl control;
@@ -553,8 +539,7 @@ int main(int argc, char** argv) {
         }
         std::cout << "transport=usb " << amb::aoa::describe(accessory->id()) << "\n";
     } else {
-        if (!tcp.connect(options.lan_host, options.lan_port, options.lan_pin,
-                         5'000, error)) {
+        if (!tcp.connect(options.lan_host, options.lan_port, 5'000, error)) {
             std::cerr << "LAN connect failed: " << error << "\n";
             return 4;
         }

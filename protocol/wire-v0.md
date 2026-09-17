@@ -22,8 +22,8 @@ Production message-specific limits will be tighter.
 
 Initial message types:
 
-- `0x01 HELLO`
-- `0x02 HELLO_ACK`
+- `0x01 HELLO` — empty payload; confirms an AMB peer on a LAN connection
+- `0x02 HELLO_ACK` — empty payload; accepts the LAN connection
 - `0x03 PING` — G0.5, payload is an opaque 8-byte challenge
 - `0x04 PONG` — G0.5, same sequence / PTS / payload as PING
 - `0x10 VIDEO_CONFIG`

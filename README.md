@@ -7,7 +7,7 @@ Android Camera2
   -> MediaCodec H.264 Surface encoder
   -> AMB1 framed stream
        -> USB / Android Open Accessory
-       -> TCP / Wi-Fi + 6-digit pairing PIN
+       -> TCP / Wi-Fi
   -> Linux FFmpeg decode
        -> auto hardware decode (VAAPI first, then CUDA)
        -> software fallback when no supported device is available
@@ -27,10 +27,10 @@ Implemented:
 - Bounded latest-live video queue with IDR/config recovery after drops.
 - USB AOA transport that does not require USB debugging at runtime.
 - Wi-Fi/LAN TCP transport using the same AMB1 framing and producer path.
-- One active LAN client with a generated six-digit pairing PIN.
+- One active LAN client with a simple AMB1 protocol handshake.
 - Linux USB or TCP receiver feeding the same decoder/V4L2 path.
 - FFmpeg hardware decode selection: `auto`, `vaapi`, `cuda`, or software.
-- Qt 6 desktop GUI for transport selection, Wi-Fi IP/PIN, decode mode,
+- Qt 6 desktop GUI for transport selection, Wi-Fi IP, decode mode,
   `/dev/videoX`, rotation, and horizontal/vertical flip.
 - Rotation and flips update while streaming; camera consumers do not need to be
   reopened.
@@ -40,10 +40,13 @@ Fresh host verification on 2026-09-17:
 
 - Release GUI build succeeds.
 - `ctest`: 4/4 PASS (`wire`, `yuyv`, `image-transform`, `tcp`).
-- The TCP test covers valid PIN handshake, wrong-PIN rejection, framed PING,
-  and an IDR request over localhost.
-- Real Xperia Wi-Fi test passes: `192.168.1.12:48527` pairing, H.264 stream,
-  VAAPI decode, and 60 V4L2 frames with zero discontinuities.
+- The TCP test covers the empty LAN handshake, framed PING, and an IDR request
+  over localhost.
+- Previous real Xperia Wi-Fi gate passes on the PIN-based predecessor:
+  `192.168.1.12:48527`, H.264 stream, VAAPI decode, and 60 V4L2 frames with
+  zero discontinuities. The current no-PIN APK needs one device re-test.
+- Current no-PIN LAN handshake passes the host TCP integration test; Android
+  APK packaging also succeeds.
 - On the current Radeon Linux host, `--hw-decode auto` initializes `vaapi`
   before the intentionally unreachable LAN endpoint fails.
 
@@ -100,9 +103,9 @@ The expected label is `Mobile Webcam`.
 ## Wi-Fi usage
 
 1. Open the Android app and press **Connect Wi-Fi**.
-2. The phone shows one or more local IPv4 endpoints and a six-digit PIN.
+2. The phone shows one or more local IPv4 endpoints.
 3. Open **Mobile Webcam** on Linux, select **Wi-Fi / LAN**, and enter the phone
-   IP and PIN.
+   IP.
 4. Keep decode mode at **Auto** unless you are diagnosing a backend.
 5. Press **Start bridge**, then start the camera on the phone.
 
@@ -111,15 +114,14 @@ The CLI equivalent is:
 ```fish
 ./build/host/amb-v4l2-sink \
   --lan 192.168.1.42 \
-  --pin 123456 \
   --device /dev/video10 \
   --hw-decode auto
 ```
 
-The PIN prevents an accidental peer on the local network from taking the
-single receiver slot. The current TCP transport is not encrypted, so use it on
-a trusted LAN. Encryption can be added at the transport boundary later without
-changing the media session or V4L2 path.
+The current TCP transport has no authentication or encryption, so use it only
+on a trusted LAN. The Android server accepts one active client. Encryption can
+be added at the transport boundary later without changing the media session or
+V4L2 path.
 
 ## USB usage
 

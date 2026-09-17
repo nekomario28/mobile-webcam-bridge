@@ -122,7 +122,7 @@ bool run_success_case() {
         amb::wire::Header hello{};
         std::vector<std::uint8_t> payload;
         if (!read_frame(fd, hello, payload) || hello.type != amb::wire::Type::Hello ||
-            hello.sequence != 1 || std::string(payload.begin(), payload.end()) != "123456" ||
+            hello.sequence != 1 || !payload.empty() ||
             !send_frame(fd, amb::wire::Type::HelloAck, hello.sequence)) {
             server_ok = false;
             ::close(fd);
@@ -145,8 +145,8 @@ bool run_success_case() {
 
     amb::TcpConnection client;
     std::string error;
-    bool ok = expect(client.connect("127.0.0.1", server.port(), "123456", 2000, error),
-                     "valid PIN handshake") &&
+    bool ok = expect(client.connect("127.0.0.1", server.port(), 2000, error),
+                     "empty HELLO handshake") &&
               expect(client.send_frame(amb::wire::Type::VideoIdrRequest, 0, 2, 0, {}, 2000,
                                        error),
                      "send IDR request");
@@ -162,45 +162,18 @@ bool run_success_case() {
     return ok;
 }
 
-bool run_wrong_pin_case() {
-    LoopbackServer server;
-    if (!expect(server.valid(), "create wrong-pin server")) return false;
-    std::atomic_bool server_ok{true};
-    std::thread peer([&] {
-        const int fd = server.accept_one();
-        if (fd < 0) {
-            server_ok = false;
-            return;
-        }
-        amb::wire::Header hello{};
-        std::vector<std::uint8_t> payload;
-        if (!read_frame(fd, hello, payload) || hello.type != amb::wire::Type::Hello ||
-            std::string(payload.begin(), payload.end()) != "654321") {
-            server_ok = false;
-        }
-        ::close(fd);
-    });
-
+bool run_invalid_host_case() {
     amb::TcpConnection client;
     std::string error;
-    const bool connected = client.connect("127.0.0.1", server.port(), "654321", 2000, error);
-    peer.join();
-    bool ok = expect(!connected, "wrong PIN is rejected when peer closes before ACK");
-    ok &= expect(!error.empty(), "wrong PIN reports an error");
-    ok &= expect(server_ok.load(), "wrong-pin server observed HELLO");
-    return ok;
+    return expect(!client.connect("", 48527, 2000, error),
+                  "empty LAN host is rejected locally");
 }
 
 }  // namespace
 
 int main() {
     bool ok = run_success_case();
-    ok &= run_wrong_pin_case();
-
-    amb::TcpConnection invalid;
-    std::string error;
-    ok &= expect(!invalid.connect("127.0.0.1", 1, "12ab56", 100, error),
-                 "non-numeric PIN rejected locally");
+    ok &= run_invalid_host_case();
 
     if (!ok) return 1;
     std::cout << "tcp_test: PASS\n";

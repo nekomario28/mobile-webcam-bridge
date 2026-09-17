@@ -17,8 +17,8 @@ class TcpConnection {
     TcpConnection(const TcpConnection&) = delete;
     TcpConnection& operator=(const TcpConnection&) = delete;
 
-    bool connect(const std::string& host, std::uint16_t port, const std::string& pin,
-                 int timeout_ms, std::string& error);
+    bool connect(const std::string& host, std::uint16_t port, int timeout_ms,
+                 std::string& error);
     void disconnect();
     [[nodiscard]] bool connected() const { return fd_ >= 0; }
 

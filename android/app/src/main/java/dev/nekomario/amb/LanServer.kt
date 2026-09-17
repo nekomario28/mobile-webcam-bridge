@@ -4,8 +4,6 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
-import java.nio.charset.StandardCharsets
-import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -78,7 +76,6 @@ class LanSession(
 
 class LanServer(
     private val port: Int = DEFAULT_PORT,
-    val pin: String = newPin(),
     private val onSession: (LanSession?) -> Unit,
     private val onStatus: (String) -> Unit,
     private val onError: (String) -> Unit,
@@ -94,7 +91,7 @@ class LanServer(
             val socket = ServerSocket(port).apply { reuseAddress = true }
             server = socket
             acceptThread = Thread({ acceptLoop(socket) }, "mwb-lan-accept").also { it.start() }
-            onStatus("Wi-Fi listening on ${endpoints().joinToString()}  PIN $pin")
+            onStatus("Wi-Fi listening on ${endpoints().joinToString()}")
         } catch (t: Throwable) {
             running.set(false)
             server = null
@@ -143,8 +140,7 @@ class LanServer(
         socket.soTimeout = 5_000
         val (hello, payload) = Wire.readFrame(socket.getInputStream())
         require(hello.type == Wire.TYPE_HELLO) { "expected HELLO" }
-        val supplied = String(payload, StandardCharsets.US_ASCII)
-        require(supplied == pin) { "invalid PIN" }
+        require(payload.isEmpty()) { "HELLO payload must be empty" }
         Wire.writeFrame(
             socket.getOutputStream(),
             Wire.Header(Wire.TYPE_HELLO_ACK, 0, hello.sequence, 0, 0),
@@ -168,9 +164,6 @@ class LanServer(
 
     companion object {
         const val DEFAULT_PORT = 48_527
-        private val random = SecureRandom()
-
-        fun newPin(): String = "%06d".format(random.nextInt(1_000_000))
 
         fun localIpv4Addresses(): List<String> = runCatching {
             NetworkInterface.getNetworkInterfaces().toList()

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Use the system language for a simple English/Japanese interface.
+- Remove the Wi-Fi PIN; LAN connections now use a minimal AMB1 handshake.
+
 ## 0.1.0 - 2026-09-17
 
 - Launch the project publicly as **Mobile Webcam** while retaining AMB1 as the

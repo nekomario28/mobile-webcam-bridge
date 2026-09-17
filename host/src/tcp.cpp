@@ -11,7 +11,6 @@
 #include <array>
 #include <algorithm>
 #include <cerrno>
-#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <limits>
@@ -64,12 +63,10 @@ bool wait_fd(int fd, short events, std::chrono::steady_clock::time_point deadlin
 TcpConnection::~TcpConnection() { disconnect(); }
 
 bool TcpConnection::connect(const std::string& host, std::uint16_t port,
-                            const std::string& pin, int timeout_ms, std::string& error) {
+                            int timeout_ms, std::string& error) {
     disconnect();
-    const bool numeric_pin = pin.size() == 6 &&
-        std::all_of(pin.begin(), pin.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; });
-    if (host.empty() || !numeric_pin) {
-        error = "LAN host and six-digit PIN are required";
+    if (host.empty()) {
+        error = "LAN host is required";
         return false;
     }
 
@@ -128,8 +125,7 @@ bool TcpConnection::connect(const std::string& host, std::uint16_t port,
         return false;
     }
 
-    const std::vector<std::uint8_t> pin_payload(pin.begin(), pin.end());
-    if (!send_frame(wire::Type::Hello, 0, 1, 0, pin_payload, timeout_ms, error)) {
+    if (!send_frame(wire::Type::Hello, 0, 1, 0, {}, timeout_ms, error)) {
         disconnect();
         return false;
     }
@@ -137,7 +133,7 @@ bool TcpConnection::connect(const std::string& host, std::uint16_t port,
     std::vector<std::uint8_t> ack_payload;
     if (!read_frame(ack, ack_payload, timeout_ms, error) ||
         ack.type != wire::Type::HelloAck || ack.sequence != 1 || !ack_payload.empty()) {
-        if (error.empty()) error = "LAN pairing handshake failed";
+        if (error.empty()) error = "LAN handshake failed";
         disconnect();
         return false;
     }
