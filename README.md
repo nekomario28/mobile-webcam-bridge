@@ -27,11 +27,18 @@ uses English when no Japanese locale is selected.
    [Releases](https://github.com/nekomario28/mobile-webcam-bridge/releases), or
    build them from source.
 2. Install the Linux packages for your distribution below.
-3. From this checkout, install the USB rules and virtual-camera integration:
+3. If `/dev/video10` does not exist, or the Android accessory cannot be
+   opened without sudo, install the USB rules and virtual-camera integration
+   once from this checkout:
 
    ```sh
    sudo ./linux/install-host-integration.sh
+   sudo modprobe v4l2loopback
    ```
+
+   You can skip this step when `v4l2loopback` and your chosen V4L2 device are
+   already configured. The script is a one-time system setup, not a step to
+   repeat every time the AppImage starts.
 
 4. Open the APK on Android and start the AppImage on Linux. Choose **USB** or
    **Wi-Fi** in the Linux GUI, then follow the matching section below.
