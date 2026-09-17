@@ -8,6 +8,9 @@ Use an Android phone as a Linux webcam over USB or local Wi-Fi. The Linux side
 outputs a normal V4L2 camera such as `/dev/video10`, so camera applications do
 not need a Mobile Webcam plugin.
 
+**Languages:** English and Japanese. The app follows the system language and
+uses English when no Japanese locale is selected.
+
 ## What it does
 
 - Streams Android Camera2 video through MediaCodec H.264.
