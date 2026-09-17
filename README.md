@@ -11,8 +11,8 @@ not need a Mobile Webcam plugin.
 **Languages:** English and Japanese. The app follows the system language and
 uses English when no Japanese locale is selected.
 
-The main strengths are simple USB camera sharing with Android USB debugging
-off, and a small Linux side: one AppImage producing a normal V4L2 camera.
+**Why Mobile Webcam:** USB camera sharing works with Android USB debugging off.
+The Linux side is one AppImage producing a normal V4L2 camera.
 
 ## What it does
 
@@ -143,8 +143,8 @@ identifiers retained for compatibility.
 ## Status
 
 v0.1.1 is available for Android and x86_64 Linux. USB has been tested with a
-Sony Xperia XQ-GE44 with USB debugging off. Wi-Fi is implemented; long-running,
-reconnect, and camera-application compatibility checks are still pending.
+Sony Xperia XQ-GE44 with USB debugging off. Discord compatibility is OK. Wi-Fi
+long-running and reconnect checks are still pending.
 
 Technical details and test records are in [`docs/architecture.md`](docs/architecture.md),
 [`docs/gates.md`](docs/gates.md), and [`docs/evidence/`](docs/evidence/).
