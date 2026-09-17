@@ -137,27 +137,19 @@ USB and Wi-Fi share the same framed H.264 session, decoder, recovery, transform,
 and V4L2 path. The AMB1 wire format and `amb-*` helper names are internal
 identifiers retained for compatibility.
 
-## Verified state
+## Status
 
-On 2026-09-17, the current Release APK was verified on a Sony Xperia XQ-GE44:
+v0.1.1 is available for Android and x86_64 Linux. USB has been tested with a
+Sony Xperia XQ-GE44 with USB debugging off. Wi-Fi is implemented; long-running,
+reconnect, and camera-application compatibility checks are still pending.
 
-- USB AOA `18d1:2d00`: G0 PASS, G0.5 20/20 PASS, and G3 60 frames at
-  1280x720@30 with VAAPI and zero discontinuities.
-- Host CTest: 4/4 PASS (`wire`, `yuyv`, `image-transform`, `tcp`).
-- Android `assembleRelease lintRelease` and APK signature verification: PASS.
-- AppImage build and AppStream validation: PASS.
-
-The current no-PIN Wi-Fi path has host protocol coverage. A new long-duration
-Wi-Fi throughput/reconnect run and OBS/Chromium/Firefox/Discord checks remain
-separate device gates.
-
-More detail is in [`docs/architecture.md`](docs/architecture.md),
-[`docs/gates.md`](docs/gates.md), [`docs/RELEASE.md`](docs/RELEASE.md), and
-[`docs/evidence/`](docs/evidence/).
+Technical details and test records are in [`docs/architecture.md`](docs/architecture.md),
+[`docs/gates.md`](docs/gates.md), and [`docs/evidence/`](docs/evidence/).
 
 ## License
 
-Repository source, scripts, and documentation are MIT licensed. FFmpeg, Qt,
-libusb, and v4l2loopback retain their upstream licenses; see
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
+Mobile Webcam source, scripts, and documentation are MIT licensed. The
+AppImage also contains Qt and FFmpeg components under their upstream licenses;
+`libusb` and `v4l2loopback` are separate dependencies. See
+[`LICENSE`](LICENSE), [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), and
 [`linux/APPIMAGE_LICENSES.md`](linux/APPIMAGE_LICENSES.md).
