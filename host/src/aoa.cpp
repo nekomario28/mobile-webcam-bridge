@@ -143,7 +143,7 @@ bool request_accessory_mode(libusb_device* dev, std::string& error) {
         "AMB Host",
         "Low-latency Android to Linux media bridge",
         "0",
-        "https://github.com/nekomario28/android-media-bridge",
+        "https://github.com/nekomario28/mobile-webcam-bridge",
         "amb-g0",
     };
     for (std::uint16_t i = 0; i < strings.size(); ++i) {
