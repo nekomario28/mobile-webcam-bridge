@@ -1,115 +1,78 @@
 # Mobile Webcam
 
-Use an Android phone as a low-latency Linux webcam over USB or local Wi-Fi.
+![Mobile Webcam Linux GUI with an Xperia connected over USB](docs/screenshots/mobile-webcam-linux-gui.png)
 
-```text
-Android Camera2
-  -> MediaCodec H.264 Surface encoder
-  -> AMB1 framed stream
-       -> USB / Android Open Accessory
-       -> TCP / Wi-Fi
-  -> Linux FFmpeg decode
-       -> auto hardware decode (VAAPI first, then CUDA)
-       -> software fallback when no supported device is available
-  -> live rotate / horizontal flip / vertical flip
-  -> v4l2loopback (/dev/videoX)
-```
+*Current AppImage screenshot: Xperia connected through USB AOA.*
 
-The public project name is **Mobile Webcam**. The internal `AMB1` wire magic and
-`amb-*` helper names are retained as protocol/implementation identifiers so the
-working media path does not need an unnecessary wire-format migration.
+Use an Android phone as a Linux webcam over USB or local Wi-Fi. The Linux side
+outputs a normal V4L2 camera such as `/dev/video10`, so camera applications do
+not need a Mobile Webcam plugin.
 
-## Current state
+## What it does
 
-Implemented:
+- Streams Android Camera2 video through MediaCodec H.264.
+- Supports USB Android Open Accessory and Wi-Fi/LAN.
+- Uses VAAPI, CUDA, or software decoding on Linux.
+- Corrects the default horizontal mirror and supports live 0°/90°/180°/270°
+  rotation plus vertical flip.
+- Applies orientation changes without reopening the camera application.
+- Ships a Qt 6 GUI and an x86_64 AppImage.
 
-- Android Camera2 -> MediaCodec input-Surface H.264 producer.
-- Bounded latest-live video queue with IDR/config recovery after drops.
-- USB AOA transport that does not require USB debugging at runtime.
-- Wi-Fi/LAN TCP transport using the same AMB1 framing and producer path.
-- One active LAN client with a simple AMB1 protocol handshake.
-- Linux USB or TCP receiver feeding the same decoder/V4L2 path.
-- FFmpeg hardware decode selection: `auto`, `vaapi`, `cuda`, or software.
-- Qt 6 desktop GUI for transport selection, Wi-Fi IP, decode mode,
-  `/dev/videoX`, rotation, and horizontal/vertical flip.
-- Rotation and flips update while streaming; camera consumers do not need to be
-  reopened.
-- Linux AppImage build/release path.
+## Quick start
 
-Fresh host verification on 2026-09-17:
-
-- Release GUI build succeeds.
-- `ctest`: 4/4 PASS (`wire`, `yuyv`, `image-transform`, `tcp`).
-- The TCP test covers the empty LAN handshake, framed PING, and an IDR request
-  over localhost.
-- Previous real Xperia Wi-Fi gate passes on the PIN-based predecessor:
-  `192.168.1.12:48527`, H.264 stream, VAAPI decode, and 60 V4L2 frames with
-  zero discontinuities. The current no-PIN APK needs one device re-test.
-- Current no-PIN LAN handshake passes the host TCP integration test; Android
-  APK packaging also succeeds.
-- On the current Radeon Linux host, `--hw-decode auto` initializes `vaapi`
-  before the intentionally unreachable LAN endpoint fails.
-
-Android compilation and the new Wi-Fi path are verified on this checkout. The
-long duration gate and iOS sender remain future work. The old USB evidence under
-`docs/evidence/` is retained as predecessor evidence; it is not presented as
-proof of this exact repository state.
-
-## Why this architecture
-
-The camera and encoder do not care which transport is active. Both USB and
-Wi-Fi implement the same small session contract and send the same versioned
-frames. That keeps the expensive Camera2/MediaCodec work, backpressure policy,
-IDR recovery, decoder, transforms, and V4L2 output shared.
-
-This boundary is also the useful extension point for a future iOS sender. iOS
-will need its own capture/encode and USB implementation, but a LAN sender can
-target the same framed H.264 session without changing the Linux webcam path.
-
-## Build on CachyOS / Arch
-
-Host dependencies:
+Install the Linux dependencies on CachyOS/Arch:
 
 ```fish
 sudo pacman -S --needed base-devel cmake pkgconf libusb ffmpeg qt6-base \
     v4l2loopback-dkms v4l2loopback-utils
 ```
 
-Build and test:
+Build the host and install its USB/V4L2 integration:
 
 ```fish
 cmake -S host -B build/host -DCMAKE_BUILD_TYPE=Release -DAMB_BUILD_GUI=ON
 cmake --build build/host --parallel
 ctest --test-dir build/host --output-on-failure
-```
-
-Install the USB access rule and persistent V4L2 camera label:
-
-```fish
 sudo ./linux/install-host-integration.sh
 ```
 
-After camera applications release `/dev/video10`, reload v4l2loopback once if
-the label changed:
+Build the Android app with Gradle, or download a signed APK from the project's
+[Releases](https://github.com/nekomario28/mobile-webcam-bridge/releases). The
+Linux AppImage can be built with:
 
 ```fish
-sudo modprobe -r v4l2loopback
-sudo modprobe v4l2loopback
-cat /sys/class/video4linux/video10/name
+./linux/build-appimage.sh
+./dist/Mobile_Webcam-x86_64.AppImage
 ```
 
-The expected label is `Mobile Webcam`.
+## USB
 
-## Wi-Fi usage
+1. Open Mobile Webcam on the phone and connect the USB cable.
+2. In the Linux GUI, select **USB** and press **Switch to AOA** if the phone
+   is still shown as a Sony device.
+3. Press **Start bridge** on Linux, then **Start camera** on the phone.
 
-1. Open the Android app and press **Connect Wi-Fi**.
-2. The phone shows one or more local IPv4 endpoints.
-3. Open **Mobile Webcam** on Linux, select **Wi-Fi / LAN**, and enter the phone
-   IP.
-4. Keep decode mode at **Auto** unless you are diagnosing a backend.
-5. Press **Start bridge**, then start the camera on the phone.
+The normal streaming target is accessory-only `18d1:2d00`; USB debugging is not
+needed for the running camera connection.
 
-The CLI equivalent is:
+For the equivalent terminal flow:
+
+```fish
+./build/host/amb-aoa-probe --list
+sudo ./build/host/amb-aoa-probe --device 0fce:XXXX --switch
+./build/host/amb-v4l2-sink --device /dev/video10 --hw-decode auto
+```
+
+## Wi-Fi
+
+1. Press **Connect Wi-Fi** in the Android app.
+2. Enter the phone's displayed IPv4 address in the Linux GUI.
+3. Press **Start bridge**, then **Start camera** on the phone.
+
+There is no PIN. The current LAN transport has no authentication or encryption,
+so use it on a trusted local network. Only one LAN client is accepted.
+
+The terminal equivalent is:
 
 ```fish
 ./build/host/amb-v4l2-sink \
@@ -118,81 +81,44 @@ The CLI equivalent is:
   --hw-decode auto
 ```
 
-The current TCP transport has no authentication or encryption, so use it only
-on a trusted LAN. The Android server accepts one active client. Encryption can
-be added at the transport boundary later without changing the media session or
-V4L2 path.
+## Controls
 
-## USB usage
+The GUI starts with horizontal mirror correction enabled. Rotation is clockwise;
+90° and 270° are fitted into the existing V4L2 size with black sidebars.
+Horizontal and vertical flip can be changed independently while streaming.
 
-List devices without sending AOA vendor requests:
+## Architecture
 
-```fish
-./build/host/amb-aoa-probe --list
+```text
+Android Camera2 -> MediaCodec H.264 -> AMB1 frames -> USB or Wi-Fi
+                                      -> Linux decode -> V4L2 /dev/videoX
 ```
 
-If the phone is still in its manufacturer USB mode, select it in the GUI and
-press **Switch to AOA**, or use the CLI with its exact VID:PID:
+USB and Wi-Fi share the same framed H.264 session, decoder, recovery, transform,
+and V4L2 path. The AMB1 wire format and `amb-*` helper names are internal
+identifiers retained for compatibility.
 
-```fish
-sudo ./build/host/amb-aoa-probe --device 0fce:XXXX --switch
-```
+## Verified state
 
-With USB debugging disabled, the normal accessory-only target is
-`18d1:2d00`. Once the Android app opens the accessory, the same Linux sink and
-V4L2 output path are used as for Wi-Fi.
+On 2026-09-17, the current Release APK was verified on a Sony Xperia XQ-GE44:
 
-## Live orientation controls
+- USB AOA `18d1:2d00`: G0 PASS, G0.5 20/20 PASS, and G3 60 frames at
+  1280x720@30 with VAAPI and zero discontinuities.
+- Host CTest: 4/4 PASS (`wire`, `yuyv`, `image-transform`, `tcp`).
+- Android `assembleRelease lintRelease` and APK signature verification: PASS.
+- AppImage build and AppStream validation: PASS.
 
-The desktop GUI provides 0°, 90°, 180°, and 270° clockwise rotation plus
-independent horizontal and vertical flips. Changes are written to the running
-sink over its control stdin and apply on subsequent frames without restarting
-the bridge or the camera consumer.
+The current no-PIN Wi-Fi path has host protocol coverage. A new long-duration
+Wi-Fi throughput/reconnect run and OBS/Chromium/Firefox/Discord checks remain
+separate device gates.
 
-Quarter turns are fitted into the existing V4L2 frame size with black bars so
-applications already holding `/dev/videoX` do not need a format reopen.
-
-## Hardware decode behavior
-
-`amb-v4l2-sink --hw-decode auto` tries Linux VAAPI first, then CUDA, and uses
-software decode when no compatible hardware device can be initialized.
-Explicit `vaapi` or `cuda` requests fail instead of silently switching backend,
-which keeps diagnostics clear.
-
-The current Radeon host exposes `/dev/dri/renderD*`, FFmpeg lists VAAPI, and the
-project decoder reports `decoder=vaapi` during the local initialization probe.
-The real Xperia Wi-Fi test also produced 60 frames through this VAAPI path. A
-long duration throughput and reconnect test is still required before claiming
-production-level network robustness.
-
-## AppImage
-
-```fish
-./linux/build-appimage.sh
-./dist/Mobile_Webcam-x86_64.AppImage
-```
-
-Versioned output is written as
-`dist/Mobile_Webcam-<version>-x86_64.AppImage` with a SHA-256 file beside it.
-Release signing and GitHub release setup are documented in `docs/RELEASE.md`.
-
-## Remaining device gates
-
-The shortest next device pass is:
-
-1. Repeat USB accessory-only with the new Mobile Webcam AOA identity.
-2. Run a longer Wi-Fi throughput and reconnect test.
-3. Run OBS/Chromium/Firefox/Discord against `/dev/videoX` only after the stream
-   itself is stable.
-
-See `docs/architecture.md`, `docs/gates.md`, and `docs/provenance.md` for the
-protocol/evidence boundaries.
+More detail is in [`docs/architecture.md`](docs/architecture.md),
+[`docs/gates.md`](docs/gates.md), [`docs/RELEASE.md`](docs/RELEASE.md), and
+[`docs/evidence/`](docs/evidence/).
 
 ## License
 
-Repository-owned source, scripts, and documentation are MIT licensed. libusb,
-FFmpeg, Qt, and v4l2loopback retain their upstream licenses. The AppImage
-distribution boundary is described in `THIRD_PARTY_NOTICES.md` and
-`linux/APPIMAGE_LICENSES.md`.
-
-No GPL/AGPL research-reference source is copied into this repository.
+Repository source, scripts, and documentation are MIT licensed. FFmpeg, Qt,
+libusb, and v4l2loopback retain their upstream licenses; see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
+[`linux/APPIMAGE_LICENSES.md`](linux/APPIMAGE_LICENSES.md).
