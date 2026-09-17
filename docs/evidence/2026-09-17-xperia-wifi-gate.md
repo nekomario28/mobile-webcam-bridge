@@ -1,5 +1,8 @@
 # Xperia Wi-Fi gate — 2026-09-17
 
+Historical record: this run predates v0.1.1 and used the old PIN-based Wi-Fi
+handshake. Current releases do not use a PIN.
+
 ## Scope
 
 This record covers the real Android-to-Linux Wi-Fi path on the Xperia XQ-GE44

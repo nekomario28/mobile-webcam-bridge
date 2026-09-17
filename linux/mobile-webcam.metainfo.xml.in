@@ -11,7 +11,7 @@
   <description>
     <p>
       Mobile Webcam streams Camera2 H.264 video over Android Open Accessory USB
-      or a paired local Wi-Fi connection and exposes it as a Linux V4L2 camera.
+      or a local Wi-Fi connection and exposes it as a Linux V4L2 camera.
     </p>
     <p>
       The desktop interface controls transport, hardware decode preference,

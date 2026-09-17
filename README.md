@@ -11,6 +11,9 @@ not need a Mobile Webcam plugin.
 **Languages:** English and Japanese. The app follows the system language and
 uses English when no Japanese locale is selected.
 
+The main strengths are simple USB camera sharing with Android USB debugging
+off, and a small Linux side: one AppImage producing a normal V4L2 camera.
+
 ## What it does
 
 - Streams Android Camera2 video through MediaCodec H.264.
