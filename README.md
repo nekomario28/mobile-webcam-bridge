@@ -12,7 +12,8 @@ not need a Mobile Webcam plugin.
 uses English when no Japanese locale is selected.
 
 **Why Mobile Webcam:** USB camera sharing works with Android USB debugging off.
-The Linux side is a simple GUI in one AppImage, producing a normal V4L2 camera.
+The Linux and Android GUIs are simple, and connecting the camera takes only a
+few steps. One Linux AppImage produces a normal V4L2 camera.
 
 ## What it does
 
