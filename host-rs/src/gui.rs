@@ -24,7 +24,7 @@ fn japanese() -> bool {
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([420.0, 440.0])
+            .with_inner_size([420.0, 500.0])
             .with_min_inner_size([360.0, 360.0]),
         ..Default::default()
     };
@@ -95,6 +95,11 @@ impl App {
         }
         ctx.set_fonts(fonts);
         ctx.all_styles_mut(|style| {
+            style.spacing.interact_size.y = 24.0;
+            style.spacing.icon_width = 18.0;
+            style.spacing.item_spacing.y = 5.0;
+            style.visuals.widgets.inactive.bg_stroke =
+                egui::Stroke::new(1.0, egui::Color32::from_gray(100));
             style
                 .text_styles
                 .insert(egui::TextStyle::Heading, egui::FontId::proportional(22.0));
@@ -242,10 +247,17 @@ impl eframe::App for App {
                 ui.add_enabled_ui(!self.session.running(), |ui| {
                     ui.horizontal(|ui| {
                         for (mode, label) in [("usb", "USB"), ("lan", "Wi-Fi")] {
+                            let selected = self.settings.transport == mode;
+                            let label = if selected {
+                                egui::RichText::new(label).strong()
+                            } else {
+                                egui::RichText::new(label)
+                            };
                             if ui
                                 .add(
-                                    egui::Button::selectable(self.settings.transport == mode, label)
-                                        .frame_when_inactive(true),
+                                    egui::Button::selectable(selected, label)
+                                        .frame_when_inactive(true)
+                                        .min_size(egui::vec2(70.0, 28.0)),
                                 )
                                 .clicked()
                             {
@@ -450,10 +462,11 @@ impl eframe::App for App {
                                     ui.label(self.text("Camera output", "カメラ出力"));
                                     ui.add_enabled(
                                         !running,
-                                        egui::TextEdit::singleline(&mut self.settings.output),
+                                        egui::TextEdit::singleline(&mut self.settings.output)
+                                            .desired_width(f32::INFINITY),
                                     );
                                 }
-                                ui.label(self.text("Video decode", "映像デコード"));
+                                ui.label(self.text("Video decode", "デコード方式"));
                                 egui::ComboBox::from_id_salt("decoder")
                                     .selected_text(self.decode_name(&self.settings.decode))
                                     .show_ui(ui, |ui| {
@@ -485,10 +498,16 @@ impl eframe::App for App {
                                 ui.horizontal(|ui| {
                                     ui.label(if self.ja { "回転" } else { "Rotation" });
                                     for rotation in [0, 90, 180, 270] {
+                                        let label = egui::RichText::new(format!("{rotation}°"));
+                                        let label = if self.settings.rotation == rotation {
+                                            label.strong()
+                                        } else {
+                                            label
+                                        };
                                         ui.selectable_value(
                                             &mut self.settings.rotation,
                                             rotation,
-                                            format!("{rotation}°"),
+                                            label,
                                         );
                                     }
                                 });

@@ -48,8 +48,8 @@ jobs:
       - name: Pinned Rust GNU toolchain
         shell: pwsh
         run: |
-          rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy --target x86_64-pc-windows-gnu
-          rustup default 1.98.1
+          rustup toolchain install 1.98.1-x86_64-pc-windows-gnu --profile minimal --component rustfmt,clippy
+          rustup default 1.98.1-x86_64-pc-windows-gnu
       - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
         with:
           msystem: MINGW64
@@ -65,7 +65,7 @@ jobs:
         shell: msys2 {0}
         run: |
           /usr/bin/python3 host-rs/tools/build_ffmpeg.py windows --cross-prefix='' --prefix "$PWD/host-rs/target/native-windows" --cache "$PWD/host-rs/target/ffmpeg-source"
-          export FFMPEG_DIR="$(cygpath -m host-rs/target/native-windows)"
+          export FFMPEG_DIR="$(cygpath -am host-rs/target/native-windows)"
           export PATH="$PWD/host-rs/target/native-windows/bin:$PATH"
           export PKG_CONFIG_ALLOW_CROSS=1
           export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=gcc
