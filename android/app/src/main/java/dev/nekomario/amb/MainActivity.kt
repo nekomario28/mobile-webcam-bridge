@@ -80,6 +80,7 @@ class MainActivity : Activity() {
         }
         val lanMode = Button(this).apply {
             text = "Wi-Fi"
+            setAllCaps(false)
             setOnClickListener { startLanMode() }
         }
         details = TextView(this).apply {
