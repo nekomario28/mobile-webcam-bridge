@@ -13,7 +13,8 @@ ADOPT: Android APK/Kotlin, AMB1/AOA contract, FFmpeg, libusb, pinned Unity Captu
 - Qt -> Rust -> Qt saved settings pass with Unicode, variable-width control escapes, unknown byte arrays and 100 saves. Fixtures are isolated from production settings. Windows uses native registry APIs under isolated Wine; Linux uses the native INI path format.
 - Packaged Windows executable -> synthetic TCP H.264 -> fresh pinned Unity IPC receiver, including live rotation: PASS under Wine. Close/reopen passes without restarting the worker; output conversion/submission pauses after demand stops while decoding continues. These callbacks include old frames and do not establish distinct-frame throughput or a DirectShow consumer gate.
 - Reused Windows Setup.exe installation, relocation/update, collision rejection, locked-file retry, uninstall and user-file retention: PASS under isolated Wine. Native Windows installation remains NOT RUN.
-- Native Linux GUI captures use Xvfb and the Vulkan software adapter. EN/JA capture environments must set LANGUAGE as well as LC_ALL because the Unix locale provider prioritizes LANGUAGE. Japanese IME, accessibility and native Windows GUI remain NOT RUN.
+- Linux packaged Rust -> synthetic 64x32 H.264 -> native /dev/video10 V4L2 -> independent FFmpeg consumer: PASS, including red/blue ordering. This is a short output check, not a phone or G3 endurance gate.
+- Native Linux GUI captures use the Vulkan software adapter; packaged AppImage X11 startup is also verified in isolated Xvfb. Initial test shells inherited WAYLAND_DISPLAY and therefore could not establish X11 capture; the final launch explicitly clears Wayland variables. EN/JA capture environments must set LANGUAGE as well as LC_ALL because the Unix locale provider prioritizes LANGUAGE. Japanese IME, accessibility and native Windows GUI remain NOT RUN.
 
 ## Runtime and UX
 
@@ -21,7 +22,7 @@ One app executable owns its GUI and a private receiving worker. Workers exist on
 
 EN/JA follows the OS locale, the existing Wi-Fi address/settings survive restart and rollback, and successful saves are silent. USB selection is manufacturer-neutral. AOA capability requests target only the explicitly selected physical device, with exact identity checks before a switch and same-port continuity only for an owned switch. Linux installs the existing one-time setup assets and the narrow helper; it does not run a root receiver. Windows retains the existing virtual camera and Setup.exe. No BAT launch path or persistent daemon is added.
 
-Target runtime crate graphs contain 229 Linux / 148 Windows packages; Cargo.lock also records other targets/build tools. This is a build dependency count, not shipped dynamic libraries. Both packaging paths reject Qt, unrelated FFmpeg libraries, expanded size above 60 MiB and Linux glibc requirements above 2.39. Exact package receipts accompany each built preview.
+Target runtime crate graphs contain 229 Linux / 148 Windows packages; Cargo.lock also records other targets/build tools. This is a build dependency count, not shipped dynamic libraries. Both packaging paths reject Qt, unrelated FFmpeg libraries, expanded size above 60 MiB and Linux glibc requirements above 2.39. Preview expanded sizes are about 22.0 MiB Linux / 15.6 MiB Windows; the Linux receipt reports glibc 2.39. Windows ships six runtime DLLs plus the two pinned camera DLLs. Linux removes the duplicate USB-helper copy. Exact receipts accompany each built preview, including runtime inventories and all target licenses.
 
 ## Remaining acceptance
 

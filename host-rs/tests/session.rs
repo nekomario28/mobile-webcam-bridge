@@ -25,7 +25,13 @@ fn peer(listener: TcpListener) {
     socket.read_exact(&mut header).unwrap();
     assert_eq!(header[5], 0x12);
     let mut byte = [0];
-    assert_eq!(socket.read(&mut byte).unwrap(), 0);
+    // Forced process termination can close TCP abortively on Windows.
+    // Both terminal outcomes prove the peer closed; data/timeouts still fail.
+    match socket.read(&mut byte) {
+        Ok(0) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        other => panic!("worker connection remained open or sent unexpected data: {other:?}"),
+    }
 }
 #[test]
 fn real_worker_disconnect_and_parent_death() {
