@@ -52,7 +52,7 @@ Use modules, not a collection of local crates or plugin interfaces. Unsafe code 
 |---|---|---|
 | GUI | `egui` / `eframe`, one `wgpu` renderer, Windows and Linux X11/Wayland | MIT/Apache ecosystem, no Qt. Slice 02 must establish Japanese input, accessibility, startup, idle repaint behavior, and packaged size; reopen only on a concrete failure |
 | Video | `ffmpeg-next`, defaults disabled; `codec` and `software-scaling` | Retain mature H.264 and GPU decoding. Test its exact version against minimal FFmpeg in slice 01; use its `ffi` access only inside `video` for hardware contexts |
-| USB | `rusb` / libusb | Preserve the current AOA behavior and device selection. nusb is deferred: ~0.24 MiB Windows library saving does not justify combining a USB backend change with the initial port |
+| USB | `rusb` / libusb | Preserve AOA and selected-device continuity; remove the Sony-only candidate restriction. nusb is deferred: ~0.24 MiB Windows library saving does not justify combining a USB backend change with the initial port |
 | IPC | `serde` / `serde_json` | Small bounded private control messages between the same executable; no version negotiation |
 | Settings | Existing Linux INI / Windows registry | Keep Qt-compatible keys/types without Qt; saved IP also remains usable on rollback |
 | OS | `windows` or `windows-sys` on Windows; libc/ioctl bindings on Linux | Target-specific APIs, not an additional camera framework |
@@ -64,10 +64,10 @@ FFmpeg retains `avcodec`, `avutil`, `swscale`, H.264 decoding and the matching G
 ## UX contract
 
 - Launch restores connection mode, last Wi-Fi address, decode choice, output, rotation, and flips. It does not start the phone camera or connect automatically.
-- Main surface: USB / Wi-Fi selector, one device/address field, current status, and one Connect / Cancel / Stop action. Cancellation remains available during setup/connect, and Stop remains available while waiting or receiving.
+- Main surface: USB / Wi-Fi selector and one Connect / Cancel / Stop action. Wi-Fi exposes its address; USB exposes a phone selector only for multiple candidates. Cancellation remains available during setup/connect, and Stop remains available while waiting or receiving.
 - Keep the main surface minimal: no explanatory banner, idle-ready message, save/restore notification, platform badge, or always-visible diagnostics. Successful persistence is silent. Show one short status/next action only when connecting, waiting, receiving, or failing; put settings/logs in Details. Keep prototype controls outside the product card and collapsed by default.
 - A valid Wi-Fi address is reused on every launch. Edits are saved after a short debounce and on action/close; saving does not depend on successful connection.
-- USB: selecting the single compatible phone and connecting performs the AOA transition. Multiple candidates require a choice; unrelated USB devices are not probed with vendor requests.
+- USB: manufacturer-neutral Android candidates, with no Xperia/brand/mode choice. One phone is selected automatically; multiple phones require a choice using actual device names, with a port suffix when names collide or are missing. No phone shows a short USB-connect prompt. Connect checks AOA only on the selected physical device; unrelated USB devices are not probed. Candidate discovery and unknown-device fallback are defined in contracts.md.
 - Status distinguishes connecting, waiting for the phone camera, waiting for a Windows consumer, frames submitted to the camera, and failure. Show the next useful action in Japanese/English; errors remain inspectable in a bounded expandable log.
 - Existing Android Start/Stop operation remains necessary. A TCP reconnect does not itself restart the Android camera. Initial Rust release offers an explicit reconnect action retaining the endpoint; autonomous retry/discovery is deferred.
 - Rotation, flips, decode, and Linux output are in Details. No default video preview or per-frame GUI updates.

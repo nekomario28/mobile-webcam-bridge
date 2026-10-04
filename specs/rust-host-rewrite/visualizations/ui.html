@@ -58,7 +58,7 @@ summary { cursor: pointer; font-size: 14px; color: #4b5d78; }
       </div>
       <div class="endpoint" id="usb-field" hidden>
         <label for="device">スマホ</label>
-        <select id="device"><option>Xperia</option><option>Android accessory</option></select>
+        <select id="device"><option value="">選択してください</option><option value="phone-1">Android端末 · USB 1</option><option value="phone-2">Android端末 · USB 2</option></select>
       </div>
       <p id="save-error" role="status" hidden>設定を保存できません</p>
       <div class="status" id="status" data-state="idle" role="status" aria-live="polite" hidden>
@@ -84,6 +84,7 @@ summary { cursor: pointer; font-size: 14px; color: #4b5d78; }
     <div class="fields">
       <div><label for="platform">OS</label><select id="platform"><option>Windows</option><option>Linux</option></select></div>
       <div><label for="scene">状態</label><select id="scene"><option value="idle">接続前</option><option value="connecting">接続中</option><option value="waiting">開始待ち</option><option value="consumer">アプリ待ち</option><option value="streaming">送信中</option><option value="error">接続エラー</option></select></div>
+      <div><label for="phone-count">USB端末数</label><select id="phone-count"><option value="0">0台</option><option value="1" selected>1台</option><option value="2">2台</option></select></div>
       <button type="button" id="reset">IPをリセット</button>
     </div>
   </details>
@@ -103,18 +104,22 @@ function saveAddress() {
 function render(next) {
   state = next;
   const windows = el('platform').value === 'Windows';
+  const phones = Number(el('phone-count').value);
+  const active = !['idle', 'error'].includes(next);
+  const noPhone = mode === 'usb' && phones === 0;
   const info = {
-    idle: ['', '', '接続'],
+    idle: [noPhone ? 'スマホをUSB接続してください' : '', '', '接続'],
     connecting: [mode === 'wifi' ? '接続中…' : 'USBを準備中…', '', '取消'],
     waiting: ['スマホで「カメラ開始」を押してください', '', '停止'],
     consumer: ['アプリで「Mobile Webcam」を選択してください', '', '停止'],
     streaming: ['カメラへ送信中', '', '停止'],
     error: ['接続できません', mode === 'wifi' ? 'Wi-FiとIPを確認' : 'USB接続とスマホの許可を確認', '再接続']
   }[next];
-  el('status').hidden = next === 'idle'; el('status').dataset.state = next;
+  el('status').hidden = next === 'idle' && !noPhone; el('status').dataset.state = next;
   el('status-title').textContent = info[0]; el('status-body').textContent = info[1]; el('status-body').hidden = !info[1];
   el('primary').textContent = info[2]; el('primary').dataset.stop = !['idle', 'error'].includes(next);
-  const active = !['idle', 'error'].includes(next);
+  el('usb-field').hidden = mode !== 'usb' || phones < 2;
+  el('primary').disabled = mode === 'usb' && !active && (noPhone || (phones > 1 && !el('device').value));
   for (const id of ['usb-mode', 'wifi-mode', 'address', 'device']) el(id).disabled = active;
   el('diagnostic').hidden = !['streaming', 'consumer'].includes(next);
   el('diagnostic').textContent = next === 'streaming' ? '受信 30 fps · 送信 30 fps' : '受信 30 fps · 送信 0 fps';
@@ -123,7 +128,7 @@ function render(next) {
 }
 function chooseMode(next) {
   mode = next;
-  el('wifi-field').hidden = next !== 'wifi'; el('usb-field').hidden = next !== 'usb';
+  el('wifi-field').hidden = next !== 'wifi';
   el('wifi-mode').setAttribute('aria-pressed', String(next === 'wifi'));
   el('usb-mode').setAttribute('aria-pressed', String(next === 'usb'));
   render('idle');
@@ -134,12 +139,15 @@ window.addEventListener('pagehide', saveAddress);
 el('connection-form').addEventListener('submit', event => {
   event.preventDefault(); clearTimeout(pending); saveAddress();
   if (!['idle', 'error'].includes(state)) { render('idle'); return; }
+  if (mode === 'usb' && el('primary').disabled) return;
   if (mode === 'wifi' && !el('address').value.trim()) {
     render('error'); el('status-title').textContent = 'IPアドレスを入力してください'; el('status-body').hidden = true;
     el('primary').textContent = '接続'; el('address').focus(); return;
   }
   render('connecting'); pending = setTimeout(() => render('waiting'), 900);
 });
+el('device').onchange = () => render(state);
+el('phone-count').onchange = () => { clearTimeout(pending); el('device').value = ''; render('idle'); };
 el('scene').onchange = () => { clearTimeout(pending); render(el('scene').value); };
 el('platform').onchange = () => {
   clearTimeout(pending);

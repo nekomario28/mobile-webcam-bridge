@@ -16,7 +16,11 @@ Normal stop requests graceful termination; after **1 second** terminate/kill tha
 
 The Linux privileged USB helper only switches the selected device into AOA and reports the selected physical device; it never receives video or links the GUI/FFmpeg. One-time setup continues through the existing script. Helper cancellation must not leave a callback able to restart reception. Its own bounded operation/exit is tested, including authentication cancellation. No reconnect loop, daemon, localhost control server, or worker pool in the initial release.
 
-USB control has only `ListCandidates` and `SwitchSelected`. Windows uses a private short-lived mode of the app; Linux uses the USB-only helper. Listing is always unprivileged. Enumerate once when opening/selecting USB and refresh at Connect; a sole compatible candidate is selected automatically, multiple candidates are returned for choice. Never enumerate repeatedly while in Wi-Fi mode. SessionController owns these child operations and their generation before starting the receiving worker; only an ACCESS result permits the existing Linux elevated switch.
+USB control has only `ListCandidates` and `SwitchSelected`. Windows uses a private short-lived mode of the app; Linux uses the USB-only helper. Listing is always unprivileged. Enumerate when opening/selecting USB, on USB hotplug while that view is active, and at Connect; no repeated enumeration in Wi-Fi mode. SessionController owns these child operations and their generation before starting the receiving worker; only an ACCESS result permits the existing Linux elevated switch.
+
+Candidates are manufacturer-neutral. Remove the baseline GUI's Sony VID allowlist and fixed Xperia label. Recognize an existing accessory by `18d1:2d00/2d01/2d04/2d05`; for pre-AOA phones use read-only OS/device metadata, not a manufacturer list. Metadata is a discovery hint, not proof of AOA support. Slice 06 must establish the exact Windows/Linux metadata rule against non-Sony phones and unrelated devices before shipping. Unclassified devices remain reachable through an explicit selected-device picker in Details; never try request 51 on every USB device to find a phone. That picker excludes hubs and labels devices using available descriptors plus their physical port, without asserting they are Android. Request 51 runs only at Connect on the selected device; a nonzero protocol reply establishes AOA capability. Distinguish access/driver failure, failed capability query, and unplug rather than declaring all failures unsupported.
+
+For one phone candidate, select it automatically and omit the selector. For multiple, require a choice and display actual product names; append a physical-port suffix for missing/duplicate names. There is no Xperia/brand/accessory-mode menu. With none, show a short USB-connect prompt; do not launch a receiver. Candidate selection is session-local and revalidated at Connect; a disappearing selection must never silently switch to another attached phone. AOA mode switching is an internal operation, not another user choice.
 
 ## Settings
 
@@ -75,7 +79,7 @@ Windows output: current pinned Unity Capture filter, slot 0, original object nam
 | Linux camera and GPU paths | 04/07 | Real v4l2loopback and consumer/driver evidence |
 | Windows IPC / bounded stop | 05 | Rust vs pinned C++ IPC test, stalls, abandoned mutex, duplicate producer |
 | Native Windows camera/GPU/install | 05/07 | Real Windows, consumer, clean install/update/uninstall; Wine supplementary |
-| Selected-device USB AOA | 06 | G0, G0.5's 1000 exchanges, USB debugging off, hot unplug, multi-device selection |
+| Generic Android selection / USB AOA | 06 | Sony and non-Sony G0/G0.5, 1000 exchanges, USB debugging off, 0/1/multiple candidates, unclassified picker, access failures, unplug and selected-port continuity |
 | Actual Streaming, cancellation, disconnect | 07 | Complete GUI-to-worker entry, delayed old events, phone stop/disconnect |
 | No regression in live webcam use | 07 | G1/G2 durations and G3 consumers from docs/gates.md, both transports/OS |
 
