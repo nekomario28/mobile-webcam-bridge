@@ -22,6 +22,12 @@ Candidates are manufacturer-neutral. Remove the baseline GUI's Sony VID allowlis
 
 For one phone candidate, select it automatically and omit the selector. For multiple, require a choice and display actual product names; append a physical-port suffix for missing/duplicate names. There is no Xperia/brand/accessory-mode menu. With none, show a short USB-connect prompt; do not launch a receiver. Candidate selection is session-local and revalidated at Connect; a disappearing selection must never silently switch to another attached phone. AOA mode switching is an internal operation, not another user choice.
 
+## UI language
+
+EN/JA is automatic and local. Use the primary OS application/UI locale in the native GUI; Japanese (`ja`, including region/script variants) selects JA, every other or unavailable locale selects EN. Match the current host/Android default rule. Android follows its own app/device locale, not the PC's setting. The HTML sketch uses the first browser preference (`navigator.languages[0]`, then `navigator.language`) and updates on `languagechange`; its collapsed preview override is a fixture only, never a product setting or persisted value.
+
+Keep one small, complete EN/JA copy table for labels, actions, waits, failures and diagnostic summaries. Use stable semantic IDs for controls, options, settings, worker observations and error codes; translated strings must not drive behavior. Keep device product names, addresses, paths, codec/backend names and raw diagnostics unchanged. The GUI maps structured worker failures to short localized actions, with raw details in the bounded log. Language changes must not reconnect, change selection, clear an IP/error, or interrupt Stop. No translation service, runtime download, language wizard or new settings key. Verify native locale retrieval in slice 02 before selecting an API/crate.
+
 ## Settings
 
 Keep the existing product namespace, keys and native storage without linking Qt. Keys: `transport`, `lanHost`, `decode`, `output`, `rotation`, `mirror`, `verticalFlip`. Defaults match current code: USB, empty LAN address, Linux `/dev/video10`, decode `auto`, rotation 0, mirror true, vertical flip false. Rotation is 0/90/180/270. There is no new settings file, migration marker or dual writing.
@@ -73,7 +79,7 @@ Windows output: current pinned Unity Capture filter, slot 0, original object nam
 |---|---|---|
 | Dependency closure / decoding features | 01 | Native build and a deterministic H.264 fixture; recorded feature/import lists |
 | Saved IP/settings and rollback | 02 | Qt -> Rust -> Qt round trips and fresh process/restart on both native stores |
-| Japanese/English GUI and idle behavior | 02 | Native shots, IME/keyboard checks, repaint/idle observations |
+| Automatic EN/JA GUI and idle behavior | 02 | Native primary-locale/EN fallback checks, all states/errors, mixed PC/phone locales, IME/keyboard and repaint/idle observations |
 | AMB1 bytes and TCP handshake/fragmentation | 03 | Frozen baseline C++/Kotlin fixtures and loopback failure tests |
 | H.264 recovery and transforms | 04 | Matched fixture outputs; asymmetric 0/90/180/270 and flip cases |
 | Linux camera and GPU paths | 04/07 | Real v4l2loopback and consumer/driver evidence |

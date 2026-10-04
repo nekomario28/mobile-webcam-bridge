@@ -7,6 +7,7 @@ Captured 2026-10-04. Product baseline: `03e874d7396f1160f73087d657847760226199bb
 | Boundary | Baseline source | Decision-changing behavior |
 |---|---|---|
 | GUI/settings/stop | `host/src/gui_main.cpp`, `host/tests/gui_test.cpp` | Native QSettings namespace/keys; receiver deadline 120s; GUI forced stop after 1s; delayed USB callbacks must not start after Cancel |
+| Automatic language | `host/src/gui_main.cpp`, Android `MainActivity.kt` | Host uses `QLocale::system().language()`, Android uses the first app configuration locale; Japanese selects JA, otherwise EN. Rust retains automatic EN/JA without a new preference |
 | Framing | `protocol/wire-v0.md`, `host/src/wire.cpp`, Android `Wire.kt`, `VideoWire.kt` | AMB1, LE 24-byte header, 16 MiB cap, Annex-B and existing type/flag values |
 | TCP | `host/src/tcp.cpp`, Android `LanServer.kt`, `LanSession.kt` | Port 48527, empty HELLO/ACK with matching sequence; one client |
 | AOA/USB | `host/src/aoa.cpp`, `accessory.cpp`, `main.cpp`, Android `AccessorySession.kt` | Exact AOA strings, physical port tracking, separate header/payload transfers, header resync/ZLP handling; no USB HELLO |
@@ -46,6 +47,7 @@ Baseline build environments: Windows MSYS2 MINGW64, Qt 6.11.2 / FFmpeg 9.0.2 / l
 - [Rust FFI guidance](https://doc.rust-lang.org/nomicon/ffi.html), [Microsoft Rust bindings](https://github.com/microsoft/windows-rs). Rust safety does not validate an external ABI or remove explicit lifetime/resource constraints.
 - [Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects), [Linux parent-death signal semantics](https://man7.org/linux/man-pages/man2/PR_SET_PDEATHSIG.2const.html). Job kill-on-close depends on final-handle ownership. Linux semantics concern the creating thread and have a registration race/credential reset boundary. Initialize and verify the unprivileged child explicitly; do not assume an elevated helper inherits that guarantee.
 - [Android NSD](https://developer.android.com/develop/connectivity/wifi/use-nsd), [Safari WebRTC/media capture](https://webkit.org/blog/7726/announcing-webrtc-and-media-capture/). These establish candidate later mechanisms. Local trusted HTTPS, pairing, receiver choice and lifecycle remain unresolved.
+- [Browser language preferences](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/languages), [languagechange](https://developer.mozilla.org/en-US/docs/Web/API/Window/languagechange_event). Browser preferences are ordered; the sketch uses the first preference for the existing Japanese-or-English rule and rerenders translated copy on language change. Its preview override does not change browser settings or persist a product language preference. Native Rust locale retrieval remains a slice 02 check.
 
 ## Three independent drafts
 
@@ -76,6 +78,6 @@ All supported worker separation, FFmpeg/libusb continuity, a minimal GUI and no 
 - A transport/queue/zero-copy optimization requires a measured parity bottleneck. It is not a prerequisite to the rewrite.
 - The 60 MiB objective is provisional, not a passing result. Record the combined costs early; do not weaken a gate for a green label.
 
-Scope audit: this request is design only. There is no new release, remote push, main change, Android rewrite or speculative iOS/Wi-Fi discovery implementation. User concerns about BAT, repeated IP entry, avoidable processing, generic Android support and Linux/Android setup were carried into the concrete contracts. Rust code, minimal FFmpeg, native GUI, fresh phone/GPU/consumer acceptance and final package size are all NOT RUN.
+Scope audit: design and sketch only; the user requested publishing the accumulated work on `rust-host-design`. There is no new release, main change, Android rewrite or speculative iOS/Wi-Fi discovery implementation. User concerns about BAT, repeated IP entry, avoidable processing, generic Android support, automatic EN/JA and Linux/Android setup were carried into the concrete contracts. Rust code, minimal FFmpeg, native GUI, fresh phone/GPU/consumer acceptance and final package size are all NOT RUN.
 
 Design artifact checks: all local Markdown links resolved, no trailing whitespace, and the HTML script passed `node --check`. The [sketch interaction observations and visual boundary](ui-review.md) record the browser checks and the unavailable independent image critique. None of these checks accept an implementation slice.
