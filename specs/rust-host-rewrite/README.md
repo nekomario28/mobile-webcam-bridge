@@ -1,10 +1,10 @@
 # Mobile Webcam — Rust host design
 
-Status: DESIGNED. Last updated: 2026-10-04 (Asia/Tokyo). Implementation: NOT RUN.
+Status: IMPLEMENTING on `rust-host`. Last updated: 2026-10-05 (Asia/Tokyo). See [implementation evidence](implementation.md).
 
 ## Next Agent Prompt
 
-Read [contracts.md](contracts.md) and [research.md](research.md), then start [01-dependencies](slices/01-dependencies.md) when implementation is requested. The baseline is `v0.1.2`, commit `03e874d7396f1160f73087d657847760226199bb`, refreshed against origin/main on 2026-10-04. Refresh origin/main before implementation; if production has moved, reconcile its behavior with this frozen baseline before editing. This local design branch is `rust-host-design`; main and the release are unchanged. Record exact dependency versions and actual measurements before marking any implementation slice accepted. Native Windows hardware, a minimal FFmpeg build, and Rust GUI parity remain NOT RUN. Update this handoff and the checklist before ending each implementation pass.
+Continue on `rust-host`, reading [implementation.md](implementation.md), [contracts.md](contracts.md), and [choices.md](choices.md) first. The frozen C++ baseline is v0.1.2 (`03e874d7396f1160f73087d657847760226199bb`), refreshed against origin/main on 2026-10-05. Rust source is in `host-rs/`; production and release workflows still select C++. Keep them intact until the acceptance matrix passes. Use bounded builds (CPU 1 core, MemoryMax 2 GiB, Cargo jobs 1, OOM adjustment 800): the user approved this exception while the host resource gate is HOLD. Record exact measurements before accepting slices; unit tests and cross-compilation do not establish native hardware parity.
 
 - [ ] [01 — Minimal FFmpeg and build closure](slices/01-dependencies.md)
 - [ ] [02 — Native GUI and existing saved settings](slices/02-gui-settings.md)
@@ -51,7 +51,7 @@ Use modules, not a collection of local crates or plugin interfaces. Unsafe code 
 | Component | Initial choice | Reason and exit condition |
 |---|---|---|
 | GUI | `egui` / `eframe`, one `wgpu` renderer, Windows and Linux X11/Wayland | MIT/Apache ecosystem, no Qt. Slice 02 must establish Japanese input, accessibility, startup, idle repaint behavior, and packaged size; reopen only on a concrete failure |
-| Video | `ffmpeg-next`, defaults disabled; `codec` and `software-scaling` | Retain mature H.264 and GPU decoding. Test its exact version against minimal FFmpeg in slice 01; use its `ffi` access only inside `video` for hardware contexts |
+| Video | `ffmpeg-sys-next` 9.0.0, defaults disabled; `avcodec` and `swscale` | The released ffmpeg-next 9.0.0 failed its codec-only compile probe because it imports avformat. Reuse the published bindings with narrow local RAII ownership; retain FFmpeg H.264, hardware decode, and swscale |
 | USB | `rusb` / libusb | Preserve AOA and selected-device continuity; remove the Sony-only candidate restriction. nusb is deferred: ~0.24 MiB Windows library saving does not justify combining a USB backend change with the initial port |
 | IPC | `serde` / `serde_json` | Small bounded private control messages between the same executable; no version negotiation |
 | Settings | Existing Linux INI / Windows registry | Keep Qt-compatible keys/types without Qt; saved IP also remains usable on rollback |
@@ -95,8 +95,8 @@ Wi-Fi discovery: Android NSD advertisement plus host DNS-SD lookup, while retain
 - Existing code is C++20 / Qt Widgets / libusb / FFmpeg. Android uses Camera2 / MediaCodec and AMB1.
 - v0.1.2 distribution audit: Windows staging 184.0 MiB, Linux AppDir 182.8 MiB. Qt-exclusive libraries: 63.2 / 69.4 MiB. FFmpeg-exclusive non-core libraries: 84.5 / 84.6 MiB. These are removal candidates before replacement code, not final Rust binary sizes.
 - Existing AMB1 and USB transfer boundaries must survive the rewrite. Read/write the same native QSettings store without Qt so the user does not need to re-enter the IP.
-- Rust host, minimal FFmpeg, Rust GUI, and new device/consumer checks: NOT RUN.
+- Rust host, both minimal FFmpeg builds, native Linux GUI, worker lifetime and supplementary Windows IPC/installer checks have implementation evidence. The complete hardware acceptance matrix remains NOT RUN; see [implementation.md](implementation.md).
 
 ## Next safe action
 
-Start slice 01 once implementation is requested. The first useful native checkpoint is slice 02: a small GUI that remembers the existing address and lets the user inspect all session states. Advance to camera tests only after binding/build and GUI assumptions have measured evidence. See the [Japanese design overview](design-ja.md), [interactive UI sketch](visualizations/ui.html), and [sketch review boundary](ui-review.md) for review.
+Finish package/native CI verification, then run the frozen acceptance matrix with a real phone and camera consumer before release cutover. Preserve the implemented software checks and report unsupported hardware as NOT RUN. See the [Japanese design overview](design-ja.md), [interactive UI sketch](visualizations/ui.html), and [sketch review boundary](ui-review.md) for review.

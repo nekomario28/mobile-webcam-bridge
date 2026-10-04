@@ -70,7 +70,11 @@ if [ ! -e /dev/video10 ]; then
         modprobe v4l2loopback
     fi
 fi
-udevadm trigger --subsystem-match=usb --attr-match=idVendor=0fce --attr-match=idProduct=020d
+if [ -f "$script_dir/mobile-webcam-usb" ]; then
+    install -Dm0755 "$script_dir/mobile-webcam-usb" /usr/lib/mobile-webcam/mobile-webcam-usb
+else
+    udevadm trigger --subsystem-match=usb --attr-match=idVendor=0fce --attr-match=idProduct=020d
+fi
 udevadm trigger --subsystem-match=video4linux --sysname-match=video10
 udevadm settle
 test -e /dev/video10

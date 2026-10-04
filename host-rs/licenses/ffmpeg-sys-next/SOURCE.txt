@@ -1,0 +1,4 @@
+ffmpeg-sys-next 9.0.0 declares WTFPL in Cargo.toml.
+Upstream revision: 80b7dd8327c3539159f37d8ca5423c75d6cd2e57
+License text: https://github.com/spdx/license-list-data/blob/main/text/WTFPL.txt
+SHA256: 13d8825a59e5e546d41e8711405d0f335a9934362a47c04a3b4280fa7932dc4a
