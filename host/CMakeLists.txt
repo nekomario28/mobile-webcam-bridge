@@ -71,6 +71,9 @@ if(AMB_BUILD_GUI)
     install(TARGETS mobile-webcam amb-aoa-probe ${AMB_SINK}
             RUNTIME DESTINATION bin)
     if(NOT WIN32)
+        install(PROGRAMS ../linux/install-host-integration.sh DESTINATION share/mobile-webcam/linux)
+        install(FILES ../linux/70-mobile-webcam.rules ../linux/mobile-webcam-v4l2loopback.conf
+                      ../linux/mobile-webcam-modules-load.conf DESTINATION share/mobile-webcam/linux)
         install(FILES ../linux/mobile-webcam.desktop
             DESTINATION share/applications RENAME dev.nekomario.mobile-webcam.desktop)
         install(FILES "${CMAKE_CURRENT_BINARY_DIR}/dev.nekomario.mobile-webcam.appdata.xml"
@@ -84,6 +87,21 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    if(AMB_BUILD_GUI)
+        find_package(Qt6 REQUIRED COMPONENTS Test)
+        add_executable(amb-gui-helper tests/gui_helper.cpp)
+        add_executable(amb-gui-test tests/gui_test.cpp)
+        set_target_properties(amb-gui-test PROPERTIES AUTOMOC ON)
+        set_target_properties(amb-gui-helper amb-gui-test PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/gui-tests")
+        target_link_libraries(amb-gui-test PRIVATE Qt6::Widgets Qt6::Test)
+        add_dependencies(amb-gui-test amb-gui-helper)
+        add_test(NAME gui COMMAND amb-gui-test)
+        set_tests_properties(gui PROPERTIES TIMEOUT 20)
+        if(NOT WIN32)
+            set_tests_properties(gui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        endif()
+    endif()
     add_executable(amb-wire-test tests/wire_test.cpp)
     target_link_libraries(amb-wire-test PRIVATE amb-core)
     add_test(NAME wire COMMAND amb-wire-test)

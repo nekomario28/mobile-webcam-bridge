@@ -4,7 +4,7 @@ The Windows x86_64 host uses the same Android APK and USB/Wi-Fi protocol as
 Linux. It publishes video through the MIT-licensed
 [Unity Capture](https://github.com/schellingb/UnityCapture) DirectShow filter;
 Unity itself is not required. Windows support is experimental until the
-real-device checks below have passed. The existing v0.1.1 release has no Windows installer.
+real-device checks below have passed. The v0.1.2 release includes the experimental installer.
 
 ## Use a Windows build
 
@@ -12,7 +12,8 @@ real-device checks below have passed. The existing v0.1.1 release has no Windows
    the Windows administrator prompt. It installs the app and virtual camera together;
    no BAT files, terminal commands, MSYS2 or Unity installation are needed to use it.
 2. Open **Mobile Webcam** from the Start menu. **Wi-Fi / LAN** is selected initially;
-   enter the IP shown by **Connect Wi-Fi** in the Android app, and start the bridge.
+   enter the IP shown by **Wi-Fi** in the Android app and press **Start**.
+   The IP and connection mode are restored on subsequent launches.
 3. Start the camera on Android. In your camera application, select
    **Unity Video Capture**. The bridge initially waits until a camera application opens it.
 
@@ -31,7 +32,8 @@ Mobile Webcam. The ZIP is a build artifact; use Setup.exe for installation.
 USB debugging remains unnecessary for the Android stream. Windows must provide
 a libusb-compatible USB driver; see the
 [libusb Windows documentation](https://github.com/libusb/libusb/wiki/Windows).
-Use **Switch to AOA** when the original phone interface is accessible to libusb.
+Press **Start** in USB mode when the original phone interface is accessible to
+libusb; the app switches to AOA and starts the receiver.
 After switching, accessory-only mode has a different identity (`18d1:2d00`) and
 may need its own WinUSB binding. If switching is blocked by the original driver,
 use Wi-Fi until the exact phone/interface driver setup is verified. Do not
@@ -58,7 +60,7 @@ from the same MSYS2 environment. To repeat packaging, remove only its previous
 The test suite checks framing, transforms, TCP deadlines/partial reads and Windows
 shared-memory exchange. It does not prove that another application can use the camera.
 
-## Before a Windows release
+## Windows hardware checks
 
 On actual Windows hardware, confirm Android Wi-Fi and USB with debugging off,
 camera enumeration and moving video in the intended consumer applications,
@@ -68,6 +70,6 @@ MSYS2 on PATH to ensure that Setup.exe includes its runtime dependencies.
 The MSYS2 FFmpeg package enables GPL components. A binary distributor must
 follow that package's GPL terms and provide the corresponding source, including
 its build recipe, along with the Qt/libusb license requirements. Package license
-texts are included in the ZIP. Exact package recipes and source locations are
+texts are included in Setup.exe and the ZIP. Exact package recipes and source locations are
 maintained by [MSYS2 MINGW-packages](https://github.com/msys2/MINGW-packages);
 record the dependency versions from the build environment before publishing.

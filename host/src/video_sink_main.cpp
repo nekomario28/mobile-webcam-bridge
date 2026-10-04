@@ -67,6 +67,7 @@ struct Options {
 #else
     std::string device = "/dev/video10";
 #endif
+    std::optional<amb::aoa::DeviceId> usb_target;
     std::string lan_host;
     std::uint16_t lan_port = 48'527;
     std::string hw_decode = "auto";
@@ -84,7 +85,7 @@ void usage(const char* argv0) {
         << " [--device CAMERA] [--lan HOST [--port 48527]]"
            " [--hw-decode auto|off|vaapi|cuda|d3d11va] [--frames N] [--timeout-ms N]"
            " [--rotate 0|90|180|270] [--no-horizontal-flip] [--vertical-flip]"
-           " [--control-stdin]\n\n"
+           " [--control-stdin] [--bus-address B:A]\n\n"
 #ifdef _WIN32
         << "Receives H.264 over USB AOA or LAN TCP and writes RGBA frames to a\n"
         << "Unity Capture virtual camera. --frames 0 runs until stopped.\n"
@@ -567,6 +568,21 @@ int main(int argc, char** argv) {
                 return 2;
             }
             options.lan_port = static_cast<std::uint16_t>(parsed);
+        } else if (arg == "--bus-address" && i + 1 < argc) {
+            const std::string target = argv[++i];
+            const auto colon = target.find(':');
+            std::size_t bus = 0, address = 0;
+            if (colon == std::string::npos ||
+                !parse_nonnegative(target.substr(0, colon), bus) ||
+                !parse_nonnegative(target.substr(colon + 1), address) ||
+                bus == 0 || bus > 255 || address == 0 || address > 255) {
+                std::cerr << "invalid --bus-address; expected decimal BUS:ADDR\n";
+                return 2;
+            }
+            options.usb_target = amb::aoa::DeviceId{
+                .bus = static_cast<std::uint8_t>(bus),
+                .address = static_cast<std::uint8_t>(address),
+            };
         } else if (arg == "--hw-decode" && i + 1 < argc) {
             options.hw_decode = argv[++i];
         } else if (arg == "--frames" && i + 1 < argc) {
@@ -662,7 +678,7 @@ int main(int argc, char** argv) {
             return 3;
         }
         accessory = std::make_unique<amb::AccessoryDevice>(usb_context);
-        if (!accessory->connect(std::nullopt, error)) {
+        if (!accessory->connect(options.usb_target, error)) {
             std::cerr << "accessory connect failed: " << error << "\n";
             libusb_exit(usb_context);
             return 4;

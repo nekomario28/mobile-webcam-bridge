@@ -74,10 +74,10 @@ diagnostic does not silently test a different path.
 
 ## Future iOS path
 
-The portable boundary is `encoded H.264 + AMB1 session`, not Android AOA.
-An iOS LAN sender can implement the same framed session while using iOS-native
-capture/encode APIs. A future wired iOS transport can be added beside AOA/TCP
-without changing the Linux decode/V4L2 contract.
+The intended browser route uses Safari camera capture over HTTPS and WebRTC.
+It needs a WebRTC receiver that feeds decoded frames into the host transform and
+virtual-camera path. Android's raw AMB1-over-TCP session is not exposed to a
+browser; USB AOA remains Android-specific.
 
 ## Evidence boundary
 

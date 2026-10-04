@@ -20,6 +20,7 @@ import android.os.ParcelFileDescriptor
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 class MainActivity : Activity() {
@@ -33,7 +34,11 @@ class MainActivity : Activity() {
     private var session: MediaSession? = null
     private var lanServer: LanServer? = null
     private var cameraBridge: CameraBridgeController? = null
-    private var pendingCameraStart = false
+    private lateinit var cameraButton: Button
+    private lateinit var details: TextView
+    private var cameraStartRequested = false
+    private var cameraPermissionPending = false
+    private var foreground = false
     private var usbPermissionPending = false
 
     private val handler = Handler(Looper.getMainLooper())
@@ -70,44 +75,55 @@ class MainActivity : Activity() {
             setTextIsSelectable(true)
         }
         val usbMode = Button(this).apply {
-            text = ui("Connect USB", "USBで接続")
+            text = "USB"
             setOnClickListener { startUsbMode() }
         }
         val lanMode = Button(this).apply {
-            text = ui("Connect Wi-Fi", "Wi-Fiで接続")
+            text = "Wi-Fi"
             setOnClickListener { startLanMode() }
         }
-        val disconnect = Button(this).apply {
-            text = ui("Disconnect", "接続を停止")
-            setOnClickListener {
-                stopConnections()
-                show(ui("Disconnected", "接続を停止しました"))
-            }
+        details = TextView(this).apply {
+            textSize = 13f
+            setPadding(32, 16, 32, 16)
+            setTextIsSelectable(true)
+            visibility = android.view.View.GONE
         }
         val cameras = Button(this).apply {
-            text = ui("Camera info", "カメラ情報")
-            setOnClickListener { showCameras() }
-        }
-        val startCamera = Button(this).apply {
-            text = ui("Start camera 720p30", "カメラ開始 720p30")
-            setOnClickListener { startCamera720p() }
-        }
-        val stopCamera = Button(this).apply {
-            text = ui("Stop camera", "カメラ停止")
+            text = ui("Details", "詳細")
             setOnClickListener {
-                stopCamera()
-                showConnectionStatus(ui("Camera stopped", "カメラを停止しました"))
+                if (details.visibility == android.view.View.VISIBLE) {
+                    details.visibility = android.view.View.GONE
+                } else {
+                    details.visibility = android.view.View.VISIBLE
+                    showCameras()
+                }
             }
         }
-        setContentView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(status, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(usbMode, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(lanMode, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(disconnect, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(cameras, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(startCamera, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(stopCamera, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        cameraButton = Button(this).apply {
+            text = ui("Start camera", "カメラ開始")
+            setOnClickListener {
+                if (cameraStartRequested) {
+                    stopCamera()
+                    showConnectionStatus(ui("Camera stopped", "カメラを停止しました"))
+                } else {
+                    cameraStartRequested = true
+                    startCamera720p()
+                }
+            }
+        }
+        setContentView(ScrollView(this).apply {
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(status, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    addView(usbMode, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(lanMode, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                })
+                addView(cameraButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                addView(cameras, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                addView(details, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            })
         })
 
         val filter = IntentFilter(ACTION_USB_PERMISSION)
@@ -118,15 +134,22 @@ class MainActivity : Activity() {
             registerReceiver(permissionReceiver, filter)
         }
         receiverRegistered = true
-        startUsbMode()
+        if (getSharedPreferences("settings", MODE_PRIVATE).getString("connectionMode", "USB") == "LAN") {
+            startLanMode()
+        } else {
+            startUsbMode()
+        }
     }
 
     override fun onResume() {
         super.onResume()
+        foreground = true
+        if (cameraStartRequested) startCamera720p()
         if (::usb.isInitialized && connectionMode == ConnectionMode.USB && session == null) discoverUsb()
     }
 
     override fun onPause() {
+        foreground = false
         handler.removeCallbacks(rediscoverRunnable)
         super.onPause()
     }
@@ -141,21 +164,25 @@ class MainActivity : Activity() {
     }
 
     private fun startUsbMode() {
+        if (connectionMode == ConnectionMode.USB && (session != null || usbPermissionPending || cameraStartRequested)) return
         handler.removeCallbacks(rediscoverRunnable)
         stopCamera()
         lanServer?.close()
         lanServer = null
         closeSession()
         connectionMode = ConnectionMode.USB
+        saveConnectionMode()
         show(ui("USB: waiting for Android Open Accessory…", "USB: Android Open Accessoryを待っています…"))
         discoverUsb()
     }
 
     private fun startLanMode() {
+        if (connectionMode == ConnectionMode.LAN && lanServer != null) return
         handler.removeCallbacks(rediscoverRunnable)
         stopCamera()
         closeSession()
         connectionMode = ConnectionMode.LAN
+        saveConnectionMode()
         lanServer?.close()
 
         lateinit var server: LanServer
@@ -173,18 +200,23 @@ class MainActivity : Activity() {
                         }
                         showLanWaiting(server)
                     } else {
-                        closeSession()
+                        closeSession(clearStartRequest = false)
                         session = lanSession
                         show(
                             ui("Wi-Fi: PC connected\n", "Wi-Fi: PC接続済み\n") +
                                 server.endpoints().joinToString() +
                                 ui("\nPress Start camera", "\nカメラ開始を押してください"),
                         )
+                        if (cameraStartRequested) startCamera720p()
                     }
                 }
             },
-            onStatus = { runOnUiThread { showLanWaiting(server) } },
-            onError = { runOnUiThread { showLanWaiting(server, it) } },
+            onStatus = {
+                runOnUiThread { if (lanServer === server && session == null) showLanWaiting(server) }
+            },
+            onError = { error ->
+                runOnUiThread { if (lanServer === server && session == null) showLanWaiting(server, error) }
+            },
         )
         lanServer = server
         runCatching { server.start() }
@@ -245,7 +277,7 @@ class MainActivity : Activity() {
 
     private fun openAccessory(accessory: UsbAccessory) {
         if (connectionMode != ConnectionMode.USB) return
-        closeSession()
+        closeSession(clearStartRequest = false)
         val pfd = usb.openAccessory(accessory)
         if (pfd == null) {
             show(ui("Could not open USB accessory. Retrying…", "USB accessoryを開けません。再試行します…"))
@@ -260,8 +292,7 @@ class MainActivity : Activity() {
             onProgress = { count ->
                 runOnUiThread {
                     if (session === active) {
-                        show(ui("USB connected · control=$count · dropped=${active.droppedVideoFrames()}\nPress Start camera",
-                               "USB接続済み · control=$count · dropped=${active.droppedVideoFrames()}\nカメラ開始を押してください"))
+                        details.text = "USB · control=$count · dropped=${active.droppedVideoFrames()}"
                     }
                 }
             },
@@ -280,6 +311,7 @@ class MainActivity : Activity() {
         active.start()
         show(ui("USB connected · ${accessory.manufacturer} ${accessory.model}\nPress Start camera",
                "USB接続済み · ${accessory.manufacturer} ${accessory.model}\nカメラ開始を押してください"))
+        if (cameraStartRequested) startCamera720p()
     }
 
     private fun showCameras() {
@@ -297,29 +329,37 @@ class MainActivity : Activity() {
                    "カメラID=${camera.id} 向き=$facing\nMediaCodec: $sizes\nFPS: $fps")
             }
         }.getOrElse { ui("Camera query failed: ${it.message}", "カメラ情報の取得に失敗しました: ${it.message}") }
-        show(text.ifBlank { ui("No Camera2 device found", "Camera2 deviceがありません") })
+        details.text = text.ifBlank { ui("No Camera2 device found", "Camera2 deviceがありません") }
     }
 
     private fun startCamera720p() {
-        val activeSession = session ?: run {
-            showConnectionStatus(ui("Connect to the PC by USB or Wi-Fi first", "先にUSBまたはWi-FiでPCへ接続してください"))
+        if (!cameraStartRequested || cameraBridge != null || !foreground) return
+        if (connectionMode == ConnectionMode.LAN && session == null) {
+            cameraStartRequested = false
+            showConnectionStatus(ui("Connect the PC, then press Start camera", "PCを接続してからカメラ開始を押してください"))
             return
         }
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            pendingCameraStart = true
-            requestPermissions(arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST)
+            if (!cameraPermissionPending) {
+                cameraPermissionPending = true
+                requestPermissions(arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST)
+            }
             return
         }
-        pendingCameraStart = false
-        stopCamera()
+        val activeSession = session ?: run {
+            showConnectionStatus(ui("Waiting for the PC · Cancel to stop", "PC接続待ち · キャンセルで停止できます"))
+            return
+        }
 
         val cameras = runCatching { CameraCatalog.enumerate(this) }.getOrElse {
+            stopCamera()
             show(ui("Camera enumeration failed: ${it.message}", "カメラ一覧の取得に失敗しました: ${it.message}"))
             return
         }
         val camera = cameras.firstOrNull { it.lensFacing == CameraCharacteristics.LENS_FACING_BACK }
             ?: cameras.firstOrNull()
         if (camera == null) {
+            stopCamera()
             show(ui("No Camera2 camera found", "Camera2 cameraがありません"))
             return
         }
@@ -328,7 +368,11 @@ class MainActivity : Activity() {
         bridge = CameraBridgeController(
             context = this,
             session = activeSession,
-            onStatus = { message -> runOnUiThread { showConnectionStatus(ui("Streaming\n$message", "配信中\n$message")) } },
+            onStatus = { message ->
+                runOnUiThread {
+                    if (cameraBridge === bridge) showConnectionStatus(ui("Streaming\n$message", "配信中\n$message"))
+                }
+            },
             onError = { message ->
                 runOnUiThread {
                     if (cameraBridge === bridge) {
@@ -339,6 +383,7 @@ class MainActivity : Activity() {
             },
         )
         cameraBridge = bridge
+        updateCameraButton()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         runCatching {
             bridge.start(
@@ -364,10 +409,25 @@ class MainActivity : Activity() {
         show("$transport · $message")
     }
 
-    private fun stopCamera() {
+    private fun updateCameraButton() {
+        cameraButton.text = when {
+            cameraBridge != null -> ui("Stop camera", "カメラ停止")
+            cameraStartRequested -> ui("Cancel", "キャンセル")
+            else -> ui("Start camera", "カメラ開始")
+        }
+    }
+
+    private fun saveConnectionMode() {
+        getSharedPreferences("settings", MODE_PRIVATE).edit()
+            .putString("connectionMode", connectionMode.name).apply()
+    }
+
+    private fun stopCamera(clearStartRequest: Boolean = true) {
+        if (clearStartRequest) cameraStartRequested = false
         cameraBridge?.close()
         cameraBridge = null
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        updateCameraButton()
     }
 
     override fun onRequestPermissionsResult(
@@ -377,16 +437,18 @@ class MainActivity : Activity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != CAMERA_PERMISSION_REQUEST) return
+        cameraPermissionPending = false
+        if (!cameraStartRequested) return
         val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
-        if (granted && pendingCameraStart) startCamera720p()
+        if (granted) startCamera720p()
         else {
-            pendingCameraStart = false
+            stopCamera()
             showConnectionStatus(ui("Camera permission denied", "カメラ権限が必要です"))
         }
     }
 
-    private fun closeSession() {
-        stopCamera()
+    private fun closeSession(clearStartRequest: Boolean = true) {
+        stopCamera(clearStartRequest)
         val current = session
         session = null
         runCatching { current?.close() }
@@ -403,6 +465,7 @@ class MainActivity : Activity() {
 
     private fun show(message: String) {
         status.text = message
+        updateCameraButton()
     }
 
     private fun ui(english: String, japanese: String): String =

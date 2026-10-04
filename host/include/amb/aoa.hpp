@@ -34,7 +34,8 @@ std::vector<DeviceId> list_devices(libusb_context* ctx);
 ProbeResult probe_protocol(libusb_device* dev);
 bool request_accessory_mode(libusb_device* dev, std::string& error);
 std::optional<DeviceId> wait_for_accessory(libusb_context* ctx, int timeout_ms,
-                                           std::optional<std::uint8_t> expected_bus = std::nullopt);
+                                           std::optional<std::uint8_t> expected_bus = std::nullopt,
+                                           const std::vector<std::uint8_t>& expected_ports = {});
 std::string describe(const DeviceId& id);
 
 }  // namespace amb::aoa

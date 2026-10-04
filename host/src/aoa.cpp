@@ -164,7 +164,8 @@ bool request_accessory_mode(libusb_device* dev, std::string& error) {
 }
 
 std::optional<DeviceId> wait_for_accessory(libusb_context* ctx, int timeout_ms,
-                                           std::optional<std::uint8_t> expected_bus) {
+                                           std::optional<std::uint8_t> expected_bus,
+                                           const std::vector<std::uint8_t>& expected_ports) {
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(timeout_ms);
     while (std::chrono::steady_clock::now() < deadline) {
@@ -175,6 +176,13 @@ std::optional<DeviceId> wait_for_accessory(libusb_context* ctx, int timeout_ms,
                 const auto id = device_id(list[i]);
                 if (id.vid == kGoogleVid && is_accessory_pid(id.pid) &&
                     (!expected_bus || id.bus == *expected_bus)) {
+                    std::vector<std::uint8_t> ports(7);
+                    const int depth = libusb_get_port_numbers(list[i], ports.data(), static_cast<int>(ports.size()));
+                    if (!expected_ports.empty()) {
+                        if (depth <= 0) continue;
+                        ports.resize(static_cast<std::size_t>(depth));
+                        if (ports != expected_ports) continue;
+                    }
                     libusb_free_device_list(list, 1);
                     return id;
                 }

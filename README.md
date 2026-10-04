@@ -2,7 +2,7 @@
 
 ![Mobile Webcam Linux GUI in English with an Xperia connected over USB](docs/screenshots/mobile-webcam-linux-gui-en.png)
 
-*Current AppImage screenshot: Xperia connected through USB AOA.*
+*Earlier Linux USB session with an Xperia; see the current release below.*
 
 Use an Android phone as a webcam over USB or local Wi-Fi. Linux outputs a
 normal V4L2 camera such as `/dev/video10`. The experimental Windows host outputs
@@ -12,8 +12,8 @@ through Unity Capture. Camera applications do not need a Mobile Webcam plugin.
 uses English when no Japanese locale is selected.
 
 **Why Mobile Webcam:** USB camera sharing works with Android USB debugging off.
-The Linux and Android GUIs are simple, and connecting the camera takes only a
-few steps. One Linux AppImage produces a normal V4L2 camera.
+Desktop settings are remembered between runs. Linux uses an AppImage; Windows
+uses one Setup.exe that installs the app and virtual camera.
 
 ## What it does
 
@@ -34,46 +34,43 @@ For the experimental Windows build and setup, see
 
 1. Install the APK on Android and download the x86_64 AppImage from the
    project's [Releases](https://github.com/nekomario28/mobile-webcam-bridge/releases).
-2. Install the two Linux runtime requirements: `libusb-1.0` and the
-   `v4l2loopback` kernel module. Package names for common distributions are:
+2. Use a system with glibc 2.39 or newer and install the `v4l2loopback` kernel
+   module for your running kernel. The AppImage
+   includes libusb, Qt and the decoder. Common package names are:
 
    ```sh
    # Arch / CachyOS
-   sudo pacman -S --needed libusb v4l2loopback-dkms
+   sudo pacman -S --needed v4l2loopback-dkms
 
    # Ubuntu / Debian
    sudo apt update
-   sudo apt install libusb-1.0-0 v4l2loopback-dkms
+   sudo apt install v4l2loopback-dkms
 
    # Fedora: run after enabling RPM Fusion Free
-   sudo dnf install libusb1 v4l2loopback
+   sudo dnf install v4l2loopback
    ```
 
    Fedora needs [RPM Fusion Free](https://rpmfusion.org/Configuration) for
-   `v4l2loopback`. Other distributions need the equivalent runtime packages.
+   `v4l2loopback`. Other distributions need the equivalent kernel module package and matching kernel headers.
 
 3. Make the AppImage executable and start it:
 
    ```sh
-   chmod +x Mobile_Webcam-0.1.1-x86_64.AppImage
-   ./Mobile_Webcam-0.1.1-x86_64.AppImage
+   chmod +x Mobile_Webcam-0.1.2-x86_64.AppImage
+   ./Mobile_Webcam-0.1.2-x86_64.AppImage
    ```
 
-4. Choose **USB** or **Wi-Fi** in the Linux GUI, then start the camera on
-   Android. The AppImage includes the bridge, decoder, and GUI; it does not
-   include the Linux kernel module.
+4. If camera access is not ready, press **Set up Linux camera access…** once
+   and approve the administrator prompt. The setup creates `/dev/video10`,
+   grants device access and arranges module loading at boot. If another
+   loopback camera is already usable, select its `/dev/videoX` instead.
+5. Follow the [USB](#usb) or [Wi-Fi](#wi-fi) steps below and select **Mobile Webcam**
+   in your camera application.
 
-If `/dev/video10` is missing, or USB access fails without sudo, clone this
-repository and run the following once. Skip it when an existing `v4l2loopback`
-device is already usable; select that `/dev/videoX` in the GUI if necessary.
-
-```sh
-sudo ./linux/install-host-integration.sh
-sudo modprobe v4l2loopback
-```
-
-The script is a one-time permission and device-name setup. It is not needed
-each time the AppImage starts.
+The AppImage includes this setup helper; cloning the repository is unnecessary.
+It cannot install a kernel module for your distribution. If other loopback
+cameras are already running, adding `/dev/video10` also needs `v4l2loopback-ctl`;
+setup leaves those cameras running.
 
 ### Build from source
 
@@ -94,9 +91,10 @@ The generated file is `dist/Mobile_Webcam-<version>-x86_64.AppImage`.
 ## USB
 
 1. Open Mobile Webcam on the phone and connect the USB cable.
-2. In the Linux GUI, select **USB** and press **Switch to AOA** if the phone
-   is still shown as a Sony device.
-3. Press **Start bridge** on Linux, then **Start camera** on the phone.
+2. In the desktop GUI, select **USB**, select the phone and press **Start**.
+   Accessory switching and receiver startup happen together.
+3. Press **Start camera** on Android. In USB mode it can also be pressed before
+   the PC connects; **Cancel** clears the pending start.
 
 The normal streaming target is accessory-only `18d1:2d00`; USB debugging is not
 needed for the running camera connection.
@@ -111,9 +109,13 @@ sudo ./build/host/amb-aoa-probe --device 0fce:XXXX --switch
 
 ## Wi-Fi
 
-1. Press **Connect Wi-Fi** in the Android app.
-2. Enter the phone's displayed IPv4 address in the Linux GUI.
-3. Press **Start bridge**, then **Start camera** on the phone.
+1. Select **Wi-Fi** in the Android app. It starts waiting for the PC.
+2. Select **Wi-Fi / LAN** on the desktop and enter the displayed phone IP once.
+3. Press **Start** on the desktop, then **Start camera** on Android.
+
+Linux and Windows restore the last phone IP and connection mode when reopened.
+Android also restores its connection mode. If the router assigns a different
+IP, replace the saved address with the one currently shown on the phone.
 
 There is no PIN. The current LAN transport has no authentication or encryption,
 so use it on a trusted local network. Only one LAN client is accepted.
@@ -147,14 +149,20 @@ identifiers retained for compatibility.
 
 ## Status
 
-v0.1.1 is available for Android and x86_64 Linux. USB has been tested with a
-Sony Xperia XQ-GE44 with USB debugging off. Discord compatibility is OK. Wi-Fi
-long-running and reconnect checks are still pending.
+v0.1.2 provides Android, a Linux AppImage and an experimental Windows Setup.exe.
+The earlier Linux USB gate used a Sony Xperia XQ-GE44 with USB debugging off and
+Discord. This release adds automated checks for settings persistence, USB
+startup/cancellation and the shared protocol; fresh phone/camera checks and
+Wi-Fi long-running/reconnect checks remain pending.
 
-Windows host source is experimental; Windows device and application checks
-are still pending. iOS is a future input path: Safari camera capture over HTTPS
-and WebRTC is the intended browser-based route, and requires a new receiver
-rather than direct reuse of Android's AMB1-over-TCP stream.
+Windows installation and host tests have been exercised under Wine. Actual
+Windows UAC, hardware decoding, USB drivers and consumer applications remain
+unverified. The Linux AppImage is built on Debian 13 with generic x86_64
+settings; compatibility with older distributions remains unverified. See the [release evidence](docs/evidence/2026-10-04-release-0.1.2.md).
+
+iOS is a future input path: Safari camera capture over HTTPS and WebRTC is the
+intended browser-based route, and requires a new receiver rather than direct
+reuse of Android's AMB1-over-TCP stream.
 
 Technical details and test records are in [`docs/architecture.md`](docs/architecture.md),
 [`docs/gates.md`](docs/gates.md), and [`docs/evidence/`](docs/evidence/).
@@ -163,6 +171,6 @@ Technical details and test records are in [`docs/architecture.md`](docs/architec
 
 Mobile Webcam source, scripts, and documentation are MIT licensed. The
 AppImage also contains Qt and FFmpeg components under their upstream licenses;
-`libusb` and `v4l2loopback` are separate dependencies. See
+libusb is bundled, while `v4l2loopback` remains a separate kernel dependency. See
 [`LICENSE`](LICENSE), [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), and
 [`linux/APPIMAGE_LICENSES.md`](linux/APPIMAGE_LICENSES.md).

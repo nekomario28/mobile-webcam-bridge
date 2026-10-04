@@ -243,6 +243,15 @@ int main(int argc, char** argv) {
     }
 
     const auto candidate_bus = libusb_get_bus_number(candidate);
+    std::vector<std::uint8_t> candidate_ports(7);
+    const int depth = libusb_get_port_numbers(candidate, candidate_ports.data(), static_cast<int>(candidate_ports.size()));
+    if (depth <= 0) {
+        std::cerr << "Cannot identify the selected USB port.\n";
+        libusb_free_device_list(list, 1);
+        libusb_exit(ctx);
+        return 4;
+    }
+    candidate_ports.resize(static_cast<std::size_t>(depth));
     std::string error;
     if (!amb::aoa::request_accessory_mode(candidate, error)) {
         std::cerr << "AOA transition request failed: " << error << "\n";
@@ -253,7 +262,7 @@ int main(int argc, char** argv) {
 
     libusb_free_device_list(list, 1);
     std::cout << "AOA START sent; waiting for USB re-enumeration...\n";
-    const auto accessory = amb::aoa::wait_for_accessory(ctx, 8000, candidate_bus);
+    const auto accessory = amb::aoa::wait_for_accessory(ctx, 8000, candidate_bus, candidate_ports);
     if (!accessory) {
         std::cerr << "Timed out waiting for an AOA accessory VID/PID.\n";
         libusb_exit(ctx);
