@@ -81,3 +81,16 @@ Webcam. The Linux virtual camera configured by this repository is named
 For AOA behavior, Android/AOSP documentation is authoritative over any of the
 projects above. For Camera2 encoder surfaces, Android's CameraDevice/MediaCodec
 API contracts are authoritative.
+
+## Unity Capture — `schellingb/UnityCapture`
+
+The Windows host adapts the filter's shared-memory sender under its MIT license.
+Exact source identity and local changes are recorded in
+[`host/third_party/unity_capture/`](../host/third_party/unity_capture/).
+The build script verifies the external filter DLLs before packaging. The Unity
+plugin is not used. This reuses the Windows output device while keeping the
+existing Android protocol and decoder/transform path.
+
+Microsoft's `MFCreateVirtualCamera` was considered as a reference. Its minimum
+client is Windows build 22000 and it requires a custom Media Foundation source.
+The initial Windows port instead reuses the existing DirectShow filter.

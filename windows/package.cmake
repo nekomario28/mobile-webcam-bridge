@@ -1,0 +1,60 @@
+cmake_minimum_required(VERSION 3.20)
+foreach(required AMB_BUILD_DIR AMB_MINGW_ROOT AMB_FILTER_DIR AMB_OUTPUT_DIR)
+    if(NOT DEFINED ${required})
+        message(FATAL_ERROR "Missing ${required}")
+    endif()
+endforeach()
+get_filename_component(repo "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+file(STRINGS "${repo}/VERSION" version LIMIT_COUNT 1)
+set(name "Mobile_Webcam-${version}-windows-x86_64-experimental")
+set(stage "${AMB_OUTPUT_DIR}/${name}")
+if(EXISTS "${stage}")
+    message(FATAL_ERROR "Remove the old staging directory before packaging: ${stage}")
+endif()
+set(executables)
+foreach(tool mobile-webcam amb-aoa-probe amb-video-dump amb-windows-sink)
+    list(APPEND executables "${AMB_BUILD_DIR}/${tool}.exe")
+endforeach()
+set(plugin "${AMB_MINGW_ROOT}/share/qt6/plugins/platforms/qwindows.dll")
+set(CMAKE_GET_RUNTIME_DEPENDENCIES_PLATFORM windows+pe)
+set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL objdump)
+if(DEFINED AMB_OBJDUMP)
+    set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${AMB_OBJDUMP}")
+else()
+    set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${AMB_MINGW_ROOT}/bin/objdump.exe")
+endif()
+file(GET_RUNTIME_DEPENDENCIES
+    EXECUTABLES ${executables} LIBRARIES "${plugin}"
+    DIRECTORIES "${AMB_MINGW_ROOT}/bin" ${AMB_SYSTEM_DLL_DIR}
+    PRE_EXCLUDE_REGEXES "^[Aa][Pp][Ii]-" "^[Ee][Xx][Tt]-"
+                       "^[Dd]3[Dd].*\\.dll$" "^[Dd][Xx][Gg][Ii]\\.dll$"
+                       "^[Oo][Pp][Ee][Nn][Gg][Ll]32\\.dll$" "^[Gg][Ll][Uu]32\\.dll$"
+    POST_EXCLUDE_REGEXES ".*[Ww][Ii][Nn][Dd][Oo][Ww][Ss]/[Ss][Yy][Ss][Tt][Ee][Mm]32/.*"
+    RESOLVED_DEPENDENCIES_VAR dependencies
+    UNRESOLVED_DEPENDENCIES_VAR unresolved)
+if(unresolved)
+    message(FATAL_ERROR "Unresolved Windows runtime dependencies: ${unresolved}")
+endif()
+file(MAKE_DIRECTORY "${stage}/platforms" "${stage}/virtual-camera" "${stage}/licenses")
+file(COPY ${executables} DESTINATION "${stage}")
+file(COPY "${plugin}" DESTINATION "${stage}/platforms")
+foreach(dependency IN LISTS dependencies)
+    # System DLLs remain provided by Windows; copy only the chosen MinGW environment.
+    cmake_path(IS_PREFIX AMB_MINGW_ROOT "${dependency}" NORMALIZE from_mingw)
+    if(from_mingw)
+        file(COPY "${dependency}" DESTINATION "${stage}")
+    endif()
+endforeach()
+file(WRITE "${stage}/qt.conf" "[Paths]\nPlugins=.\n")
+file(COPY "${AMB_FILTER_DIR}/UnityCaptureFilter32.dll" "${AMB_FILTER_DIR}/UnityCaptureFilter64.dll"
+          "${repo}/windows/install-camera.bat" "${repo}/windows/uninstall-camera.bat"
+     DESTINATION "${stage}/virtual-camera")
+file(COPY "${repo}/LICENSE" "${repo}/THIRD_PARTY_NOTICES.md" "${repo}/windows/README.md"
+     DESTINATION "${stage}")
+file(COPY "${repo}/host/third_party/unity_capture/LICENSE"
+     DESTINATION "${stage}/licenses/unity-capture")
+file(COPY "${AMB_MINGW_ROOT}/share/licenses/" DESTINATION "${stage}/licenses/msys2")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E tar cf "${AMB_OUTPUT_DIR}/${name}.zip"
+                        --format=zip "${name}" WORKING_DIRECTORY "${AMB_OUTPUT_DIR}"
+                COMMAND_ERROR_IS_FATAL ANY)
+message(STATUS "Created ${AMB_OUTPUT_DIR}/${name}.zip")

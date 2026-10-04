@@ -60,10 +60,19 @@ class BridgeWindow final : public QWidget {
 
         hw_decode_ = new QComboBox(this);
         hw_decode_->addItem(ui("Auto", "自動"), "auto");
+#ifdef Q_OS_WIN
+        hw_decode_->addItem("D3D11VA", "d3d11va");
+#else
         hw_decode_->addItem(ui("VAAPI", "VAAPI"), "vaapi");
+#endif
         hw_decode_->addItem(ui("Software", "ソフトウェア"), "off");
 
+#ifdef Q_OS_WIN
+        output_ = new QLineEdit("Unity Video Capture", this);
+        output_->setReadOnly(true);
+#else
         output_ = new QLineEdit("/dev/video10", this);
+#endif
         rotation_group_ = new QButtonGroup(this);
         auto* rotation_buttons = new QHBoxLayout;
         for (int angle : {0, 90, 180, 270}) {
@@ -163,7 +172,10 @@ class BridgeWindow final : public QWidget {
             while ((end = bridge_output_.indexOf('\n')) >= 0) {
                 const QByteArray line = bridge_output_.left(end);
                 bridge_output_.remove(0, end + 1);
-                if (line.startsWith("frames=1 ")) {
+                if (line.startsWith("frames=") && line.contains("output_active=0")) {
+                    status_->setText(ui("Waiting · select Unity Video Capture in your camera app",
+                                        "受信中 · カメラアプリでUnity Video Captureを選択してください"));
+                } else if (line.startsWith("frames=") && line.contains("output_active=1")) {
                     status_->setText(ui("Streaming · ", "配信中 · ") + QString::number(rotation_degrees_) +
                                      "° · ↔ " + (mirror_->isChecked() ? "ON" : "OFF") +
                                      " · ↕ " + (vertical_flip_->isChecked() ? "ON" : "OFF"));
@@ -238,7 +250,11 @@ class BridgeWindow final : public QWidget {
     }
 
     QString toolPath(const QString& name) const {
+#ifdef Q_OS_WIN
+        return QDir(QCoreApplication::applicationDirPath()).filePath(name + ".exe");
+#else
         return QDir(QCoreApplication::applicationDirPath()).filePath(name);
+#endif
     }
 
     void appendLog(const QByteArray& bytes) {
@@ -419,14 +435,18 @@ class BridgeWindow final : public QWidget {
             status_->setText(ui("Enter the phone IP.", "Phone IPを入力してください。"));
             return;
         }
+#ifdef Q_OS_WIN
+        const QString sink = toolPath("amb-windows-sink");
+#else
         const QString sink = toolPath("amb-v4l2-sink");
+#endif
         if (!QFileInfo::exists(sink)) {
-            status_->setText(ui("amb-v4l2-sink not found: ", "amb-v4l2-sinkが見つかりません: ") + sink);
+            status_->setText(ui("Camera bridge not found: ", "カメラブリッジが見つかりません: ") + sink);
             return;
         }
         const QString device = output_->text().trimmed();
         if (device.isEmpty()) {
-            status_->setText(ui("Enter a virtual camera path.", "仮想カメラのパスを入力してください。"));
+            status_->setText(ui("Enter a virtual camera output.", "仮想カメラ出力を入力してください。"));
             return;
         }
         QStringList arguments{"--device", device, "--timeout-ms", "120000",

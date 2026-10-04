@@ -60,7 +60,11 @@ bool HardwareDecode::configure(AVCodecContext* context, const AVCodec* codec,
 
     if (requested == "auto") {
         constexpr std::array candidates{
+#ifdef _WIN32
+            AV_HWDEVICE_TYPE_D3D11VA,
+#else
             AV_HWDEVICE_TYPE_VAAPI,
+#endif
             AV_HWDEVICE_TYPE_CUDA,
         };
         for (const auto type : candidates) {

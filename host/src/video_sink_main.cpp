@@ -5,7 +5,7 @@
 #include "amb/wire.hpp"
 #include "amb/yuyv.hpp"
 
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -15,9 +15,13 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#ifdef _WIN32
+#include "../third_party/unity_capture/shared.inl"
+#else
 #include <linux/videodev2.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <cerrno>
@@ -46,6 +50,7 @@ std::string av_error(int code) {
     return text;
 }
 
+#ifndef _WIN32
 bool ioctl_retry(int fd, unsigned long request, void* argument) {
     int rc;
     do {
@@ -54,8 +59,14 @@ bool ioctl_retry(int fd, unsigned long request, void* argument) {
     return rc == 0;
 }
 
+#endif
+
 struct Options {
+#ifdef _WIN32
+    std::string device = "Unity Video Capture";
+#else
     std::string device = "/dev/video10";
+#endif
     std::string lan_host;
     std::uint16_t lan_port = 48'527;
     std::string hw_decode = "auto";
@@ -70,14 +81,18 @@ struct Options {
 void usage(const char* argv0) {
     std::cout
         << "Usage: " << argv0
-        << " [--device /dev/videoX] [--lan HOST [--port 48527]]"
-           " [--hw-decode auto|off|vaapi|cuda] [--frames N] [--timeout-ms N]"
+        << " [--device CAMERA] [--lan HOST [--port 48527]]"
+           " [--hw-decode auto|off|vaapi|cuda|d3d11va] [--frames N] [--timeout-ms N]"
            " [--rotate 0|90|180|270] [--no-horizontal-flip] [--vertical-flip]"
            " [--control-stdin]\n\n"
         << "Receives H.264 over USB AOA or LAN TCP, decodes it, and writes YUYV frames to a\n"
+#ifdef _WIN32
+        << "Unity Capture virtual camera. --frames 0 runs until stopped.\n"
+#else
         << "V4L2 output device. --frames 0 (the default) runs until interrupted.\n"
+#endif
         << "Horizontal mirror correction is enabled by default.\n"
-        << "Rotation is clockwise and defaults to 0 degrees. V4L2 size stays fixed;\n"
+        << "Rotation is clockwise and defaults to 0 degrees. Output size stays fixed;\n"
         << "90/270 degree output is fitted with black sidebars.\n"
         << "Vertical flip is disabled by default.\n"
         << "--control-stdin accepts lines like '90 1 0'"
@@ -109,12 +124,21 @@ int rotation_degrees(amb::video::Rotation rotation) {
 class StdinControl {
   public:
     bool enable(std::string& error) {
+#ifdef _WIN32
+        input_ = GetStdHandle(STD_INPUT_HANDLE);
+        if (input_ == nullptr || input_ == INVALID_HANDLE_VALUE ||
+            GetFileType(input_) != FILE_TYPE_PIPE) {
+            error = "--control-stdin requires a pipe";
+            return false;
+        }
+#else
         const int flags = fcntl(STDIN_FILENO, F_GETFL);
         if (flags < 0 || fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK) < 0) {
             error = "unable to make control stdin nonblocking: " +
                     std::string(std::strerror(errno));
             return false;
         }
+#endif
         enabled_ = true;
         return true;
     }
@@ -124,6 +148,19 @@ class StdinControl {
         if (!enabled_) return false;
         char chunk[256];
         while (true) {
+#ifdef _WIN32
+            DWORD available = 0;
+            if (!PeekNamedPipe(input_, nullptr, 0, nullptr, &available, nullptr)) {
+                enabled_ = false;
+                break;
+            }
+            if (available == 0) break;
+            DWORD count = 0;
+            if (!ReadFile(input_, chunk, std::min<DWORD>(available, sizeof(chunk)), &count, nullptr)) {
+                enabled_ = false;
+                break;
+            }
+#else
             const ssize_t count = ::read(STDIN_FILENO, chunk, sizeof(chunk));
             if (count == 0) {
                 enabled_ = false;
@@ -136,6 +173,7 @@ class StdinControl {
                 enabled_ = false;
                 break;
             }
+#endif
             pending_.append(chunk, static_cast<std::size_t>(count));
             if (pending_.size() > 4096) {
                 std::cerr << "control stdin line too long\n";
@@ -161,17 +199,25 @@ class StdinControl {
     }
 
   private:
+#ifdef _WIN32
+    HANDLE input_ = nullptr;
+#endif
     bool enabled_ = false;
     std::string pending_;
 };
 
-class V4l2Output {
+class VideoOutput {
   public:
-    ~V4l2Output() {
+    ~VideoOutput() {
         if (sws_to_yuyv_) sws_freeContext(sws_to_yuyv_);
         if (sws_to_rgb_) sws_freeContext(sws_to_rgb_);
         if (sws_rgb_to_yuyv_) sws_freeContext(sws_rgb_to_yuyv_);
+#ifdef _WIN32
+        if (sws_to_rgba_) sws_freeContext(sws_to_rgba_);
+        if (producer_mutex_) CloseHandle(producer_mutex_);
+#else
         if (fd_ >= 0) ::close(fd_);
+#endif
     }
 
     bool open(const std::string& path, int source_width, int source_height, int fps,
@@ -183,6 +229,40 @@ class V4l2Output {
             error = "YUYV output width must be even";
             return false;
         }
+#ifdef _WIN32
+        if (output_width > 3840 || output_height > 2160) {
+            error = "Unity Capture supports at most 3840x2160";
+            return false;
+        }
+        constexpr char key[] = "CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70010}";
+        char name[256]{};
+        DWORD size = sizeof(name);
+        if (RegGetValueA(HKEY_CLASSES_ROOT, key, nullptr, RRF_RT_REG_SZ,
+                         nullptr, name, &size) != ERROR_SUCCESS) {
+            error = "Unity Capture is not installed; see windows/README.md";
+            return false;
+        }
+        if (path != name) {
+            error = "camera name does not match installed Unity Capture: " + std::string(name);
+            return false;
+        }
+        producer_mutex_ = CreateMutexA(nullptr, FALSE, "Local\\MobileWebcam_UnityCaptureProducer");
+        if (producer_mutex_ == nullptr || GetLastError() == ERROR_ALREADY_EXISTS) {
+            error = "another Mobile Webcam producer is already using Unity Capture";
+            return false;
+        }
+        memory_ = std::make_unique<SharedImageMemory>(0);
+        stride_ = static_cast<std::size_t>(output_width) * 2;
+        const std::size_t frame_size = stride_ * static_cast<std::size_t>(output_height);
+        rgba_.resize(static_cast<std::size_t>(output_width) * output_height * 4);
+        sws_to_rgba_ = sws_getContext(output_width, output_height, AV_PIX_FMT_YUYV422,
+                                     output_width, output_height, AV_PIX_FMT_RGBA,
+                                     SWS_BILINEAR, nullptr, nullptr, nullptr);
+        if (!sws_to_rgba_) {
+            error = "unable to create Unity Capture pixel conversion context";
+            return false;
+        }
+#else
         fd_ = ::open(path.c_str(), O_WRONLY | O_CLOEXEC);
         if (fd_ < 0) {
             error = "open " + path + ": " + std::strerror(errno);
@@ -232,6 +312,7 @@ class V4l2Output {
             return false;
         }
 
+#endif
         source_width_ = source_width;
         source_height_ = source_height;
         width_ = output_width;
@@ -239,11 +320,13 @@ class V4l2Output {
         rotation_ = rotation;
         horizontal_flip_ = horizontal_flip;
         vertical_flip_ = vertical_flip;
+#ifndef _WIN32
         stride_ = std::max<std::size_t>(format.fmt.pix.bytesperline,
                                         static_cast<std::size_t>(width_) * 2);
         const std::size_t minimum_size = stride_ * static_cast<std::size_t>(height_);
         const std::size_t frame_size = std::max<std::size_t>(format.fmt.pix.sizeimage,
                                                               minimum_size);
+#endif
         output_.assign(frame_size, 0);
         source_format_ = source_format;
         sws_to_yuyv_ = sws_getContext(source_width_, source_height_, source_format_,
@@ -253,13 +336,15 @@ class V4l2Output {
             error = "unable to create YUYV conversion context";
             return false;
         }
-        std::cout << "V4L2 " << path << " " << width_ << "x" << height_
+        std::cout << "output=" << path << " " << width_ << "x" << height_
                   << " @" << fps << " YUYV stride=" << stride_
                   << " rotation=" << rotation_degrees(rotation_)
                   << " horizontal_flip=" << (horizontal_flip_ ? "on" : "off")
                   << " vertical_flip=" << (vertical_flip_ ? "on" : "off") << "\n";
         return true;
     }
+
+    [[nodiscard]] bool active() const { return active_; }
 
     void set_transform(amb::video::Rotation rotation, bool horizontal_flip,
                        bool vertical_flip) {
@@ -367,6 +452,29 @@ class V4l2Output {
             return false;
         }
 
+#ifdef _WIN32
+        active_ = memory_->SendIsReady();
+        if (!active_) return true; // Camera applications open the receiver lazily.
+        const std::uint8_t* source[4]{output_.data(), nullptr, nullptr, nullptr};
+        int source_stride[4]{static_cast<int>(stride_), 0, 0, 0};
+        // DirectShow's RGB bitmap has a bottom-up row order.
+        std::uint8_t* rgba_destination[4]{rgba_.data() + (height_ - 1) * width_ * 4,
+                                         nullptr, nullptr, nullptr};
+        int rgba_stride[4]{-width_ * 4, 0, 0, 0};
+        if (sws_scale(sws_to_rgba_, source, source_stride, 0, height_,
+                      rgba_destination, rgba_stride) != height_) {
+            error = "Unity Capture conversion failed";
+            return false;
+        }
+        const auto sent = memory_->Send(width_, height_, width_, static_cast<DWORD>(rgba_.size()),
+                                        SharedImageMemory::FORMAT_UINT8,
+                                        SharedImageMemory::RESIZEMODE_LINEAR,
+                                        SharedImageMemory::MIRRORMODE_DISABLED, 1000, rgba_.data());
+        if (sent == SharedImageMemory::SENDRES_TOOLARGE || sent == SharedImageMemory::SENDRES_ERROR) {
+            error = "Unity Capture shared-memory write failed";
+            return false;
+        }
+#else
         ssize_t written;
         do {
             written = ::write(fd_, output_.data(), output_.size());
@@ -379,6 +487,8 @@ class V4l2Output {
             error = "V4L2 accepted a partial frame";
             return false;
         }
+        active_ = true;
+#endif
         if (report_transform_) {
             std::cout << "transform rotation=" << rotation_degrees(rotation_)
                       << " horizontal_flip=" << (horizontal_flip_ ? "on" : "off")
@@ -389,7 +499,15 @@ class V4l2Output {
     }
 
   private:
+#ifdef _WIN32
+    std::unique_ptr<SharedImageMemory> memory_;
+    HANDLE producer_mutex_ = nullptr;
+    SwsContext* sws_to_rgba_ = nullptr;
+    std::vector<std::uint8_t> rgba_;
+#else
     int fd_ = -1;
+#endif
+    bool active_ = false;
     int source_width_ = 0;
     int source_height_ = 0;
     int width_ = 0;
@@ -573,7 +691,7 @@ int main(int argc, char** argv) {
                 error.clear();
             }
 
-            V4l2Output output;
+            VideoOutput output;
             bool configured = false;
             bool started = false;
             int width = 0;
@@ -581,6 +699,7 @@ int main(int argc, char** argv) {
             int fps = 0;
             std::size_t written_frames = 0;
             std::size_t discontinuities = 0;
+            bool output_was_active = false;
             std::uint64_t last_pts_us = 0;
             auto first_wall = std::chrono::steady_clock::time_point{};
 
@@ -701,7 +820,7 @@ int main(int argc, char** argv) {
                                          static_cast<AVPixelFormat>(display_frame->format),
                                          options.rotation, options.horizontal_flip,
                                          options.vertical_flip, error)) {
-                            std::cerr << "V4L2 setup failed: " << error << "\n";
+                            std::cerr << "camera output setup failed: " << error << "\n";
                             result = 10;
                             break;
                         }
@@ -709,14 +828,17 @@ int main(int argc, char** argv) {
                         first_wall = std::chrono::steady_clock::now();
                     }
                     if (!output.write_frame(display_frame, error)) {
-                        std::cerr << "V4L2 output failed: " << error << "\n";
+                        std::cerr << "camera output failed: " << error << "\n";
                         result = 10;
                         break;
                     }
                     ++written_frames;
-                    if (written_frames == 1 || written_frames % 30 == 0) {
+                    if (written_frames == 1 || written_frames % 30 == 0 ||
+                        output.active() != output_was_active) {
                         std::cout << "frames=" << written_frames
-                                  << " discontinuities=" << discontinuities << "\n";
+                                  << " discontinuities=" << discontinuities
+                                  << " output_active=" << (output.active() ? 1 : 0) << "\n";
+                        output_was_active = output.active();
                     }
                     if (options.frames != 0 && written_frames >= options.frames) break;
                 }
@@ -725,7 +847,11 @@ int main(int argc, char** argv) {
             if (result == 0 && options.frames != 0) {
                 const double wall_seconds = std::chrono::duration<double>(
                     std::chrono::steady_clock::now() - first_wall).count();
+#ifdef _WIN32
+                std::cout << "[Windows producer completed] frames=" << written_frames
+#else
                 std::cout << "[PASS G3 V4L2 slice] frames=" << written_frames
+#endif
                           << " discontinuities=" << discontinuities
                           << " wall_s=" << wall_seconds
                           << " device=" << options.device << "\n";

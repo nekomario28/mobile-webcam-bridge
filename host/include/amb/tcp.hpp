@@ -1,6 +1,7 @@
 #pragma once
 
 #include "amb/wire.hpp"
+#include "amb/socket.hpp"
 
 #include <cstdint>
 #include <span>
@@ -20,7 +21,7 @@ class TcpConnection {
     bool connect(const std::string& host, std::uint16_t port, int timeout_ms,
                  std::string& error);
     void disconnect();
-    [[nodiscard]] bool connected() const { return fd_ >= 0; }
+    [[nodiscard]] bool connected() const { return fd_ != net::invalid_socket; }
 
     bool send_frame(wire::Type type, std::uint16_t flags, std::uint32_t sequence,
                     std::uint64_t pts_us, std::span<const std::uint8_t> payload,
@@ -34,7 +35,7 @@ class TcpConnection {
     bool read_exact(std::uint8_t* data, std::size_t size, int timeout_ms,
                     std::string& error);
 
-    int fd_ = -1;
+    net::Socket fd_ = net::invalid_socket;
 };
 
 }  // namespace amb

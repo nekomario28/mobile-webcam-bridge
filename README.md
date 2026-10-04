@@ -4,9 +4,9 @@
 
 *Current AppImage screenshot: Xperia connected through USB AOA.*
 
-Use an Android phone as a Linux webcam over USB or local Wi-Fi. The Linux side
-outputs a normal V4L2 camera such as `/dev/video10`, so camera applications do
-not need a Mobile Webcam plugin.
+Use an Android phone as a webcam over USB or local Wi-Fi. Linux outputs a
+normal V4L2 camera such as `/dev/video10`. The experimental Windows host outputs
+through Unity Capture. Camera applications do not need a Mobile Webcam plugin.
 
 **Languages:** English and Japanese. The app follows the system language and
 uses English when no Japanese locale is selected.
@@ -26,6 +26,9 @@ few steps. One Linux AppImage produces a normal V4L2 camera.
 - Ships a Qt 6 GUI and an x86_64 AppImage.
 
 ## Quick start
+
+For the experimental Windows build and setup, see
+[`windows/README.md`](windows/README.md). The instructions below cover Linux.
 
 ### Use a release
 
@@ -134,7 +137,8 @@ Horizontal and vertical flip can be changed independently while streaming.
 
 ```text
 Android Camera2 -> MediaCodec H.264 -> AMB1 frames -> USB or Wi-Fi
-                                      -> Linux decode -> V4L2 /dev/videoX
+                                      -> decode + transforms -> Linux V4L2
+                                                             -> Windows Unity Capture
 ```
 
 USB and Wi-Fi share the same framed H.264 session, decoder, recovery, transform,
@@ -146,6 +150,11 @@ identifiers retained for compatibility.
 v0.1.1 is available for Android and x86_64 Linux. USB has been tested with a
 Sony Xperia XQ-GE44 with USB debugging off. Discord compatibility is OK. Wi-Fi
 long-running and reconnect checks are still pending.
+
+Windows host source is experimental; Windows device and application checks
+are still pending. iOS is a future input path: Safari camera capture over HTTPS
+and WebRTC is the intended browser-based route, and requires a new receiver
+rather than direct reuse of Android's AMB1-over-TCP stream.
 
 Technical details and test records are in [`docs/architecture.md`](docs/architecture.md),
 [`docs/gates.md`](docs/gates.md), and [`docs/evidence/`](docs/evidence/).

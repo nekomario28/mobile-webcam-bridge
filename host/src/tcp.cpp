@@ -1,12 +1,11 @@
 #include "amb/tcp.hpp"
 
-#include <arpa/inet.h>
+#ifndef _WIN32
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#endif
 
 #include <array>
 #include <algorithm>
@@ -27,7 +26,7 @@ int remaining_ms(std::chrono::steady_clock::time_point deadline) {
                                                 std::numeric_limits<int>::max()));
 }
 
-bool wait_fd(int fd, short events, std::chrono::steady_clock::time_point deadline,
+bool wait_fd(net::Socket fd, bool writing, std::chrono::steady_clock::time_point deadline,
              std::string& error) {
     while (true) {
         const int timeout = remaining_ms(deadline);
@@ -35,25 +34,46 @@ bool wait_fd(int fd, short events, std::chrono::steady_clock::time_point deadlin
             error = "TCP operation timed out";
             return false;
         }
-        pollfd pfd{.fd = fd, .events = events, .revents = 0};
-        const int rc = ::poll(&pfd, 1, timeout);
+#ifdef _WIN32
+        fd_set ready, failed;
+        FD_ZERO(&ready);
+        FD_ZERO(&failed);
+        FD_SET(fd, &ready);
+        FD_SET(fd, &failed);
+        timeval duration{};
+        duration.tv_sec = timeout / 1000;
+        duration.tv_usec = (timeout % 1000) * 1000;
+        const int rc = ::select(0, writing ? nullptr : &ready,
+                                writing ? &ready : nullptr, &failed, &duration);
         if (rc > 0) {
-            if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-                int socket_error = 0;
-                socklen_t length = sizeof(socket_error);
-                ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error, &length);
-                error = socket_error == 0 ? "TCP connection closed" : std::strerror(socket_error);
+            if (FD_ISSET(fd, &failed)) {
+                int code = 0;
+                if (net::get_error(fd, code) != 0) code = net::last_error();
+                error = net::error_text(code);
                 return false;
             }
-            if ((pfd.revents & events) != 0) return true;
-            continue;
+            return true;
         }
+#else
+        pollfd descriptor{.fd = fd, .events = static_cast<short>(writing ? POLLOUT : POLLIN),
+                           .revents = 0};
+        const int rc = ::poll(&descriptor, 1, timeout);
+        if (rc > 0) {
+            // Drain queued data even when the peer has already closed its socket.
+            if ((descriptor.revents & descriptor.events) != 0) return true;
+            int code = 0;
+            if (net::get_error(fd, code) != 0) code = net::last_error();
+            error = code == 0 ? "TCP connection closed" : net::error_text(code);
+            return false;
+        }
+#endif
         if (rc == 0) {
             error = "TCP operation timed out";
             return false;
         }
-        if (errno == EINTR) continue;
-        error = std::strerror(errno);
+        const int code = net::last_error();
+        if (net::interrupted(code)) continue;
+        error = net::error_text(code);
         return false;
     }
 }
@@ -70,6 +90,8 @@ bool TcpConnection::connect(const std::string& host, std::uint16_t port,
         return false;
     }
 
+    if (!net::initialize(error)) return false;
+
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -85,42 +107,58 @@ bool TcpConnection::connect(const std::string& host, std::uint16_t port,
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
 
     for (addrinfo* address = raw; address != nullptr; address = address->ai_next) {
-        const int candidate = ::socket(address->ai_family, address->ai_socktype | SOCK_CLOEXEC,
-                                       address->ai_protocol);
-        if (candidate < 0) continue;
-        const int old_flags = ::fcntl(candidate, F_GETFL, 0);
-        if (old_flags < 0 || ::fcntl(candidate, F_SETFL, old_flags | O_NONBLOCK) < 0) {
-            ::close(candidate);
+#ifdef _WIN32
+        const net::Socket candidate = ::socket(address->ai_family, address->ai_socktype,
+                                                address->ai_protocol);
+        if (candidate == net::invalid_socket) continue;
+        u_long nonblocking = 1;
+        if (!SetHandleInformation(reinterpret_cast<HANDLE>(candidate), HANDLE_FLAG_INHERIT, 0) ||
+            ioctlsocket(candidate, FIONBIO, &nonblocking) != 0) {
+            net::close(candidate);
             continue;
         }
-        int rc = ::connect(candidate, address->ai_addr, address->ai_addrlen);
-        if (rc < 0 && errno != EINPROGRESS) {
-            ::close(candidate);
+#else
+        const net::Socket candidate = ::socket(address->ai_family,
+                                                address->ai_socktype | SOCK_CLOEXEC,
+                                                address->ai_protocol);
+        if (candidate == net::invalid_socket) continue;
+        const int old_flags = ::fcntl(candidate, F_GETFL, 0);
+        if (old_flags < 0 || ::fcntl(candidate, F_SETFL, old_flags | O_NONBLOCK) < 0) {
+            net::close(candidate);
+            continue;
+        }
+#endif
+        int rc = ::connect(candidate, address->ai_addr, static_cast<net::AddressLength>(address->ai_addrlen));
+#ifdef _WIN32
+        const bool pending = rc < 0 && net::would_block(net::last_error());
+#else
+        const bool pending = rc < 0 && errno == EINPROGRESS;
+#endif
+        if (rc < 0 && !pending) {
+            net::close(candidate);
             continue;
         }
         if (rc < 0) {
             std::string wait_error;
-            if (!wait_fd(candidate, POLLOUT, deadline, wait_error)) {
-                ::close(candidate);
+            if (!wait_fd(candidate, true, deadline, wait_error)) {
+                net::close(candidate);
                 error = wait_error;
                 continue;
             }
             int socket_error = 0;
-            socklen_t length = sizeof(socket_error);
-            if (::getsockopt(candidate, SOL_SOCKET, SO_ERROR, &socket_error, &length) < 0 ||
+            if (net::get_error(candidate, socket_error) < 0 ||
                 socket_error != 0) {
-                error = socket_error == 0 ? std::strerror(errno) : std::strerror(socket_error);
-                ::close(candidate);
+                error = net::error_text(socket_error == 0 ? net::last_error() : socket_error);
+                net::close(candidate);
                 continue;
             }
         }
-        ::fcntl(candidate, F_SETFL, old_flags);
         const int one = 1;
-        ::setsockopt(candidate, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        net::set_option(candidate, IPPROTO_TCP, TCP_NODELAY, one);
         fd_ = candidate;
         break;
     }
-    if (fd_ < 0) {
+    if (!connected()) {
         if (error.empty()) error = "unable to connect to LAN endpoint";
         return false;
     }
@@ -141,8 +179,8 @@ bool TcpConnection::connect(const std::string& host, std::uint16_t port,
 }
 
 void TcpConnection::disconnect() {
-    if (fd_ >= 0) ::close(fd_);
-    fd_ = -1;
+    if (connected()) net::close(fd_);
+    fd_ = net::invalid_socket;
 }
 
 bool TcpConnection::write_all(const std::uint8_t* data, std::size_t size, int timeout_ms,
@@ -150,14 +188,17 @@ bool TcpConnection::write_all(const std::uint8_t* data, std::size_t size, int ti
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     std::size_t offset = 0;
     while (offset < size) {
-        if (!wait_fd(fd_, POLLOUT, deadline, error)) return false;
-        const ssize_t n = ::send(fd_, data + offset, size - offset, MSG_NOSIGNAL);
+        if (!wait_fd(fd_, true, deadline, error)) return false;
+        const auto length = static_cast<int>(std::min<std::size_t>(size - offset,
+                                                                    std::numeric_limits<int>::max()));
+        const auto n = net::send(fd_, data + offset, length);
         if (n > 0) {
             offset += static_cast<std::size_t>(n);
             continue;
         }
-        if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
-        error = n == 0 ? "TCP write closed" : std::strerror(errno);
+        const int code = net::last_error();
+        if (n < 0 && (net::interrupted(code) || net::would_block(code))) continue;
+        error = n == 0 ? "TCP write closed" : net::error_text(code);
         return false;
     }
     return true;
@@ -168,14 +209,17 @@ bool TcpConnection::read_exact(std::uint8_t* data, std::size_t size, int timeout
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     std::size_t offset = 0;
     while (offset < size) {
-        if (!wait_fd(fd_, POLLIN, deadline, error)) return false;
-        const ssize_t n = ::recv(fd_, data + offset, size - offset, 0);
+        if (!wait_fd(fd_, false, deadline, error)) return false;
+        const auto length = static_cast<int>(std::min<std::size_t>(size - offset,
+                                                                    std::numeric_limits<int>::max()));
+        const auto n = net::receive(fd_, data + offset, length);
         if (n > 0) {
             offset += static_cast<std::size_t>(n);
             continue;
         }
-        if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
-        error = n == 0 ? "TCP peer closed" : std::strerror(errno);
+        const int code = net::last_error();
+        if (n < 0 && (net::interrupted(code) || net::would_block(code))) continue;
+        error = n == 0 ? "TCP peer closed" : net::error_text(code);
         return false;
     }
     return true;
