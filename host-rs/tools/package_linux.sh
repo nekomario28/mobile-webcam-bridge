@@ -16,7 +16,7 @@ if [ -e "$stage" ]; then
     exit 1
 fi
 mkdir -p "$stage/usr/bin" "$stage/usr/share/mobile-webcam/linux" "$stage/usr/share/doc/mobile-webcam/licenses"
-install -m0755 "$RUST_BIN_DIR/mobile-webcam" "$RUST_BIN_DIR/mobile-webcam-usb" "$stage/usr/bin/"
+install -m0755 "$RUST_BIN_DIR/mobile-webcam" "$stage/usr/bin/"
 # The root-installed USB helper relies only on the distribution's libusb.
 install -m0755 "$RUST_BIN_DIR/mobile-webcam-usb" "$stage/usr/share/mobile-webcam/linux/"
 install -m0755 "$root/linux/install-host-integration.sh" "$stage/usr/share/mobile-webcam/linux/"

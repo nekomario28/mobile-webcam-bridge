@@ -99,7 +99,7 @@ file(COPY "${repo}/host/third_party/unity_capture/LICENSE"
      DESTINATION "${stage}/licenses/unity-capture")
 if(DEFINED AMB_RUST_EXECUTABLE)
     file(COPY "${AMB_RUST_LICENSES}/" DESTINATION "${stage}/licenses/rust")
-    foreach(library libgcc libusb)
+    foreach(library libgcc libusb libwinpthread)
         file(COPY "${AMB_MINGW_ROOT}/share/licenses/${library}" DESTINATION "${stage}/licenses/msys2")
     endforeach()
     file(COPY "${repo}/linux/licenses/LGPL-2.1-or-later.txt" "${AMB_FFMPEG_ROOT}/build-manifest.json"
