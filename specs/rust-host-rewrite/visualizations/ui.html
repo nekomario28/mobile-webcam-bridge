@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mobile Webcam — Rust版の画面案</title>
+<style>
+:root { color-scheme: light; font-family: system-ui, "Noto Sans CJK JP", sans-serif; color: #202a3b; background: #eef2f6; font-size: 16px; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 44px 24px; }
+header, main { max-width: 960px; margin: auto; }
+header { margin-bottom: 30px; }
+h1 { margin: 8px 0; font-size: 25px; letter-spacing: -.02em; }
+h2 { font-size: 17px; margin: 0 0 16px; }
+p { line-height: 1.7; }
+.caption { color: #536279; margin: 0; font-size: 14px; }
+.tag { display: inline-block; font-size: 12px; font-weight: 650; color: #435575; background: #dfe7f1; padding: 5px 9px; border-radius: 5px; }
+main { display: grid; grid-template-columns: minmax(0, 590px) minmax(240px, 1fr); gap: 24px; align-items: start; }
+.app { border: 1px solid #dce2ea; border-radius: 13px; overflow: hidden; background: white; box-shadow: 0 10px 32px #263c5710; }
+.titlebar { padding: 17px 24px; border-bottom: 1px solid #edf0f4; font-size: 15px; font-weight: 700; display: flex; justify-content: space-between; }
+.titlebar span { color: #66758b; font-weight: 400; font-size: 13px; }
+form { padding: 24px; }
+.mode { display: flex; gap: 5px; background: #f0f3f7; border-radius: 8px; padding: 4px; margin-bottom: 24px; }
+button, input, select { font: inherit; }
+button { cursor: pointer; border: 1px solid #d3dae5; border-radius: 7px; padding: 10px 14px; color: inherit; background: #fff; }
+button:hover { border-color: #8398b8; }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #8bb5fa; outline-offset: 3px; }
+button:disabled { opacity: .55; cursor: default; }
+.mode button { flex: 1; border: none; background: transparent; font-weight: 650; }
+.mode button[aria-pressed="true"] { background: white; color: #2459aa; box-shadow: 0 1px 4px #1a365419; }
+label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+input[type="text"], select { width: 100%; color: inherit; background: white; border: 1px solid #cbd4e2; border-radius: 7px; padding: 11px 12px; min-width: 0; }
+.hint { color: #66758b; font-size: 12px; margin: 8px 0 22px; min-height: 21px; }
+.status { display: flex; gap: 12px; padding: 17px 16px; background: #f5f7fa; border: 1px solid #e3e8ef; border-radius: 8px; margin-bottom: 18px; min-height: 91px; }
+.dot { margin-top: 7px; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; background: #8392a9; }
+.status[data-state="streaming"] .dot { background: #2a8661; }
+.status[data-state="error"] .dot { background: #c54d4d; }
+.status strong { display: block; font-size: 14px; margin-bottom: 6px; }
+.status p { margin: 0; font-size: 13px; color: #596980; }
+#primary { width: 100%; background: #2b61b6; color: white; border: 1px solid #2b61b6; font-weight: 650; padding: 12px; }
+#primary[data-stop="true"] { color: #a13939; border-color: #dfb8b8; background: white; }
+details { margin-top: 24px; border-top: 1px solid #edf0f4; padding-top: 17px; }
+summary { cursor: pointer; font-size: 14px; color: #4b5d78; }
+.fields { padding-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.check { display: flex; gap: 9px; align-items: center; font-weight: 400; margin: 0; }
+.check input { width: 16px; height: 16px; accent-color: #2b61b6; }
+.wide { grid-column: 1 / -1; }
+.preview-controls { padding: 18px 0; }
+.preview-controls p { color: #617089; font-size: 13px; }
+.preview-controls label { margin-top: 20px; }
+.scenarios { display: flex; flex-direction: column; gap: 8px; }
+.scenarios button { text-align: left; font-size: 13px; }
+.scenarios button[aria-pressed="true"] { border-color: #4779c3; color: #2459aa; background: #e6eefb; }
+.small { font-size: 12px; color: #617089; }
+[hidden] { display: none !important; }
+@media(max-width: 720px) { body { padding: 22px 14px; } main { grid-template-columns: 1fr; gap: 8px; } form { padding: 20px; } .scenarios { display: grid; grid-template-columns: 1fr 1fr; } }
+</style>
+<header>
+  <span class="tag">設計レビュー用・通信なし</span>
+  <h1>接続先を覚える、小さな操作画面</h1>
+  <p class="caption">IPを編集して開き直す、接続・取消・停止を押す、右の例で状態表示を切り替えることができます。</p>
+</header>
+<main>
+  <section class="app" aria-label="Mobile Webcamの画面案">
+    <div class="titlebar">Mobile Webcam <span id="os-label">Windows</span></div>
+    <form id="connection-form">
+      <div class="mode" aria-label="接続方法">
+        <button type="button" id="usb-mode" aria-pressed="false">USB</button>
+        <button type="button" id="wifi-mode" aria-pressed="true">Wi-Fi</button>
+      </div>
+      <div id="wifi-field">
+        <label for="address">スマホのIPアドレス</label>
+        <input type="text" id="address" value="192.168.1.42" autocomplete="off" spellcheck="false" placeholder="192.168.1.42">
+        <p class="hint" id="saved" role="status">前回の接続先を復元しました</p>
+      </div>
+      <div id="usb-field" hidden>
+        <label for="device">接続するスマホ</label>
+        <select id="device"><option>Xperia · USB接続</option><option>Android accessory · USB接続</option></select>
+        <p class="hint">USBデバッグはOFFのまま利用できます</p>
+      </div>
+      <div class="status" id="status" data-state="idle" role="status" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span>
+        <div><strong id="status-title">接続する準備ができています</strong><p id="status-body">スマホとPCを同じWi-Fiに接続してください。</p></div>
+      </div>
+      <button type="submit" id="primary">接続</button>
+      <details>
+        <summary>詳細</summary>
+        <div class="fields">
+          <div><label for="rotation">回転</label><select id="rotation"><option>0°</option><option>90°</option><option>180°</option><option>270°</option></select></div>
+          <div><label for="decode">デコード</label><select id="decode"><option>自動</option><option>ソフトウェア</option><option id="gpu-option">D3D11VA</option><option>CUDA</option></select></div>
+          <label class="check"><input type="checkbox" checked>左右を反転</label>
+          <label class="check"><input type="checkbox">上下を反転</label>
+          <div class="wide" id="linux-output" hidden><label for="output">カメラ出力先</label><input type="text" id="output" value="/dev/video10"></div>
+          <p class="small wide" id="diagnostic">停止中</p>
+        </div>
+      </details>
+    </form>
+  </section>
+  <aside class="preview-controls" aria-label="画面案の操作">
+    <h2>表示を確認</h2>
+    <p>以下は画面案の試験操作です。映像・通信・GPU処理は実行されません。</p>
+    <label for="platform">OS</label>
+    <select id="platform"><option>Windows</option><option>Linux</option></select>
+    <label>状態の例</label>
+    <div class="scenarios">
+      <button type="button" data-scene="idle" aria-pressed="true">接続前</button>
+      <button type="button" data-scene="connecting" aria-pressed="false">接続中・取消可能</button>
+      <button type="button" data-scene="waiting" aria-pressed="false">スマホの開始待ち</button>
+      <button type="button" data-scene="consumer" aria-pressed="false">カメラ使用アプリ待ち</button>
+      <button type="button" data-scene="streaming" aria-pressed="false">仮想カメラへ送信中</button>
+      <button type="button" data-scene="error" aria-pressed="false">接続エラー・再接続</button>
+    </div>
+    <p>アドレスだけを、この画面案専用のブラウザ保存先に記録します。製品の設定ファイルには触れません。</p>
+    <button type="button" id="reset">サンプルIPに戻す</button>
+  </aside>
+</main>
+<script>
+'use strict';
+const el = id => document.getElementById(id);
+const scenes = [...document.querySelectorAll('[data-scene]')];
+let mode = 'wifi', state = 'idle', pending = null, saveTimer = null;
+const storageKey = 'mobile-webcam-rust-design.lanHost';
+try { const value = localStorage.getItem(storageKey); if (value !== null) el('address').value = value; }
+catch { el('saved').textContent = 'ブラウザの保存機能を利用できません'; }
+function saveAddress() {
+  clearTimeout(saveTimer);
+  try { localStorage.setItem(storageKey, el('address').value.trim()); el('saved').textContent = '接続先を保存しました'; }
+  catch { el('saved').textContent = '保存できませんでした。この画面では入力を維持します'; }
+}
+function render(next) {
+  state = next;
+  const windows = el('platform').value === 'Windows';
+  const info = {
+    idle: ['接続する準備ができています', mode === 'wifi' ? 'スマホとPCを同じWi-Fiに接続してください。' : '接続するとスマホのUSBカメラを準備します。', '接続'],
+    connecting: ['接続しています…', mode === 'wifi' ? '保存した接続先に接続しています。' : '選択したスマホを準備しています。', '取消'],
+    waiting: ['スマホのカメラ開始を待っています', 'スマホのMobile Webcamで「開始」を押してください。', '停止'],
+    consumer: ['映像を受信しています', 'OBSや通話アプリで「Mobile Webcam」を選択してください。', '停止'],
+    streaming: ['仮想カメラへ映像を送信しています', windows ? '利用アプリで「Mobile Webcam」を選択してください。' : '利用アプリで仮想カメラを選択してください。', '停止'],
+    error: ['スマホに接続できませんでした', 'Wi-FiとIPを確認してください。接続先は保存されています。', '再接続']
+  }[next];
+  if (next === 'error' && mode === 'usb') info[1] = 'USB接続とスマホの許可を確認してください。';
+  el('status').dataset.state = next;
+  el('status-title').textContent = info[0]; el('status-body').textContent = info[1];
+  el('primary').textContent = info[2]; el('primary').dataset.stop = !['idle', 'error'].includes(next);
+  const active = !['idle', 'error'].includes(next);
+  for (const id of ['usb-mode', 'wifi-mode', 'address', 'device']) el(id).disabled = active;
+  el('diagnostic').textContent = next === 'streaming' ? '例：受信 30 fps · カメラへの送信 30 fps' : next === 'consumer' ? '例：受信 30 fps · カメラへの送信 0 fps' : '停止中または開始待ち';
+  for (const button of scenes) button.setAttribute('aria-pressed', String(button.dataset.scene === next));
+}
+function chooseMode(next) {
+  mode = next;
+  el('wifi-field').hidden = next !== 'wifi'; el('usb-field').hidden = next !== 'usb';
+  el('wifi-mode').setAttribute('aria-pressed', String(next === 'wifi'));
+  el('usb-mode').setAttribute('aria-pressed', String(next === 'usb'));
+  render('idle');
+}
+el('wifi-mode').onclick = () => chooseMode('wifi'); el('usb-mode').onclick = () => chooseMode('usb');
+el('address').addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(saveAddress, 300); });
+window.addEventListener('pagehide', saveAddress);
+el('connection-form').addEventListener('submit', event => {
+  event.preventDefault(); clearTimeout(pending); saveAddress();
+  if (!['idle', 'error'].includes(state)) { render('idle'); return; }
+  if (mode === 'wifi' && !el('address').value.trim()) { render('error'); el('status-body').textContent = 'スマホのIPアドレスを入力してください。'; return; }
+  render('connecting'); pending = setTimeout(() => render('waiting'), 900);
+});
+for (const button of scenes) button.onclick = () => { clearTimeout(pending); render(button.dataset.scene); };
+el('platform').onchange = () => {
+  clearTimeout(pending);
+  const windows = el('platform').value === 'Windows';
+  el('os-label').textContent = el('platform').value; el('linux-output').hidden = windows;
+  el('gpu-option').textContent = windows ? 'D3D11VA' : 'VAAPI';
+  scenes.find(button => button.dataset.scene === 'consumer').disabled = !windows;
+  render('idle');
+};
+el('reset').onclick = () => { el('address').value = '192.168.1.42'; saveAddress(); };
+</script>
+</html>
