@@ -65,6 +65,7 @@ FFmpeg retains `avcodec`, `avutil`, `swscale`, H.264 decoding and the matching G
 
 - Launch restores connection mode, last Wi-Fi address, decode choice, output, rotation, and flips. It does not start the phone camera or connect automatically.
 - Main surface: USB / Wi-Fi selector, one device/address field, current status, and one Connect / Cancel / Stop action. Cancellation remains available during setup/connect, and Stop remains available while waiting or receiving.
+- Keep the main surface minimal: no explanatory banner, idle-ready message, save/restore notification, platform badge, or always-visible diagnostics. Successful persistence is silent. Show one short status/next action only when connecting, waiting, receiving, or failing; put settings/logs in Details. Keep prototype controls outside the product card and collapsed by default.
 - A valid Wi-Fi address is reused on every launch. Edits are saved after a short debounce and on action/close; saving does not depend on successful connection.
 - USB: selecting the single compatible phone and connecting performs the AOA transition. Multiple candidates require a choice; unrelated USB devices are not probed with vendor requests.
 - Status distinguishes connecting, waiting for the phone camera, waiting for a Windows consumer, frames submitted to the camera, and failure. Show the next useful action in Japanese/English; errors remain inspectable in a bounded expandable log.

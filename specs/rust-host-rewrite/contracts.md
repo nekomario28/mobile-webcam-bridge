@@ -29,6 +29,8 @@ Verify the baseline's effective fallback locations and precedence against actual
 
 Only `SettingsStore` writes. Debounce edits by 300 ms and save on action/close, independently of successful connection. Linux writes a sibling temporary file then atomically replaces the file; Windows writes the existing registry values and reports individual write failures. Preserve prior good data on parse/write failure; do not replace an unreadable file with defaults. A failed reload must not silently lose a saved IP. Workers receive an immutable snapshot and never reread/write settings.
 
+Successful save/restore produces no toast or status text. Restored values are visible in their fields. Show a short inline error only when persistence fails, with the underlying diagnostic available in Details. Connection status and settings errors remain separate so one cannot hide the other.
+
 Acceptance includes Qt -> Rust -> Qt -> Rust round trips, Unicode/quoted/escaped hostnames, booleans, unknown fields, missing keys, malformed files, permissions, and failed-connect/restart. The Rust executable must preserve the address without Qt runtime libraries; rollback to v0.1.2 must see subsequent Rust edits.
 
 ## AMB1 and transport
