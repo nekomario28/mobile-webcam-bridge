@@ -1,5 +1,7 @@
 # Mobile Webcam
 
+[Rust host preview](host-rs/README.md) is available on this branch. The release instructions below describe v0.1.2.
+
 ![Mobile Webcam Linux GUI in English with an Xperia connected over USB](docs/screenshots/mobile-webcam-linux-gui-en.png)
 
 *Earlier Linux USB session with an Xperia; see the current release below.*
