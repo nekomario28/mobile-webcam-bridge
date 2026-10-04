@@ -94,3 +94,19 @@ existing Android protocol and decoder/transform path.
 Microsoft's `MFCreateVirtualCamera` was considered as a reference. Its minimum
 client is Windows build 22000 and it requires a custom Media Foundation source.
 The initial Windows port instead reuses the existing DirectShow filter.
+
+## Windows installer
+
+[NSIS](https://nsis.sourceforge.io/Docs/Chapter4.html) builds a self-contained
+Setup.exe and an uninstaller; it is a build dependency, not a running service.
+The installer registers the pinned 32/64-bit filter DLLs with Windows regsvr32.
+Removal checks DLL ownership and deletes only slot 0's category instance and
+the two COM classes per registry view. These keys come from the pinned filter's
+`RegisterFilters` and the DirectShow base-class registration source.
+
+The donor's `DllUnregisterServer` loops through 42 slots. In the isolated Wine
+test it stopped at an unregistered slot with `Service UnregisterFilter of
+IFilterMapper2 failed`; this is not evidence of the same failure on native
+Windows. The installer removes its own registration explicitly so that removal
+is bounded and retries do not depend on already-deleted DLLs. A conflicting or
+additional Unity Capture slot must be removed with its own tools first.

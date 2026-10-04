@@ -85,10 +85,11 @@ void usage(const char* argv0) {
            " [--hw-decode auto|off|vaapi|cuda|d3d11va] [--frames N] [--timeout-ms N]"
            " [--rotate 0|90|180|270] [--no-horizontal-flip] [--vertical-flip]"
            " [--control-stdin]\n\n"
-        << "Receives H.264 over USB AOA or LAN TCP, decodes it, and writes YUYV frames to a\n"
 #ifdef _WIN32
+        << "Receives H.264 over USB AOA or LAN TCP and writes RGBA frames to a\n"
         << "Unity Capture virtual camera. --frames 0 runs until stopped.\n"
 #else
+        << "Receives H.264 over USB AOA or LAN TCP, decodes it, and writes YUYV frames to a\n"
         << "V4L2 output device. --frames 0 (the default) runs until interrupted.\n"
 #endif
         << "Horizontal mirror correction is enabled by default.\n"
@@ -209,11 +210,10 @@ class StdinControl {
 class VideoOutput {
   public:
     ~VideoOutput() {
-        if (sws_to_yuyv_) sws_freeContext(sws_to_yuyv_);
+        if (sws_to_output_) sws_freeContext(sws_to_output_);
         if (sws_to_rgb_) sws_freeContext(sws_to_rgb_);
-        if (sws_rgb_to_yuyv_) sws_freeContext(sws_rgb_to_yuyv_);
+        if (sws_rgb_to_output_) sws_freeContext(sws_rgb_to_output_);
 #ifdef _WIN32
-        if (sws_to_rgba_) sws_freeContext(sws_to_rgba_);
         if (producer_mutex_) CloseHandle(producer_mutex_);
 #else
         if (fd_ >= 0) ::close(fd_);
@@ -239,7 +239,7 @@ class VideoOutput {
         DWORD size = sizeof(name);
         if (RegGetValueA(HKEY_CLASSES_ROOT, key, nullptr, RRF_RT_REG_SZ,
                          nullptr, name, &size) != ERROR_SUCCESS) {
-            error = "Unity Capture is not installed; see windows/README.md";
+            error = "Unity Capture is not installed; run the Mobile Webcam Setup.exe";
             return false;
         }
         if (path != name) {
@@ -252,16 +252,8 @@ class VideoOutput {
             return false;
         }
         memory_ = std::make_unique<SharedImageMemory>(0);
-        stride_ = static_cast<std::size_t>(output_width) * 2;
+        stride_ = static_cast<std::size_t>(output_width) * output_pixel_bytes_;
         const std::size_t frame_size = stride_ * static_cast<std::size_t>(output_height);
-        rgba_.resize(static_cast<std::size_t>(output_width) * output_height * 4);
-        sws_to_rgba_ = sws_getContext(output_width, output_height, AV_PIX_FMT_YUYV422,
-                                     output_width, output_height, AV_PIX_FMT_RGBA,
-                                     SWS_BILINEAR, nullptr, nullptr, nullptr);
-        if (!sws_to_rgba_) {
-            error = "unable to create Unity Capture pixel conversion context";
-            return false;
-        }
 #else
         fd_ = ::open(path.c_str(), O_WRONLY | O_CLOEXEC);
         if (fd_ < 0) {
@@ -329,15 +321,15 @@ class VideoOutput {
 #endif
         output_.assign(frame_size, 0);
         source_format_ = source_format;
-        sws_to_yuyv_ = sws_getContext(source_width_, source_height_, source_format_,
-                                      width_, height_, AV_PIX_FMT_YUYV422,
+        sws_to_output_ = sws_getContext(source_width_, source_height_, source_format_,
+                                      width_, height_, output_format_,
                                       SWS_BILINEAR, nullptr, nullptr, nullptr);
-        if (!sws_to_yuyv_) {
-            error = "unable to create YUYV conversion context";
+        if (!sws_to_output_) {
+            error = "unable to create output conversion context";
             return false;
         }
         std::cout << "output=" << path << " " << width_ << "x" << height_
-                  << " @" << fps << " YUYV stride=" << stride_
+                  << " @" << fps << " " << output_format_name_ << " stride=" << stride_
                   << " rotation=" << rotation_degrees(rotation_)
                   << " horizontal_flip=" << (horizontal_flip_ ? "on" : "off")
                   << " vertical_flip=" << (vertical_flip_ ? "on" : "off") << "\n";
@@ -359,10 +351,21 @@ class VideoOutput {
             error = "decoded frame dimensions changed unexpectedly";
             return false;
         }
+#ifdef _WIN32
+        active_ = memory_->SendIsReady();
+        if (!active_) return true; // Skip conversion until a camera consumer opens.
+#endif
         std::uint8_t* destination[4]{output_.data(), nullptr, nullptr, nullptr};
         int destination_stride[4]{static_cast<int>(stride_), 0, 0, 0};
+#ifdef _WIN32
+        // DirectShow RGB is bottom-up; fuse that row order with the vertical flip.
+        if (!vertical_flip_) {
+            destination[0] += (height_ - 1) * stride_;
+            destination_stride[0] = -destination_stride[0];
+        }
+#endif
         if (rotation_ == amb::video::Rotation::None) {
-            const int rows = sws_scale(sws_to_yuyv_, frame->data, frame->linesize, 0,
+            const int rows = sws_scale(sws_to_output_, frame->data, frame->linesize, 0,
                                        source_height_, destination, destination_stride);
             if (rows != height_) {
                 error = "pixel conversion produced " + std::to_string(rows) + " rows";
@@ -380,7 +383,7 @@ class VideoOutput {
                 static_cast<std::size_t>(rotated_height),
                 static_cast<std::size_t>(width_), static_cast<std::size_t>(height_));
             if (!rect) {
-                error = "unable to fit rotated frame in YUYV output";
+                error = "unable to fit rotated frame in output";
                 return false;
             }
             rgb_source_stride_ = static_cast<std::size_t>(source_width_) * 3;
@@ -396,12 +399,12 @@ class VideoOutput {
                     return false;
                 }
             }
-            sws_rgb_to_yuyv_ = sws_getCachedContext(
-                sws_rgb_to_yuyv_, rotated_width, rotated_height, AV_PIX_FMT_RGB24,
+            sws_rgb_to_output_ = sws_getCachedContext(
+                sws_rgb_to_output_, rotated_width, rotated_height, AV_PIX_FMT_RGB24,
                 static_cast<int>(rect->width), static_cast<int>(rect->height),
-                AV_PIX_FMT_YUYV422, SWS_BILINEAR, nullptr, nullptr, nullptr);
-            if (!sws_rgb_to_yuyv_) {
-                error = "unable to create rotated YUYV conversion context";
+                output_format_, SWS_BILINEAR, nullptr, nullptr, nullptr);
+            if (!sws_rgb_to_output_) {
+                error = "unable to create rotated output conversion context";
                 return false;
             }
             std::uint8_t* rgb_destination[4]{rgb_source_.data(), nullptr, nullptr, nullptr};
@@ -421,22 +424,40 @@ class VideoOutput {
                 error = "unable to rotate RGB frame";
                 return false;
             }
+#ifdef _WIN32
+            std::fill(output_.begin(), output_.end(), 0);
+            for (std::size_t i = 3; i < output_.size(); i += 4) output_[i] = 255;
+            const std::size_t row = vertical_flip_ ? rect->y : height_ - 1 - rect->y;
+            std::uint8_t* fitted_output = output_.data() + row * stride_ + rect->x * 4;
+#else
             std::fill(output_.begin(), output_.end(), 128);
             for (int y = 0; y < height_; ++y) {
                 auto* row = output_.data() + static_cast<std::size_t>(y) * stride_;
                 for (int x = 0; x < width_ * 2; x += 2) row[x] = 16;
             }
             std::uint8_t* fitted_output = output_.data() + rect->y * stride_ + rect->x * 2;
+#endif
             std::uint8_t* fitted_destination[4]{fitted_output, nullptr, nullptr, nullptr};
             const std::uint8_t* rotated_source[4]{rgb_rotated_.data(), nullptr, nullptr, nullptr};
             int rotated_stride[4]{static_cast<int>(rgb_rotated_stride_), 0, 0, 0};
-            const int rows = sws_scale(sws_rgb_to_yuyv_, rotated_source, rotated_stride, 0,
+            const int rows = sws_scale(sws_rgb_to_output_, rotated_source, rotated_stride, 0,
                                        rotated_height, fitted_destination, destination_stride);
             if (rows != static_cast<int>(rect->height)) {
-                error = "rotated YUYV conversion produced " + std::to_string(rows) + " rows";
+                error = "rotated output conversion produced " + std::to_string(rows) + " rows";
                 return false;
             }
         }
+#ifdef _WIN32
+        if (horizontal_flip_) {
+            for (int y = 0; y < height_; ++y) {
+                auto* row = output_.data() + y * stride_;
+                for (int x = 0; x < width_ / 2; ++x) {
+                    std::swap_ranges(row + x * 4, row + x * 4 + 4,
+                                     row + (width_ - 1 - x) * 4);
+                }
+            }
+        }
+#else
         if (horizontal_flip_ &&
             !amb::video::flip_yuyv422_horizontal(output_,
                                                   static_cast<std::size_t>(width_),
@@ -451,25 +472,13 @@ class VideoOutput {
             error = "unable to apply vertical flip";
             return false;
         }
+#endif
 
 #ifdef _WIN32
-        active_ = memory_->SendIsReady();
-        if (!active_) return true; // Camera applications open the receiver lazily.
-        const std::uint8_t* source[4]{output_.data(), nullptr, nullptr, nullptr};
-        int source_stride[4]{static_cast<int>(stride_), 0, 0, 0};
-        // DirectShow's RGB bitmap has a bottom-up row order.
-        std::uint8_t* rgba_destination[4]{rgba_.data() + (height_ - 1) * width_ * 4,
-                                         nullptr, nullptr, nullptr};
-        int rgba_stride[4]{-width_ * 4, 0, 0, 0};
-        if (sws_scale(sws_to_rgba_, source, source_stride, 0, height_,
-                      rgba_destination, rgba_stride) != height_) {
-            error = "Unity Capture conversion failed";
-            return false;
-        }
-        const auto sent = memory_->Send(width_, height_, width_, static_cast<DWORD>(rgba_.size()),
+        const auto sent = memory_->Send(width_, height_, width_, static_cast<DWORD>(output_.size()),
                                         SharedImageMemory::FORMAT_UINT8,
                                         SharedImageMemory::RESIZEMODE_LINEAR,
-                                        SharedImageMemory::MIRRORMODE_DISABLED, 1000, rgba_.data());
+                                        SharedImageMemory::MIRRORMODE_DISABLED, 1000, output_.data());
         if (sent == SharedImageMemory::SENDRES_TOOLARGE || sent == SharedImageMemory::SENDRES_ERROR) {
             error = "Unity Capture shared-memory write failed";
             return false;
@@ -500,11 +509,14 @@ class VideoOutput {
 
   private:
 #ifdef _WIN32
+    static constexpr AVPixelFormat output_format_ = AV_PIX_FMT_RGBA;
+    static constexpr std::size_t output_pixel_bytes_ = 4;
+    static constexpr const char* output_format_name_ = "RGBA";
     std::unique_ptr<SharedImageMemory> memory_;
     HANDLE producer_mutex_ = nullptr;
-    SwsContext* sws_to_rgba_ = nullptr;
-    std::vector<std::uint8_t> rgba_;
 #else
+    static constexpr AVPixelFormat output_format_ = AV_PIX_FMT_YUYV422;
+    static constexpr const char* output_format_name_ = "YUYV";
     int fd_ = -1;
 #endif
     bool active_ = false;
@@ -520,9 +532,9 @@ class VideoOutput {
     bool horizontal_flip_ = true;
     bool vertical_flip_ = false;
     bool report_transform_ = false;
-    SwsContext* sws_to_yuyv_ = nullptr;
+    SwsContext* sws_to_output_ = nullptr;
     SwsContext* sws_to_rgb_ = nullptr;
-    SwsContext* sws_rgb_to_yuyv_ = nullptr;
+    SwsContext* sws_rgb_to_output_ = nullptr;
     std::vector<std::uint8_t> output_;
     std::vector<std::uint8_t> rgb_source_;
     std::vector<std::uint8_t> rgb_rotated_;

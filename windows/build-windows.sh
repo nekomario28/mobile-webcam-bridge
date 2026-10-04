@@ -8,7 +8,7 @@ fi
 repo=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo"
 cmake -S host -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DAMB_BUILD_GUI=ON
-cmake --build build/windows --parallel
+cmake --build build/windows --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 ctest --test-dir build/windows --output-on-failure
 
 # Pin and verify the external DirectShow filter; no Unity runtime is required.

@@ -43,6 +43,9 @@ class BridgeWindow final : public QWidget {
         transport_ = new QComboBox(this);
         transport_->addItem(ui("USB", "USB"), "usb");
         transport_->addItem(ui("Wi-Fi / LAN", "Wi-Fi / LAN"), "lan");
+#ifdef Q_OS_WIN
+        transport_->setCurrentIndex(1);
+#endif
 
         devices_ = new QComboBox(this);
         devices_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -133,6 +136,9 @@ class BridgeWindow final : public QWidget {
         connect(switch_, &QPushButton::clicked, this, [this] { switchToAccessory(); });
         connect(transport_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
             updateConnectionUi();
+#ifdef Q_OS_WIN
+            if (!lanSelected()) refreshDevices();
+#endif
         });
         connect(lan_host_, &QLineEdit::textChanged, this, [this] {
             setBridgeRunning(bridge_.state() != QProcess::NotRunning);
