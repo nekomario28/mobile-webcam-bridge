@@ -9,5 +9,6 @@ Third-party code, libraries and fonts retain their own licenses and notices.
 See THIRD_PARTY_NOTICES.md and the license files supplied with each package.
 The Unity Capture source in host/third_party/unity_capture/ remains MIT.
 
-Releases through v0.2.0 retain their original repository-owned MIT license.
-The original text is preserved in docs/licenses/MIT-before-Apache.txt.
+Historical project-owned releases additionally offer Apache-2.0 under
+docs/licenses/HISTORICAL-LICENSE-GRANT.md. Their original MIT permission remains
+valid; its text is preserved in docs/licenses/MIT-before-Apache.txt.

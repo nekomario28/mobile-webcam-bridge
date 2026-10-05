@@ -10,8 +10,11 @@ conditions. This choice does not grant unrelated codec patents.
 
 The audit inspected stable [v0.2.0](https://github.com/nekomario28/mobile-webcam-bridge/releases/tag/v0.2.0),
 source `e0c0918f1bbf7ad4137901ea0053b75766e3ff51`. Its project-owned source
-and binaries retain MIT. All Git author identities in the fetched repository
-belong to the same owner account; this is not an independent copyright-title
+and binaries retain their original MIT permission. A subsequent
+[historical grant](../licenses/HISTORICAL-LICENSE-GRANT.md) adds Apache-2.0 as
+an alternative for project-owned material only; dependency terms and the
+distribution findings below are unaffected. All Git author identities in the
+fetched repository belong to the same owner account; this is not an independent copyright-title
 certification. Vendor source, Gradle wrapper and dependency licenses remain
 unchanged. The former MIT grant is preserved in `docs/licenses/`.
 

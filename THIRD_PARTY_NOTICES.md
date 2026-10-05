@@ -4,9 +4,10 @@ Repository-owned source, scripts and documentation in this revision use
 [Apache-2.0](LICENSE), except files carrying another license notice. Attribution
 is in [NOTICE](NOTICE). Commercial use,
 paid distribution and proprietary modifications are allowed subject to its
-terms. Releases through v0.2.0 retain their original
-[MIT license](docs/licenses/MIT-before-Apache.txt). Third-party licenses are
-unchanged by this choice.
+terms. [Historical project-owned releases](docs/licenses/HISTORICAL-LICENSE-GRANT.md)
+additionally offer Apache-2.0 while retaining their original
+[MIT permission](docs/licenses/MIT-before-Apache.txt). Third-party licenses are
+unchanged by either grant.
 
 ## Current Rust desktop and Android
 
@@ -32,15 +33,17 @@ are not the project's completed corresponding-source distribution.
 See the [FFmpeg guidance](https://ffmpeg.org/legal.html).
 
 The [v0.2.0 audit](docs/evidence/2026-10-06-license-audit.md) records verified
-artifact identities and remaining source/notice gaps. This source license
-change does not retroactively repair or relicense those binaries. H.264 patent
-permissions are a separate question from source copyright licenses.
+artifact identities and remaining source/notice gaps. The additional historical
+permission covers project-owned code only; it does not relicense dependencies
+or repair those distribution gaps. H.264 patent permissions are a separate
+question from source copyright licenses.
 
 ## Classic Qt releases
 
 Classic v0.1.2 packages use LGPL Qt and GPL-enabled system FFmpeg; their combined
 binary distributions use GPL-3.0 terms. Their repository-owned source remains
-MIT. Consult the [classic Windows guide](windows/README.md),
+MIT, with additional Apache-2.0 permission for project-owned code under the
+historical grant. Consult the [classic Windows guide](windows/README.md),
 [AppImage notice](linux/APPIMAGE_LICENSES.md) and the dependency-source archives
 of that release. Do not substitute those sources for a different Rust build.
 

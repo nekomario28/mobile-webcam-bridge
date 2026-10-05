@@ -165,8 +165,9 @@ Technical details and test records are in [`docs/architecture.md`](../docs/archi
 
 ## License
 
-Mobile Webcam source, scripts, and documentation are MIT licensed. The
-AppImage also contains Qt and FFmpeg components under their upstream licenses;
+Project-owned classic source additionally offers Apache-2.0 under the
+[historical grant](licenses/HISTORICAL-LICENSE-GRANT.md), retaining its original
+MIT permission. The AppImage contains Qt and FFmpeg under their upstream licenses;
 libusb is bundled, while `v4l2loopback` remains a separate kernel dependency. See
 [`LICENSE`](../LICENSE), [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md), and
 [`linux/APPIMAGE_LICENSES.md`](../linux/APPIMAGE_LICENSES.md).
