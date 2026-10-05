@@ -24,7 +24,7 @@ fn japanese() -> bool {
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([420.0, 500.0])
+            .with_inner_size([420.0, 440.0])
             .with_min_inner_size([360.0, 360.0]),
         ..Default::default()
     };
@@ -97,11 +97,10 @@ impl App {
             style.spacing.interact_size.y = 24.0;
             style.spacing.icon_width = 18.0;
             style.spacing.item_spacing.y = 5.0;
+            style.spacing.scroll = egui::style::ScrollStyle::solid();
+            style.visuals.override_text_color = Some(egui::Color32::from_gray(220));
             style.visuals.widgets.inactive.bg_stroke =
                 egui::Stroke::new(1.0, egui::Color32::from_gray(100));
-            style
-                .text_styles
-                .insert(egui::TextStyle::Heading, egui::FontId::proportional(22.0));
             style
                 .text_styles
                 .insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
@@ -239,187 +238,229 @@ impl eframe::App for App {
         egui::Frame::central_panel(ui.style())
             .inner_margin(24.0)
             .show(ui, |ui| {
-                ui.set_min_size(ui.available_size());
-                ui.heading("Mobile Webcam");
-                ui.add_space(18.0);
-                ui.add_enabled_ui(!self.session.running(), |ui| {
-                    ui.horizontal(|ui| {
-                        for (mode, label) in [("usb", "USB"), ("lan", "Wi-Fi")] {
-                            let selected = self.settings.transport == mode;
-                            let label = if selected {
-                                egui::RichText::new(label).strong()
-                            } else {
-                                egui::RichText::new(label)
-                            };
-                            if ui
-                                .add(
-                                    egui::Button::selectable(selected, label)
-                                        .frame_when_inactive(true)
-                                        .min_size(egui::vec2(70.0, 28.0)),
-                                )
-                                .clicked()
-                            {
-                                self.settings.transport = mode.into();
-                            }
-                        }
-                    });
-                    ui.add_space(12.0);
-                    if self.settings.transport == "lan" {
-                        ui.label(self.text("IP address", "IPアドレス"));
-                        ui.add(
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        ui.add_enabled_ui(!self.session.running(), |ui| {
+                            ui.horizontal(|ui| {
+                                let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                                for (mode, label) in [("usb", "USB"), ("lan", "Wi-Fi")] {
+                                    let selected = self.settings.transport == mode;
+                                    let label = if selected {
+                                        egui::RichText::new(label).strong()
+                                    } else {
+                                        egui::RichText::new(label)
+                                    };
+                                    if ui
+                                        .add(
+                                            egui::Button::selectable(
+                                                selected,
+                                                (egui::Atom::grow(), label, egui::Atom::grow()),
+                                            )
+                                                .frame_when_inactive(true)
+                                                .min_size(egui::vec2(width, 34.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.settings.transport = mode.into();
+                                        self.session.state = State::Idle;
+                                        self.session.stats = None;
+                                        self.session.usb_permission = None;
+                                    }
+                                }
+                            });
+                            ui.add_space(12.0);
+                            if self.settings.transport == "lan" {
+                                if matches!(self.session.state, State::Idle) {
+                                    ui.label(self.text(
+                                        "On your phone, select Wi-Fi in Mobile Webcam.\nUse the same Wi-Fi as this PC.",
+                                        "スマホでアプリを開き、Wi-Fiを選択。\nPCとスマホを同じWi-Fiにつなぐ。",
+                                    ));
+                                    ui.add_space(8.0);
+                                }
+                                ui.label(self.text("Phone address", "スマホに表示されたアドレス"));
+                                ui.add(
                             egui::TextEdit::singleline(&mut self.settings.lan_host)
                                 .hint_text("192.168.1.42")
-                                .desired_width(f32::INFINITY),
-                        );
-                    } else {
-                        let available = &self.devices;
-                        let name = self
-                            .selected
-                            .as_ref()
-                            .and_then(|id| available.iter().find(|c| c.id == *id))
-                            .map(|c| c.name.as_str())
-                            .unwrap_or(self.text("Select device", "端末を選択"));
-                        if available.len() != 1 || self.selection_lost || self.selected.is_none() {
-                            egui::ComboBox::from_id_salt("usb-device")
-                                .selected_text(name)
-                                .width(320.0)
-                                .show_ui(ui, |ui| {
-                                    for candidate in available {
-                                        if ui
-                                            .selectable_value(
-                                                &mut self.selected,
-                                                Some(candidate.id.clone()),
-                                                &candidate.name,
-                                            )
-                                            .changed()
-                                        {
-                                            self.selection_lost = false;
-                                            self.session.usb_permission = None;
-                                        }
-                                    }
-                                });
+                                .min_size(egui::vec2(0.0, 28.0))
+                                        .desired_width(f32::INFINITY),
+                                );
+                            } else {
+                                if matches!(self.session.state, State::Idle) {
+                                    ui.label(self.text(
+                                        "On your phone, select USB in Mobile Webcam.\nConnect it to this PC with a USB cable.",
+                                        "スマホでアプリを開き、USBを選択。\nUSBケーブルでPCにつなぐ。",
+                                    ));
+                                    ui.add_space(8.0);
+                                }
+                                let available = &self.devices;
+                                let name = self
+                                    .selected
+                                    .as_ref()
+                                    .and_then(|id| available.iter().find(|c| c.id == *id))
+                                    .map(|c| c.name.as_str())
+                                    .unwrap_or(self.text("Select your phone", "スマホを選択"));
+                                if available.is_empty() {
+                                    ui.weak(self.text("No USB devices detected", "USB機器が見つかりません"));
+                                } else if available.len() != 1 || self.selection_lost || self.selected.is_none() {
+                                    egui::ComboBox::from_id_salt("usb-device")
+                                        .selected_text(name)
+                                        .width(ui.available_width())
+                                        .show_ui(ui, |ui| {
+                                            for candidate in available {
+                                                if ui
+                                                    .selectable_value(
+                                                        &mut self.selected,
+                                                        Some(candidate.id.clone()),
+                                                        &candidate.name,
+                                                    )
+                                                    .changed()
+                                                {
+                                                    self.selection_lost = false;
+                                                    self.session.usb_permission = None;
+                                                }
+                                            }
+                                        });
+                                } else {
+                                    ui.label(name);
+                                }
+                                if self.selection_lost {
+                                    ui.colored_label(
+                                        egui::Color32::LIGHT_RED,
+                                        self.text(
+                                            "Selected device disconnected",
+                                            "選択した端末が切断されました",
+                                        ),
+                                    );
+                                }
+                                if let Some(error) = &self.usb_error {
+                                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                                }
+                            }
+                        });
+                        ui.add_space(18.0);
+                        let running = self.session.running();
+                        let label = if running && matches!(self.session.state, State::Connecting) {
+                            self.text("Cancel", "キャンセル")
+                        } else if running {
+                            self.text("Disconnect", "切断")
                         } else {
-                            ui.label(name);
+                            self.text("Connect", "接続")
+                        };
+                        #[cfg(target_os = "linux")]
+                        let label = if !running
+                            && self.settings.transport == "usb"
+                            && self.session.usb_permission.is_some()
+                        {
+                            self.text("Allow USB access", "USBアクセスを許可")
+                        } else {
+                            label
+                        };
+                        let allowed = running
+                            || self.settings.transport == "lan"
+                                && !self.settings.lan_host.trim().is_empty()
+                            || self.settings.transport == "usb"
+                                && self.selected.is_some()
+                                && !self.selection_lost;
+                        let mut button = egui::Button::new((
+                            egui::Atom::grow(),
+                            egui::RichText::new(label).color(if allowed {
+                                ui.visuals().selection.stroke.color
+                            } else {
+                                ui.visuals().text_color()
+                            }),
+                            egui::Atom::grow(),
+                        )).min_size(egui::vec2(ui.available_width(), 42.0));
+                        if allowed {
+                            button = button.fill(ui.visuals().selection.bg_fill);
                         }
-                        if self.devices.is_empty() {
-                            ui.label(self.text("Connect your phone by USB", "スマホをUSBで接続"));
+                        if ui.add_enabled(allowed, button).clicked() {
+                            self.save();
+                            if running {
+                                self.session.stop(ui.ctx());
+                            } else {
+                                #[cfg(target_os = "linux")]
+                                let result = if self.settings.transport == "usb"
+                                    && self.session.usb_permission.is_some()
+                                {
+                                    self.session
+                                        .allow_usb(self.settings.clone(), ui.ctx().clone())
+                                } else {
+                                    self.session.connect(
+                                        self.settings.clone(),
+                                        self.selected.clone(),
+                                        ui.ctx().clone(),
+                                    )
+                                };
+                                #[cfg(windows)]
+                                let result = self.session.start(
+                                    self.settings.clone(),
+                                    self.selected.clone(),
+                                    ui.ctx().clone(),
+                                );
+                                if let Err(e) = result {
+                                    self.session.state = State::Failed(e.to_string());
+                                }
+                            }
                         }
-                        if self.selection_lost {
+                        ui.add_space(12.0);
+                        let status = match &self.session.state {
+                            State::Idle => "",
+                            State::Connecting => self.text("Connecting…", "接続中…"),
+                            State::Waiting => {
+                                if cfg!(windows) && matches!(&self.session.stats, Some(Event::Stats { decoded, active: false, .. }) if *decoded > 0) {
+                                    self.text("Select Mobile Webcam in your PC's camera app", "PCのカメラアプリでMobile Webcamを選択")
+                            } else { self.text("Connected · Press Start camera on your phone", "接続済み · スマホで「カメラ開始」を押してください") }
+                            },
+                            State::Streaming => self.text("Camera connected", "カメラ接続中"),
+                            State::Stopping => self.text("Disconnecting…", "切断中…"),
+                            State::Failed(error) => {
+                                if error.contains("v4l2loopback") || error.contains("host setup is not included")
+                                {
+                                    self.text("Camera driver unavailable", "カメラドライバーを利用できません")
+                                } else if self.session.usb_permission.is_some() {
+                                    self.text("Allow USB access", "USBアクセスを許可してください")
+                                } else if error.contains("WinUSB") {
+                                    self.text("USB driver unavailable", "USBドライバーを利用できません")
+                                } else {
+                                    self.text("Connection failed", "接続できませんでした")
+                                }
+                            }
+                        };
+                        if !status.is_empty() {
+                            if matches!(self.session.state, State::Failed(_)) {
+                                ui.colored_label(egui::Color32::LIGHT_RED, egui::RichText::new(status).strong());
+                            } else {
+                                ui.label(egui::RichText::new(status).strong());
+                            }
+                        }
+                        if let State::Failed(error) = &self.session.state {
+                            let next = if error.contains("v4l2loopback") || error.contains("host setup is not included") {
+                                self.text("Install v4l2loopback for your OS, then reconnect.", "OSにv4l2loopbackを導入して、接続し直してください。")
+                            } else if error.contains("WinUSB") {
+                                self.text("The selected phone needs a compatible USB driver.", "選択したスマホ用のUSBドライバーが必要です。")
+                            } else if self.session.usb_permission.is_some() {
+                                self.text("Press Allow USB access and approve the OS prompt.", "「USBアクセスを許可」を押し、OSの認証を進めてください。")
+                            } else if self.settings.transport == "lan" {
+                            self.text("Check the address shown on your phone and select Wi-Fi there.", "スマホのWi-Fi選択と、表示されたアドレスを確認してください。")
+                            } else {
+                                self.text("Check the selected phone and its USB permission. See Details for the error.", "選択したスマホとUSBの利用許可を確認してください。エラーは「詳細」に表示します。")
+                            };
+                            ui.label(next);
+                        }
+                        if let Some(error) = &self.save_error {
                             ui.colored_label(
                                 egui::Color32::LIGHT_RED,
-                                self.text(
-                                    "Selected device disconnected",
-                                    "選択した端末が切断されました",
+                                format!(
+                                    "{}: {error}",
+                                    self.text("Settings could not be saved", "設定を保存できませんでした")
                                 ),
                             );
                         }
-                        if let Some(error) = &self.usb_error {
-                            ui.colored_label(egui::Color32::LIGHT_RED, error);
-                        }
-                    }
-                });
-                ui.add_space(18.0);
-                let running = self.session.running();
-                let label = if running {
-                    self.text("Disconnect", "切断")
-                } else {
-                    self.text("Connect", "接続")
-                };
-                #[cfg(target_os = "linux")]
-                let label = if !running
-                    && self.settings.transport == "usb"
-                    && self.session.usb_permission.is_some()
-                {
-                    self.text("Allow USB access", "USBアクセスを許可")
-                } else {
-                    label
-                };
-                let allowed = running
-                    || self.settings.transport == "lan"
-                        && !self.settings.lan_host.trim().is_empty()
-                    || self.settings.transport == "usb"
-                        && self.selected.is_some()
-                        && !self.selection_lost;
-                if ui
-                    .add_enabled(
-                        allowed,
-                        egui::Button::new(label).min_size(egui::vec2(ui.available_width(), 38.0)),
-                    )
-                    .clicked()
-                {
-                    self.save();
-                    if running {
-                        self.session.stop(ui.ctx());
-                    } else {
-                        #[cfg(target_os = "linux")]
-                        let result = if self.settings.transport == "usb"
-                            && self.session.usb_permission.is_some()
-                        {
-                            self.session
-                                .allow_usb(self.settings.clone(), ui.ctx().clone())
-                        } else {
-                            self.session.connect(
-                                self.settings.clone(),
-                                self.selected.clone(),
-                                ui.ctx().clone(),
+                        ui.add_space(12.0);
+                        egui::CollapsingHeader::new(self.text("Details", "詳細"))
+                            .default_open(
+                                cfg!(feature = "capture")
+                                    && std::env::var_os("MW_CAPTURE_DETAILS").is_some(),
                             )
-                        };
-                        #[cfg(windows)]
-                        let result = self.session.start(
-                            self.settings.clone(),
-                            self.selected.clone(),
-                            ui.ctx().clone(),
-                        );
-                        if let Err(e) = result {
-                            self.session.state = State::Failed(e.to_string());
-                        }
-                    }
-                }
-                ui.add_space(12.0);
-                let status = match &self.session.state {
-                    State::Idle => "",
-                    State::Connecting => self.text("Connecting…", "接続中…"),
-                    State::Waiting => {
-                        if cfg!(windows) && matches!(&self.session.stats, Some(Event::Stats { decoded, active: false, .. }) if *decoded > 0) {
-                            self.text("Open a camera app", "カメラアプリを開いてください")
-                        } else { self.text("Waiting for phone video", "スマホの映像を待機中") }
-                    },
-                    State::Streaming => self.text("Streaming", "配信中"),
-                    State::Stopping => self.text("Disconnecting…", "切断中…"),
-                    State::Failed(error) => {
-                        if error.contains("v4l2loopback") || error.contains("host setup is not included")
-                        {
-                            self.text("Camera driver unavailable", "カメラドライバーを利用できません")
-                        } else if self.session.usb_permission.is_some() {
-                            self.text("Allow USB access", "USBアクセスを許可してください")
-                        } else if error.contains("WinUSB") {
-                            self.text("USB driver unavailable", "USBドライバーを利用できません")
-                        } else {
-                            self.text("Connection failed", "接続できませんでした")
-                        }
-                    }
-                };
-                if !status.is_empty() {
-                    ui.label(status);
-                }
-                if let Some(error) = &self.save_error {
-                    ui.colored_label(
-                        egui::Color32::LIGHT_RED,
-                        format!(
-                            "{}: {error}",
-                            self.text("Settings could not be saved", "設定を保存できませんでした")
-                        ),
-                    );
-                }
-                ui.add_space(12.0);
-                egui::CollapsingHeader::new(self.text("Details", "詳細"))
-                    .default_open(
-                        cfg!(feature = "capture")
-                            && std::env::var_os("MW_CAPTURE_DETAILS").is_some(),
-                    )
-                    .show(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .max_height(ui.available_height())
                             .show(ui, |ui| {
                                 if let State::Failed(error) = &self.session.state {
                                     ui.label(error);

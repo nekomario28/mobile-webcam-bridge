@@ -5,6 +5,11 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      capture_ui:
+        description: Capture Android UI before/after in an API 35 emulator
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,7 +20,7 @@ concurrency:
 
 jobs:
   assemble:
-    runs-on: [self-hosted, Linux, X64, mobile-webcam]
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -44,9 +49,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Assemble and lint debug APK
+      - name: Assemble and lint debug/release APKs
         working-directory: android
-        run: gradle --no-daemon --stacktrace assembleDebug lintDebug
+        run: gradle --no-daemon --stacktrace assembleDebug lintDebug assembleRelease lintRelease
       - name: Verify APK
         shell: bash
         run: |
@@ -54,10 +59,38 @@ jobs:
           apk=android/app/build/outputs/apk/debug/app-debug.apk
           test -s "$apk"
           sha256sum "$apk"
-      - name: Upload debug APK
+      - name: Capture Android UI
+        if: github.event_name == 'workflow_dispatch' && inputs.capture_ui
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
+          echo no | avdmanager create avd -n mobile-webcam-ui -k "system-images;android-35;google_apis;x86_64" --device pixel
+          sudo chmod a+rw /dev/kvm
+          mkdir -p build/android-ui
+          "$ANDROID_HOME/emulator/emulator" -avd mobile-webcam-ui -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 >build/android-ui/emulator.log 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'
+          adb shell wm size 720x1280
+          adb shell wm density 320
+          adb shell input keyevent 82
+          python3 android/tools/capture_ui.py
+      - name: Upload Android UI captures
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.capture_ui
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-webcam-android-ui
+          path: build/android-ui
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload APKs and lint reports
         uses: actions/upload-artifact@v4
         with:
           name: mobile-webcam-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/release/app-release-unsigned.apk
+            android/app/build/reports/lint-results-*.html
           if-no-files-found: error
           retention-days: 7

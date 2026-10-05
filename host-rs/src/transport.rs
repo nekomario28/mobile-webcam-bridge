@@ -1,7 +1,7 @@
 use crate::wire::{self, Frame, Header};
 use std::{
     io::{self, Read, Write},
-    net::{TcpStream, ToSocketAddrs},
+    net::{SocketAddr, TcpStream, ToSocketAddrs},
     time::{Duration, Instant},
 };
 
@@ -24,7 +24,10 @@ impl Tcp {
         if host.trim().is_empty() {
             return Err("enter an IP address".into());
         }
-        let addresses: Vec<_> = (host.trim(), port).to_socket_addrs()?.collect();
+        let addresses: Vec<_> = match host.trim().parse::<SocketAddr>() {
+            Ok(address) => vec![address],
+            Err(_) => (host.trim(), port).to_socket_addrs()?.collect(),
+        };
         let deadline = Instant::now() + timeout;
         let mut last = io::Error::new(io::ErrorKind::AddrNotAvailable, "no TCP addresses");
         for address in addresses {
@@ -101,6 +104,25 @@ impl Transport for Tcp {
 mod tests {
     use super::*;
     use std::{net::TcpListener, thread};
+    #[test]
+    fn copied_phone_endpoint_connects() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let peer = thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            let mut tcp = Tcp(socket);
+            let hello = tcp.receive(Duration::from_secs(2)).unwrap();
+            assert_eq!(hello.header.kind, wire::HELLO);
+            tcp.send(
+                &Frame::new(wire::HELLO_ACK, hello.header.sequence, Vec::new()).unwrap(),
+                Duration::from_secs(2),
+            )
+            .unwrap();
+        });
+        let connection = Tcp::connect(&format!(" {address} "), 1, Duration::from_secs(2)).unwrap();
+        assert_eq!(connection.0.peer_addr().unwrap(), address);
+        peer.join().unwrap();
+    }
     #[test]
     fn fragmented_handshake_and_eof_mid_payload() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

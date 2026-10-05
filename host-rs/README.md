@@ -2,7 +2,14 @@
 
 The Rust PC host reuses the existing Android app, USB/Wi-Fi protocol, FFmpeg, libusb and Windows virtual camera. The current production release remains on the C++ host until hardware parity is accepted.
 
-Windows: run Setup.exe, then launch Mobile Webcam. Linux: launch the AppImage and press **Connect**; missing camera integration opens the OS authorization prompt and resumes the connection after setup. Linux needs a distribution-provided v4l2loopback module and a Vulkan driver/loader. Windows requires a DX12-capable graphics driver. The GUI follows the OS language (EN/JA), remembers the Wi-Fi address and keeps rotation/flips in Details.
+Install the Android APK supplied with the beta and open Mobile Webcam on your phone and PC. Choose the same mode on both:
+
+- USB: connect the cable, select your phone on the PC, then press **Connect**.
+- Wi-Fi: use the same network, enter the IP shown on your phone on the PC, then press **Connect**. The old app's `IP:port` display can also be pasted.
+
+On your phone, press **Start camera** and allow camera access.
+
+Windows: run Setup.exe before launching Mobile Webcam. Linux: launch the AppImage; **Connect** handles missing camera integration through OS authorization and resumes after setup. Linux needs a distribution-provided v4l2loopback module and a Vulkan driver/loader. Windows requires a DX12-capable graphics driver. EN/JA follows the OS language. The Wi-Fi address is remembered; rotation/flips remain in Details.
 
 USB is experimental. Connection failures have been reported on Linux and Windows; the discovery/setup fixes have not been retested with a phone. USB debugging is not required: MTP devices are suggested and unclassified devices remain selectable. Windows USB still needs a libusb-compatible driver for the selected phone/accessory interface; Setup.exe currently installs the virtual camera, not that USB driver. Android requires camera/accessory permission and its camera Start action.
 

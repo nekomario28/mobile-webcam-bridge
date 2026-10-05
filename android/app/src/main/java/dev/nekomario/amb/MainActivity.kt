@@ -76,6 +76,7 @@ class MainActivity : Activity() {
         }
         val usbMode = Button(this).apply {
             text = "USB"
+            setAllCaps(false)
             setOnClickListener { startUsbMode() }
         }
         val lanMode = Button(this).apply {
@@ -91,6 +92,7 @@ class MainActivity : Activity() {
         }
         val cameras = Button(this).apply {
             text = ui("Details", "詳細")
+            setAllCaps(false)
             setOnClickListener {
                 if (details.visibility == android.view.View.VISIBLE) {
                     details.visibility = android.view.View.GONE
@@ -102,6 +104,7 @@ class MainActivity : Activity() {
         }
         cameraButton = Button(this).apply {
             text = ui("Start camera", "カメラ開始")
+            setAllCaps(false)
             setOnClickListener {
                 if (cameraStartRequested) {
                     stopCamera()
@@ -199,24 +202,20 @@ class MainActivity : Activity() {
                             stopCamera()
                             session = null
                         }
-                        showLanWaiting(server)
+                        showLanWaiting()
                     } else {
                         closeSession(clearStartRequest = false)
                         session = lanSession
-                        show(
-                            ui("Wi-Fi: PC connected\n", "Wi-Fi: PC接続済み\n") +
-                                server.endpoints().joinToString() +
-                                ui("\nPress Start camera", "\nカメラ開始を押してください"),
-                        )
+                        show(ui("PC connected\nPress Start camera", "PC接続済み\n「カメラ開始」を押してください"))
                         if (cameraStartRequested) startCamera720p()
                     }
                 }
             },
             onStatus = {
-                runOnUiThread { if (lanServer === server && session == null) showLanWaiting(server) }
+                runOnUiThread { if (lanServer === server && session == null) showLanWaiting() }
             },
             onError = { error ->
-                runOnUiThread { if (lanServer === server && session == null) showLanWaiting(server, error) }
+                runOnUiThread { if (lanServer === server && session == null) showLanWaiting(error) }
             },
         )
         lanServer = server
@@ -227,14 +226,15 @@ class MainActivity : Activity() {
             }
     }
 
-    private fun showLanWaiting(server: LanServer, detail: String? = null) {
-        val endpoints = server.endpoints().ifEmpty {
+    private fun showLanWaiting(detail: String? = null) {
+        val addresses = LanServer.localIpv4Addresses().ifEmpty {
             listOf(ui("Check the phone Wi-Fi IPv4 address", "Wi-Fi IPv4を確認してください"))
         }
         show(
             buildString {
-                append(ui("Wi-Fi: connect from the PC\n", "Wi-Fi: PCから接続してください\n"))
-                append(endpoints.joinToString("\n"))
+                append(ui("Phone IP\n", "スマホのIPアドレス\n"))
+                append(addresses.joinToString("\n"))
+                append(ui("\nEnter this IP on the PC and press Connect", "\nPCにこのIPを入力して「接続」"))
                 if (!detail.isNullOrBlank()) append("\n").append(detail)
             },
         )
@@ -247,7 +247,7 @@ class MainActivity : Activity() {
         val accessory = usb.accessoryList?.firstOrNull()
         if (accessory == null) {
             usbPermissionPending = false
-            show(ui("USB: waiting for AOA accessory…", "USB: AOA accessoryを待っています…"))
+            show(ui("USB: press Connect on the PC", "USB: PCで「接続」を押してください"))
             scheduleRediscover()
             return
         }
