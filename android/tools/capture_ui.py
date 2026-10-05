@@ -42,7 +42,9 @@ def wait_for_controls():
         if any(n.get("text", "") == "USB" for n in tree.iter("node")):
             return tree
         time.sleep(0.5)
-    raise RuntimeError("App controls did not appear")
+    capture("startup-failure")
+    (OUTPUT / "startup-failure-logcat.txt").write_bytes(adb("logcat", "-d", "-v", "threadtime"))
+    raise RuntimeError("App controls did not appear; see startup-failure capture and logcat")
 
 
 def tap_node(control):
