@@ -1,0 +1,86 @@
+name: rust-host-ci
+on:
+  push:
+    branches: [main]
+    paths: ['host-rs/**', 'linux/**', 'windows/**', '.github/workflows/rust-host-ci.yml']
+  pull_request:
+    branches: [main]
+    paths: ['host-rs/**', 'linux/**', 'windows/**', '.github/workflows/rust-host-ci.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rust-host-ci-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_BUILD_JOBS: '1'
+  MOBILE_WEBCAM_REQUIRE_MINIMAL: '1'
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Native dependencies and pinned Rust
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev qt6-base-dev
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.98.1
+      - name: Minimal FFmpeg and native checks
+        run: |
+          python3 host-rs/tools/build_ffmpeg.py linux --prefix "$PWD/host-rs/target/native-linux" --cache "$PWD/host-rs/target/ffmpeg-source"
+          export FFMPEG_DIR="$PWD/host-rs/target/native-linux"
+          export LD_LIBRARY_PATH="$FFMPEG_DIR/lib"
+          cargo fmt --manifest-path host-rs/Cargo.toml --check
+          cargo clippy --manifest-path host-rs/Cargo.toml --all-targets --locked -- -D warnings
+          sh host-rs/tools/build_linux.sh
+          c++ -fPIC host-rs/tests/qt_settings.cpp $(pkg-config --cflags --libs Qt6Core) -o host-rs/target/qt-settings
+          host-rs/target/qt-settings write host-rs/target/qt-fixture.conf
+          cargo run --manifest-path host-rs/Cargo.toml --locked --example settings_fixture -- host-rs/target/qt-fixture.conf
+          host-rs/target/qt-settings read host-rs/target/qt-fixture.conf
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Pinned Rust GNU toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.98.1-x86_64-pc-windows-gnu --profile minimal --component rustfmt,clippy
+          rustup default 1.98.1-x86_64-pc-windows-gnu
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          install: >-
+            make nasm python
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-libusb
+            mingw-w64-x86_64-qt6-base
+      - name: Minimal FFmpeg and native worker/settings checks
+        shell: msys2 {0}
+        run: |
+          /usr/bin/python3 host-rs/tools/build_ffmpeg.py windows --cross-prefix='' --prefix "$PWD/host-rs/target/native-windows" --cache "$PWD/host-rs/target/ffmpeg-source"
+          export FFMPEG_DIR="$(cygpath -am host-rs/target/native-windows)"
+          export PATH="$PWD/host-rs/target/native-windows/bin:$PATH"
+          export PKG_CONFIG_ALLOW_CROSS=1
+          export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=gcc
+          export LIBCLANG_PATH="$(cygpath -am /mingw64/bin)"
+          export CLANG_PATH="$(cygpath -am /mingw64/bin/clang.exe)"
+          export BINDGEN_EXTRA_CLANG_ARGS='--target=x86_64-w64-windows-gnu'
+          clang --version
+          cargo fmt --manifest-path host-rs/Cargo.toml --check
+          cargo clippy --manifest-path host-rs/Cargo.toml --target x86_64-pc-windows-gnu --all-targets --locked -- -D warnings
+          cargo test --manifest-path host-rs/Cargo.toml --target x86_64-pc-windows-gnu --locked -- --test-threads=1
+          cargo build --manifest-path host-rs/Cargo.toml --target x86_64-pc-windows-gnu --release --locked --bin mobile-webcam
+          g++ host-rs/tests/qt_settings.cpp $(pkg-config --cflags --libs Qt6Core) -o host-rs/target/qt-settings.exe
+          host-rs/target/qt-settings.exe write --native
+          cargo run --manifest-path host-rs/Cargo.toml --target x86_64-pc-windows-gnu --locked --example settings_fixture
+          host-rs/target/qt-settings.exe read --native

@@ -1,0 +1,12 @@
+[
+  {
+    "file": "kotlin-COPYRIGHT.txt",
+    "url": "https://raw.githubusercontent.com/JetBrains/kotlin/v2.0.21/license/COPYRIGHT.txt",
+    "sha256": "8f1a1700adb5490604c6094fb137bf73f6c28d3ee554b58f3ff8ef975a79672d"
+  },
+  {
+    "file": "kotlin-NOTICE.txt",
+    "url": "https://raw.githubusercontent.com/JetBrains/kotlin/v2.0.21/license/NOTICE.txt",
+    "sha256": "0b09a83d3ef7795c7dec65e815866597c066c53898f2852a76599b8f5552941a"
+  }
+]

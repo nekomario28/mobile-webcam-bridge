@@ -1,36 +1,50 @@
-# Third-party notices and license boundary
+# Licensing and third-party notices
 
-Repository-owned source, scripts, and documentation are released under the
-MIT license in `LICENSE`. The Windows host includes Unity Capture shared-memory
-source under its upstream MIT license; its exact source identity and changes
-are recorded in `host/third_party/unity_capture/`.
+Repository-owned source, scripts and documentation in this revision use
+[Apache-2.0](LICENSE), except files carrying another license notice. Attribution
+is in [NOTICE](NOTICE). Commercial use,
+paid distribution and proprietary modifications are allowed subject to its
+terms. Releases through v0.2.0 retain their original
+[MIT license](docs/licenses/MIT-before-Apache.txt). Third-party licenses are
+unchanged by this choice.
 
-The host uses these dependencies:
+## Current Rust desktop and Android
 
-| Component | Use | Upstream license |
+| Component | Boundary | License |
 | --- | --- | --- |
-| libusb | Dynamically linked by all AOA host programs | LGPL-2.1-or-later |
-| FFmpeg `libavcodec`, `libavutil`, `libswscale` | Dynamically linked by the video receiver | LGPL-2.1-or-later by default; GPL applies when the selected FFmpeg build enables GPL components |
-| v4l2loopback | Separate kernel module providing `/dev/video10` | GPL-2.0-or-later |
-| Qt 6 Base / Widgets | Dynamically linked by the desktop GUI | LGPL-3.0-only, GPL-3.0-only, or commercial terms; the open-source builds use LGPL-3.0 |
-| Unity Capture | Windows DirectShow filter and shared-memory protocol | MIT; no Unity runtime/plugin is used |
+| FFmpeg | Dynamically linked H.264 decoder/converter; minimal build without `--enable-gpl` or `--enable-nonfree` | LGPL-2.1-or-later |
+| libusb | Dynamically linked USB access library | LGPL-2.1-or-later |
+| v4l2loopback | Separately installed Linux kernel module, not bundled; accessed through V4L2 | GPL-2.0-or-later |
+| Unity Capture filter | Bundled Windows virtual camera; adapted sender attribution is retained in [the vendor directory](host/third_party/unity_capture/) | MIT |
+| Rust crates and embedded fonts | Target-specific runtime inventory and license texts in each desktop package | Multiple licenses; preserve font and crate notices |
+| Kotlin standard library | Android runtime; build tools retain their own licenses | Apache-2.0 |
+| System runtime libraries | Platform-specific bundled closure; retain copyright notices and any source obligations, including GCC runtime exceptions | Component-specific |
 
-Windows uses the same dynamically linked Qt, libusb and FFmpeg libraries.
-The Windows build script packages the pinned Unity Capture filter DLLs and the
-MSYS2 runtime dependency closure. MSYS2's GPL-enabled FFmpeg makes the combined
-Windows binary distribution subject to GPL terms; repository-owned source
-remains MIT. See `windows/README.md` before distributing a Windows build.
+The Rust desktop does not use Qt or embed OBS. It implements the receiver and
+camera sender, reusing existing virtual camera implementations. The Unity
+runtime and Unity Capture plugin are not used. NSIS builds the Windows
+installer; it is not an application runtime dependency.
 
-Source checkouts do not vendor those libraries or the kernel module. The
-AppImage bundles Qt, FFmpeg, libusb and the C++ runtime; v4l2loopback remains
-separate. The GPL-enabled combined binary distributions are provided under
-GPL-3.0 terms while repository-owned source files retain their MIT license.
-Exact dependency versions, package copyright notices and corresponding source
-archives accompany the release. See `linux/APPIMAGE_LICENSES.md` for the Linux
-boundary. Windows Setup.exe uses NSIS; its source and license notices are in
-the Windows dependency-source archive.
+Apache-2.0 does not replace LGPL obligations. Binary distributors must provide
+corresponding library source and build instructions, retain notices, and allow
+replacement/debugging of the LGPL libraries. Upstream download links alone
+are not the project's completed corresponding-source distribution.
+See the [FFmpeg guidance](https://ffmpeg.org/legal.html).
 
-Research references and the clean-room boundary are recorded in
-`docs/provenance.md`. If source is later copied or adapted, its upstream commit,
-file path, license notice, and local destination must be added here before
-merge. GPL/AGPL research projects remain mechanism references only.
+The [v0.2.0 audit](docs/evidence/2026-10-06-license-audit.md) records verified
+artifact identities and remaining source/notice gaps. This source license
+change does not retroactively repair or relicense those binaries. H.264 patent
+permissions are a separate question from source copyright licenses.
+
+## Classic Qt releases
+
+Classic v0.1.2 packages use LGPL Qt and GPL-enabled system FFmpeg; their combined
+binary distributions use GPL-3.0 terms. Their repository-owned source remains
+MIT. Consult the [classic Windows guide](windows/README.md),
+[AppImage notice](linux/APPIMAGE_LICENSES.md) and the dependency-source archives
+of that release. Do not substitute those sources for a different Rust build.
+
+Research-only GPL/AGPL donors and copied MIT source are distinguished in
+[provenance](docs/provenance.md). Before importing source, retain its upstream
+identity, license and attribution; a separate tool's presence does not by
+itself determine this application's license.

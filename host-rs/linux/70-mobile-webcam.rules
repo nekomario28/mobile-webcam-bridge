@@ -1,0 +1,6 @@
+# Accessory-mode access is independent of the phone manufacturer.
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d00", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d01", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d04", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d05", TAG+="uaccess"
+SUBSYSTEM=="video4linux", KERNEL=="video10", ATTR{name}=="Mobile Webcam", TAG+="uaccess"

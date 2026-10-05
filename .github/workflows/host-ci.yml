@@ -15,9 +15,14 @@ concurrency:
 
 jobs:
   build-test:
-    runs-on: [self-hosted, Linux, X64, mobile-webcam]
+    runs-on: ubuntu-24.04
+    container: debian:13
     timeout-minutes: 10
     steps:
+      - name: Install classic Qt build dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends ca-certificates git build-essential cmake pkg-config libusb-1.0-0-dev libavcodec-dev libavutil-dev libswscale-dev qt6-base-dev
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -41,7 +46,7 @@ jobs:
       - name: Configure
         run: cmake -S host -B build/host -DCMAKE_BUILD_TYPE=Release -DAMB_BUILD_GUI=ON
       - name: Build
-        run: cmake --build build/host --parallel
+        run: cmake --build build/host --parallel 1
       - name: Unit tests
         run: ctest --test-dir build/host --output-on-failure
       - name: CLI smoke test

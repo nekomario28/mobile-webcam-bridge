@@ -3,7 +3,9 @@ name: release
 on:
   push:
     tags:
-      - 'v*'
+      # Classic Qt releases use VERSION; Rust releases use native-CI artifacts.
+      - 'v0.1.*'
+      - '!v*-beta.*'
 
 permissions:
   contents: write

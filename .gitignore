@@ -1,5 +1,7 @@
 /build/
 /dist/
+/host-rs/target/
+**/__pycache__/
 **/.gradle/
 **/.kotlin/
 **/build/

@@ -7,6 +7,21 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+switch_parent=
+if [ "$#" -ne 0 ]; then
+    if [ "$#" -ne 2 ] || [ "$1" != "--switch-parent" ]; then
+        echo "Usage: $0 [--switch-parent PID]" >&2
+        exit 1
+    fi
+    case "$2" in
+        ''|*[!0-9]*|0) echo "Invalid parent PID." >&2; exit 1 ;;
+    esac
+    if [ ! -f "$script_dir/mobile-webcam-usb" ]; then
+        echo "USB helper is not included in this build." >&2
+        exit 1
+    fi
+    switch_parent=$2
+fi
 if ! modinfo v4l2loopback >/dev/null 2>&1; then
     echo "Install your distribution's v4l2loopback package for the running kernel first." >&2
     exit 1
@@ -70,8 +85,15 @@ if [ ! -e /dev/video10 ]; then
         modprobe v4l2loopback
     fi
 fi
-udevadm trigger --subsystem-match=usb --attr-match=idVendor=0fce --attr-match=idProduct=020d
+if [ -f "$script_dir/mobile-webcam-usb" ]; then
+    install -Dm0755 "$script_dir/mobile-webcam-usb" /usr/lib/mobile-webcam/mobile-webcam-usb
+else
+    udevadm trigger --subsystem-match=usb --attr-match=idVendor=0fce --attr-match=idProduct=020d
+fi
 udevadm trigger --subsystem-match=video4linux --sysname-match=video10
 udevadm settle
 test -e /dev/video10
 echo "Mobile Webcam camera access is ready."
+if [ -n "$switch_parent" ]; then
+    exec /usr/lib/mobile-webcam/mobile-webcam-usb --switch --parent "$switch_parent"
+fi

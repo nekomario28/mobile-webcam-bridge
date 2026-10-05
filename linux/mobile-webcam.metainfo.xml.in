@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>dev.nekomario.mobile-webcam</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>Apache-2.0</project_license>
   <developer id="github.com/nekomario28">
     <name>Mobile Webcam contributors</name>
   </developer>

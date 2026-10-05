@@ -1,0 +1,136 @@
+{
+  "rust": {
+    "squashfs-root/usr/share/doc/mobile-webcam/licenses/rust/INDEX.json": {
+      "count": 229,
+      "licenses": {
+        "MIT OR Apache-2.0": 104,
+        "Apache-2.0": 6,
+        "0BSD OR MIT OR Apache-2.0": 1,
+        "Apache-2.0 OR MIT": 34,
+        "Zlib OR Apache-2.0 OR MIT": 3,
+        "Unlicense OR MIT": 2,
+        "MIT": 52,
+        "MIT OR Apache-2.0 OR Zlib": 3,
+        "MIT/Apache-2.0": 4,
+        "Apache-2.0 AND MIT": 1,
+        "(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0": 1,
+        "WTFPL": 1,
+        "Zlib": 2,
+        "ISC": 1,
+        "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT": 4,
+        "MIT OR Zlib OR Apache-2.0": 2,
+        "BSD-3-Clause OR Apache-2.0": 2,
+        "Apache-2.0/MIT": 2,
+        "Apache-2.0 OR GPL-2.0-only": 1,
+        "(MIT OR Apache-2.0) AND Unicode-3.0": 1,
+        "BSD-2-Clause OR Apache-2.0 OR MIT": 2
+      }
+    },
+    "windows/Mobile_Webcam-0.2.0-windows-x86_64-rust-preview/licenses/rust/INDEX.json": {
+      "count": 148,
+      "licenses": {
+        "MIT OR Apache-2.0": 91,
+        "Apache-2.0": 4,
+        "0BSD OR MIT OR Apache-2.0": 1,
+        "Apache-2.0 OR MIT": 15,
+        "Zlib OR Apache-2.0 OR MIT": 3,
+        "Unlicense OR MIT": 2,
+        "BSL-1.0": 2,
+        "MIT OR Apache-2.0 OR Zlib": 2,
+        "Apache-2.0 AND MIT": 1,
+        "(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0": 1,
+        "WTFPL": 1,
+        "Zlib": 2,
+        "MIT": 10,
+        "MIT/Apache-2.0": 2,
+        "ISC": 1,
+        "MIT OR Zlib OR Apache-2.0": 2,
+        "BSD-3-Clause OR Apache-2.0": 2,
+        "Apache-2.0/MIT": 2,
+        "Apache-2.0 OR GPL-2.0-only": 1,
+        "(MIT OR Apache-2.0) AND Unicode-3.0": 1,
+        "BSD-2-Clause OR Apache-2.0 OR MIT": 2
+      }
+    }
+  },
+  "ffmpeg": {
+    "squashfs-root/usr/share/doc/mobile-webcam/licenses/build-manifest.json": {
+      "version": "7.1.5",
+      "flags": [
+        "--prefix=<build-prefix>",
+        "--arch=x86_64",
+        "--cpu=x86-64",
+        "--disable-autodetect",
+        "--disable-everything",
+        "--disable-programs",
+        "--disable-doc",
+        "--disable-debug",
+        "--disable-static",
+        "--enable-shared",
+        "--disable-avformat",
+        "--disable-avdevice",
+        "--disable-avfilter",
+        "--disable-swresample",
+        "--enable-avcodec",
+        "--enable-avutil",
+        "--enable-swscale",
+        "--enable-decoder=h264",
+        "--enable-ffnvcodec",
+        "--enable-cuda",
+        "--enable-nvdec",
+        "--enable-hwaccel=h264_nvdec",
+        "--enable-vaapi",
+        "--enable-hwaccel=h264_vaapi",
+        "--disable-xlib"
+      ]
+    },
+    "windows/Mobile_Webcam-0.2.0-windows-x86_64-rust-preview/licenses/ffmpeg/build-manifest.json": {
+      "version": "9.0.2",
+      "flags": [
+        "--prefix=<build-prefix>",
+        "--arch=x86_64",
+        "--cpu=x86-64",
+        "--disable-autodetect",
+        "--disable-everything",
+        "--disable-programs",
+        "--disable-doc",
+        "--disable-debug",
+        "--disable-static",
+        "--enable-shared",
+        "--disable-avformat",
+        "--disable-avdevice",
+        "--disable-avfilter",
+        "--disable-swresample",
+        "--enable-avcodec",
+        "--enable-avutil",
+        "--enable-swscale",
+        "--enable-decoder=h264",
+        "--enable-ffnvcodec",
+        "--enable-cuda",
+        "--enable-nvdec",
+        "--enable-hwaccel=h264_nvdec",
+        "--target-os=mingw32",
+        "--enable-cross-compile",
+        "--cross-prefix=x86_64-w64-mingw32-",
+        "--pkg-config=pkg-config",
+        "--enable-d3d11va",
+        "--enable-hwaccel=h264_d3d11va,h264_d3d11va2"
+      ]
+    }
+  },
+  "linux_ffmpeg_runtime": {
+    "libavutil.so.59": {
+      "license": "LGPL version 2.1 or later",
+      "configuration": "--prefix=<build-prefix> --arch=x86_64 --cpu=x86-64 --disable-autodetect --disable-everything --disable-programs --disable-doc --disable-debug --disable-static --enable-shared --disable-avformat --disable-avdevice --disable-avfilter --disable-swresample --enable-avcodec --enable-avutil --enable-swscale --enable-decoder=h264 --enable-ffnvcodec --enable-cuda --enable-nvdec --enable-hwaccel=h264_nvdec --enable-vaapi --enable-hwaccel=h264_vaapi --disable-xlib"
+    },
+    "libavcodec.so.61": {
+      "license": "LGPL version 2.1 or later",
+      "configuration": "--prefix=<build-prefix> --arch=x86_64 --cpu=x86-64 --disable-autodetect --disable-everything --disable-programs --disable-doc --disable-debug --disable-static --enable-shared --disable-avformat --disable-avdevice --disable-avfilter --disable-swresample --enable-avcodec --enable-avutil --enable-swscale --enable-decoder=h264 --enable-ffnvcodec --enable-cuda --enable-nvdec --enable-hwaccel=h264_nvdec --enable-vaapi --enable-hwaccel=h264_vaapi --disable-xlib"
+    },
+    "libswscale.so.8": {
+      "license": "LGPL version 2.1 or later",
+      "configuration": "--prefix=<build-prefix> --arch=x86_64 --cpu=x86-64 --disable-autodetect --disable-everything --disable-programs --disable-doc --disable-debug --disable-static --enable-shared --disable-avformat --disable-avdevice --disable-avfilter --disable-swresample --enable-avcodec --enable-avutil --enable-swscale --enable-decoder=h264 --enable-ffnvcodec --enable-cuda --enable-nvdec --enable-hwaccel=h264_nvdec --enable-vaapi --enable-hwaccel=h264_vaapi --disable-xlib"
+    }
+  },
+  "apk_notices": []
+}

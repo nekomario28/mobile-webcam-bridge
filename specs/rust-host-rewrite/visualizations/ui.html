@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="title">Mobile Webcam — UI sketch</title>
+<style>
+:root { color-scheme: light; font-family: system-ui, "Noto Sans CJK JP", sans-serif; color: #202a3b; background: #eef2f6; font-size: 16px; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 64px 20px; }
+main { max-width: 480px; margin: auto; }
+h1 { margin: 0; padding: 22px 24px 0; font-size: 18px; font-weight: 650; }
+.app { border: 1px solid #dce2ea; border-radius: 12px; background: white; box-shadow: 0 8px 28px #263c5710; }
+form { padding: 22px 24px 24px; }
+button, input, select { font: inherit; }
+button { cursor: pointer; color: inherit; background: white; border: 1px solid #cbd4e2; border-radius: 7px; padding: 10px 14px; }
+button:hover { border-color: #8398b8; }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #8bb5fa; outline-offset: 3px; }
+button:disabled { opacity: .55; cursor: default; }
+.mode { display: flex; gap: 4px; background: #f0f3f7; border-radius: 8px; padding: 4px; margin-bottom: 24px; }
+.mode button { flex: 1; border: none; background: transparent; font-weight: 600; }
+.mode button[aria-pressed="true"] { background: white; color: #2459aa; box-shadow: 0 1px 4px #1a365419; }
+label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+input[type="text"], select { width: 100%; color: inherit; background: white; border: 1px solid #cbd4e2; border-radius: 7px; padding: 11px 12px; min-width: 0; }
+.endpoint { margin-bottom: 24px; }
+#save-error { color: #a13939; font-size: 13px; margin: -12px 0 18px; }
+.status { display: flex; gap: 10px; margin-bottom: 18px; font-size: 14px; }
+.dot { margin-top: 6px; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #8392a9; }
+.status[data-state="streaming"] .dot { background: #2a8661; }
+.status[data-state="error"] .dot { background: #c54d4d; }
+.status p { font-size: 13px; color: #596980; margin: 6px 0 0; }
+#primary { width: 100%; background: #2b61b6; color: white; border-color: #2b61b6; font-weight: 650; padding: 12px; }
+#primary[data-stop="true"] { color: #a13939; border-color: #dfb8b8; background: white; }
+.settings { margin-top: 22px; border-top: 1px solid #edf0f4; padding-top: 16px; }
+summary { cursor: pointer; font-size: 14px; color: #4b5d78; }
+.fields { padding-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.check { display: flex; gap: 9px; align-items: center; font-weight: 400; margin: 0; }
+.check input { width: 16px; height: 16px; accent-color: #2b61b6; }
+.wide { grid-column: 1 / -1; }
+#diagnostic { font-size: 13px; color: #596980; margin: 0; }
+.preview { margin-top: 20px; padding: 0 4px; }
+.preview > summary { font-size: 12px; color: #66758b; }
+.preview .fields { padding-top: 16px; gap: 14px; }
+.preview label, .preview select, .preview button { font-size: 13px; }
+[hidden] { display: none !important; }
+@media(max-width: 520px) { body { padding: 24px 16px; } h1 { padding: 20px 20px 0; } form { padding: 20px; } }
+</style>
+<main>
+  <section class="app" aria-label="Mobile Webcam">
+    <h1>Mobile Webcam</h1>
+    <form id="connection-form">
+      <div class="mode" aria-label="Connection method" data-i18n-label="connectionMethod">
+        <button type="button" id="usb-mode" aria-pressed="false">USB</button>
+        <button type="button" id="wifi-mode" aria-pressed="true">Wi-Fi</button>
+      </div>
+      <div class="endpoint" id="wifi-field">
+        <label for="address" data-i18n="address">IP address</label>
+        <input type="text" id="address" value="192.168.1.42" autocomplete="off" spellcheck="false" placeholder="192.168.1.42">
+      </div>
+      <div class="endpoint" id="usb-field" hidden>
+        <label for="device" data-i18n="phone">Phone</label>
+        <select id="device"><option value="" data-i18n="choosePhone">Select a phone</option><option value="phone-1" data-i18n="phoneOne">Android device · USB 1</option><option value="phone-2" data-i18n="phoneTwo">Android device · USB 2</option></select>
+      </div>
+      <p id="save-error" role="status" data-i18n="saveError" hidden>Could not save settings</p>
+      <div class="status" id="status" data-state="idle" role="status" aria-live="polite" hidden>
+        <span class="dot" aria-hidden="true"></span>
+        <div><span id="status-title"></span><p id="status-body" hidden></p></div>
+      </div>
+      <button type="submit" id="primary">Connect</button>
+      <details class="settings">
+        <summary data-i18n="details">Details</summary>
+        <div class="fields">
+          <div><label for="rotation" data-i18n="rotation">Rotation</label><select id="rotation"><option>0°</option><option>90°</option><option>180°</option><option>270°</option></select></div>
+          <div><label for="decode" data-i18n="decode">Decoder</label><select id="decode"><option value="auto" data-i18n="auto">Auto</option><option value="software" data-i18n="software">Software</option><option value="gpu" id="gpu-option">D3D11VA</option><option value="cuda">CUDA</option></select></div>
+          <label class="check"><input type="checkbox" checked><span data-i18n="mirror">Mirror</span></label>
+          <label class="check"><input type="checkbox"><span data-i18n="verticalFlip">Flip vertically</span></label>
+          <div class="wide" id="linux-output" hidden><label for="output" data-i18n="output">Output</label><input type="text" id="output" value="/dev/video10"></div>
+          <p class="wide" id="diagnostic" hidden></p>
+        </div>
+      </details>
+    </form>
+  </section>
+  <details class="preview">
+    <summary data-i18n="preview">UI sketch (no connection)</summary>
+    <div class="fields">
+      <div><label for="platform">OS</label><select id="platform"><option>Windows</option><option>Linux</option></select></div>
+      <div><label for="scene" data-i18n="scene">State</label><select id="scene"><option value="idle" data-i18n="sceneIdle">Idle</option><option value="connecting" data-i18n="sceneConnecting">Connecting</option><option value="waiting" data-i18n="sceneWaiting">Waiting for camera</option><option value="consumer" data-i18n="sceneConsumer">Waiting for app</option><option value="streaming" data-i18n="sceneStreaming">Streaming</option><option value="error" data-i18n="sceneError">Connection error</option></select></div>
+      <div><label for="phone-count" data-i18n="phoneCount">USB phones</label><select id="phone-count"><option value="0" data-i18n="zeroPhones">0 phones</option><option value="1" data-i18n="onePhone" selected>1 phone</option><option value="2" data-i18n="twoPhones">2 phones</option></select></div>
+      <div><label for="preview-language" data-i18n="language">Language</label><select id="preview-language"><option value="auto" data-i18n="browserLanguage">Auto (browser)</option><option value="en">English</option><option value="ja">日本語</option></select></div>
+      <button type="button" id="reset" data-i18n="reset">Reset IP</button>
+    </div>
+  </details>
+</main>
+<script>
+'use strict';
+const el = id => document.getElementById(id);
+let mode = 'wifi', state = 'idle', pending = null, saveTimer = null;
+let language = 'en', missingAddress = false;
+const copy = {
+  title: ['Mobile Webcam — UI sketch', 'Mobile Webcam — 画面案'],
+  connectionMethod: ['Connection method', '接続方法'],
+  address: ['IP address', 'IPアドレス'],
+  phone: ['Phone', 'スマホ'],
+  choosePhone: ['Select a phone', '選択してください'],
+  phoneOne: ['Android device · USB 1', 'Android端末 · USB 1'],
+  phoneTwo: ['Android device · USB 2', 'Android端末 · USB 2'],
+  saveError: ['Could not save settings', '設定を保存できません'],
+  details: ['Details', '詳細'],
+  rotation: ['Rotation', '回転'],
+  decode: ['Decoder', 'デコード'],
+  auto: ['Auto', '自動'],
+  software: ['Software', 'ソフトウェア'],
+  mirror: ['Mirror', '左右反転'],
+  verticalFlip: ['Flip vertically', '上下反転'],
+  output: ['Output', '出力先'],
+  preview: ['UI sketch (no connection)', '画面案（通信なし）'],
+  scene: ['State', '状態'],
+  sceneIdle: ['Idle', '接続前'],
+  sceneConnecting: ['Connecting', '接続中'],
+  sceneWaiting: ['Waiting for camera', '開始待ち'],
+  sceneConsumer: ['Waiting for app', 'アプリ待ち'],
+  sceneStreaming: ['Streaming', '送信中'],
+  sceneError: ['Connection error', '接続エラー'],
+  phoneCount: ['USB phones', 'USB端末数'],
+  zeroPhones: ['0 phones', '0台'],
+  onePhone: ['1 phone', '1台'],
+  twoPhones: ['2 phones', '2台'],
+  language: ['Language', '言語'],
+  browserLanguage: ['Auto (browser)', '自動（ブラウザ）'],
+  reset: ['Reset IP', 'IPをリセット'],
+  connect: ['Connect', '接続'],
+  cancel: ['Cancel', '取消'],
+  stop: ['Stop', '停止'],
+  reconnect: ['Reconnect', '再接続'],
+  noPhone: ['Connect your phone via USB', 'スマホをUSB接続してください'],
+  connecting: ['Connecting…', '接続中…'],
+  preparingUSB: ['Preparing USB…', 'USBを準備中…'],
+  waiting: ['Press “Start camera” on your phone', 'スマホで「カメラ開始」を押してください'],
+  consumer: ['Select “Mobile Webcam” in your app', 'アプリで「Mobile Webcam」を選択してください'],
+  streaming: ['Sending to camera', 'カメラへ送信中'],
+  failed: ['Could not connect', '接続できません'],
+  checkWiFi: ['Check Wi-Fi and IP address', 'Wi-FiとIPを確認'],
+  checkUSB: ['Check USB and phone permission', 'USB接続とスマホの許可を確認'],
+  missingAddress: ['Enter an IP address', 'IPアドレスを入力してください'],
+  statsStreaming: ['Received 30 fps · Sent 30 fps', '受信 30 fps · 送信 30 fps'],
+  statsConsumer: ['Received 30 fps · Sent 0 fps', '受信 30 fps · 送信 0 fps']
+};
+const t = key => copy[key][language === 'ja' ? 1 : 0];
+function browserLanguage() {
+  const preferred = navigator.languages[0] || navigator.language || 'en';
+  return preferred.toLowerCase().split('-')[0] === 'ja' ? 'ja' : 'en';
+}
+function applyLanguage() {
+  const selected = el('preview-language').value;
+  language = selected === 'auto' ? browserLanguage() : selected;
+  document.documentElement.lang = language;
+  for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll('[data-i18n-label]')) node.setAttribute('aria-label', t(node.dataset.i18nLabel));
+  render(state);
+}
+const storageKey = 'mobile-webcam-rust-design.lanHost';
+try { const value = localStorage.getItem(storageKey); if (value !== null) el('address').value = value; }
+catch { el('save-error').hidden = false; }
+function saveAddress() {
+  clearTimeout(saveTimer);
+  try { localStorage.setItem(storageKey, el('address').value.trim()); el('save-error').hidden = true; }
+  catch { el('save-error').hidden = false; }
+}
+function render(next) {
+  state = next;
+  const windows = el('platform').value === 'Windows';
+  const phones = Number(el('phone-count').value);
+  const active = !['idle', 'error'].includes(next);
+  const noPhone = mode === 'usb' && phones === 0;
+  const info = {
+    idle: [noPhone ? t('noPhone') : '', '', t('connect')],
+    connecting: [t(mode === 'wifi' ? 'connecting' : 'preparingUSB'), '', t('cancel')],
+    waiting: [t('waiting'), '', t('stop')],
+    consumer: [t('consumer'), '', t('stop')],
+    streaming: [t('streaming'), '', t('stop')],
+    error: missingAddress ? [t('missingAddress'), '', t('connect')] : [t('failed'), t(mode === 'wifi' ? 'checkWiFi' : 'checkUSB'), t('reconnect')]
+  }[next];
+  el('status').hidden = next === 'idle' && !noPhone; el('status').dataset.state = next;
+  el('status-title').textContent = info[0]; el('status-body').textContent = info[1]; el('status-body').hidden = !info[1];
+  el('primary').textContent = info[2]; el('primary').dataset.stop = !['idle', 'error'].includes(next);
+  el('usb-field').hidden = mode !== 'usb' || phones < 2;
+  el('primary').disabled = mode === 'usb' && !active && (noPhone || (phones > 1 && !el('device').value));
+  for (const id of ['usb-mode', 'wifi-mode', 'address', 'device']) el(id).disabled = active;
+  el('diagnostic').hidden = !['streaming', 'consumer'].includes(next);
+  el('diagnostic').textContent = t(next === 'streaming' ? 'statsStreaming' : 'statsConsumer');
+  el('scene').value = next;
+  el('gpu-option').textContent = windows ? 'D3D11VA' : 'VAAPI';
+}
+function chooseMode(next) {
+  mode = next; missingAddress = false;
+  el('wifi-field').hidden = next !== 'wifi';
+  el('wifi-mode').setAttribute('aria-pressed', String(next === 'wifi'));
+  el('usb-mode').setAttribute('aria-pressed', String(next === 'usb'));
+  render('idle');
+}
+el('wifi-mode').onclick = () => chooseMode('wifi'); el('usb-mode').onclick = () => chooseMode('usb');
+el('address').addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(saveAddress, 300); });
+window.addEventListener('pagehide', saveAddress);
+el('connection-form').addEventListener('submit', event => {
+  event.preventDefault(); clearTimeout(pending); saveAddress();
+  missingAddress = false;
+  if (!['idle', 'error'].includes(state)) { render('idle'); return; }
+  if (mode === 'usb' && el('primary').disabled) return;
+  if (mode === 'wifi' && !el('address').value.trim()) {
+    missingAddress = true; render('error'); el('address').focus(); return;
+  }
+  render('connecting'); pending = setTimeout(() => render('waiting'), 900);
+});
+el('device').onchange = () => render(state);
+el('phone-count').onchange = () => { clearTimeout(pending); el('device').value = ''; render('idle'); };
+el('scene').onchange = () => { clearTimeout(pending); missingAddress = false; render(el('scene').value); };
+el('platform').onchange = () => {
+  clearTimeout(pending);
+  const windows = el('platform').value === 'Windows';
+  el('linux-output').hidden = windows;
+  document.querySelector('#scene option[value="consumer"]').disabled = !windows;
+  render('idle');
+};
+el('reset').onclick = () => { el('address').value = '192.168.1.42'; saveAddress(); };
+el('preview-language').onchange = applyLanguage;
+window.addEventListener('languagechange', applyLanguage);
+applyLanguage();
+</script>
+</html>

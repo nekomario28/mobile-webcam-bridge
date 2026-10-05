@@ -1,0 +1,49 @@
+# Rust implementation evidence
+
+The PC host is implemented in `host-rs/` on `rust-host`. Classic Qt v0.1.2 remains the rollback baseline. Software implementation does not close the hardware acceptance slices.
+
+ADOPT: Android APK/Kotlin, AMB1/AOA contract, FFmpeg, libusb, pinned Unity Capture filter, installer ownership/uninstall logic, Linux integration assets and existing stream/transform fixtures. ADAPT: framing/deadlines, selected physical USB port, decoder and output ownership, transforms, QSettings scalar storage, and application/worker supervision. The C++ donor remains until parity acceptance.
+
+## Measured checks
+
+- Rust/Cargo 1.98.1, exact crates in Cargo.lock; local Linux build on Debian 13 and Windows GNU cross-build. [Native CI run 37219706905](https://github.com/nekomario28/mobile-webcam-bridge/actions/runs/37219706905) passes on Ubuntu 24.04 and Windows 2025 for `4fc130925e808d900241f549a33bf2cf1086ed38`: formatting, strict Clippy, 15 Linux / 12 Windows core tests, two integration tests on each OS, release builds and Qt settings round trips. The [workflow](../../.github/workflows/rust-host-ci.yml) records the native build recipe.
+- Minimal FFmpeg 7.1.5 (Linux) and 9.0.2 (Windows): actual runtime enumeration contains H.264 only, no encoders. Only avcodec/avutil/swscale are built. Linux VAAPI/NVDEC and Windows D3D11VA/NVDEC are configured; GPU execution remains NOT RUN. Three core libraries total 3,326,688 / 5,267,498 bytes respectively.
+- Linux core tests and integration tests pass: frozen AMB1/high-bit unsigned PTS, fragmented TCP HELLO/ACK, absolute deadline, mid-payload EOF, bounded typed controls, damaged settings protection, AOAv2 PID selection, real H.264 decode, 16 transform combinations, YUYV chroma/short-write protection, helper cancellation, and stale video status.
+- Real application worker: repeated Start/Stop while a peer is stalled, then abrupt parent exit. Linux PDEATHSIG and Windows kill-on-close Job ownership pass on both native CI platforms; isolated Wine also passes as supplementary evidence.
+- Qt -> Rust -> Qt saved settings pass on native Linux and Windows with Unicode, variable-width control escapes, unknown byte arrays and 100 saves. Fixtures are isolated from production settings. Windows uses registry APIs; Linux uses the native INI path format.
+- Packaged Windows executable -> synthetic TCP H.264 -> fresh pinned Unity IPC receiver, including live rotation: PASS under Wine. Close/reopen passes without restarting the worker; output conversion/submission pauses after demand stops while decoding continues. These callbacks include old frames and do not establish distinct-frame throughput or a DirectShow consumer gate.
+- Reused Windows Setup.exe installation, relocation/update, collision rejection, locked-file retry, uninstall and user-file retention: PASS under isolated Wine. Native Windows installation remains NOT RUN.
+- Linux packaged Rust -> synthetic 64x32 H.264 -> native /dev/video10 V4L2 -> independent FFmpeg consumer: PASS, including red/blue ordering. This is a short output check, not a phone or G3 endurance gate.
+- Native Linux GUI captures use the Vulkan software adapter; packaged AppImage X11 startup is also verified in isolated Xvfb. Initial test shells inherited WAYLAND_DISPLAY and therefore could not establish X11 capture; the final launch explicitly clears Wayland variables. EN/JA capture environments must set LANGUAGE as well as LC_ALL because the Unix locale provider prioritizes LANGUAGE. Japanese IME, accessibility and native Windows GUI remain NOT RUN.
+
+## Runtime and UX
+
+One app executable owns its GUI and a private receiving worker. Workers exist only during a connection; Linux additionally ships a small USB-only privilege helper. Typed commands are bounded, transforms coalesce, Stop has a one-second forced termination deadline, and reaping does not block the GUI. A paused video stream returns to waiting. Wi-Fi mode parks USB discovery; unchanged USB lists do not repaint the GUI. Frames are decoded while the Windows consumer is absent, with pixel conversion/submission skipped when demand stops.
+
+EN/JA follows the OS locale, the existing Wi-Fi address/settings survive restart and rollback, and successful saves are silent. USB selection is manufacturer-neutral. AOA capability requests target only the explicitly selected physical device, with exact identity checks before a switch and same-port continuity only for an owned switch. Linux installs the existing one-time setup assets and the narrow helper; it does not run a root receiver. Windows retains the existing virtual camera and Setup.exe. No BAT launch path or persistent daemon is added.
+
+Target runtime crate graphs contain 229 Linux / 148 Windows packages; Cargo.lock also records other targets/build tools. This is a build dependency count, not shipped dynamic libraries. Both packaging paths reject Qt, unrelated FFmpeg libraries, expanded size above 60 MiB and Linux glibc requirements above 2.39. Preview expanded sizes are about 22.0 MiB Linux / 15.6 MiB Windows; the Linux receipt reports glibc 2.39. Windows ships six runtime DLLs plus the two pinned camera DLLs. Linux removes the duplicate USB-helper copy. Exact receipts accompany each built preview, including runtime inventories and all target licenses.
+
+## USB failure follow-up (2026-10-05)
+
+The user reported USB recognition/connection failure on Linux and Windows. The phone was unavailable for a repeat test. The inventory suggested only AOA/ADB interfaces and hid unclassified devices in Details, so a normal MTP phone without debugging was invisible. MTP is now suggested and every enumerated non-hub device is selectable from the USB screen; these hints still do not establish AOA support.
+
+Linux Connect now starts missing default-camera integration and resumes the saved connection once after success. It first checks normal USB access; only ACCESS permits the selected privileged switch. Missing-helper setup and the switch share an authorization, with the selected identity on stdin. The installer replaces itself with the helper so the GUI parent and parent-death check remain intact. Setup failure or Stop does not restart the worker. Custom output paths are not rewritten or replaced.
+
+Linux strict Clippy, release builds, 17 core tests and two worker tests pass. The MTP regression failed before the fix; deliberately removing connection resumption also makes its regression fail. A disposable container exercises setup, selected-identity handoff and parent ownership, camera-only setup, invalid PID and missing-module refusal with OS commands/USB mocked. The real helper through a shell exec passes parent binding and rejects an impossible selected device before any USB control request. Windows cross-build/strict Clippy and 13 core plus two worker tests pass under Wine; these are not native Windows USB evidence. Independent review found the installer-parent defect and it was fixed; a supplementary review timed out without a final verdict. Native form screenshots have no reported clipping or localization error; selector width and button padding remain cosmetic observations.
+
+Windows Setup.exe registers the virtual camera but does not install a phone/accessory USB driver. [libusb's Windows driver requirements](https://github.com/libusb/libusb/wiki/Windows) still apply before and after AOA. Windows MTP may already use WinUSB as a lower filter, as [Microsoft documents](https://learn.microsoft.com/en-us/windows-hardware/drivers/portable/the-mtp-setup-information---inf--file); that alone does not prove application access on the user's device. ACCESS is no longer mislabeled as proof that a driver is missing. [Android accessory authorization](https://developer.android.com/develop/connectivity/usb/accessory) and camera permission remain OS consent requirements. A Rust rewrite cannot remove these OS boundaries. Zero-manual-setup Windows USB and physical Linux/Windows USB acceptance remain unfulfilled; no driver replacement is shipped as an untested workaround.
+
+The production release workflow excludes beta tags, preserving its existing VERSION/checkout checks. Beta artifacts are built and published separately on rust-host.
+
+## Remaining acceptance
+
+Run the frozen G0–G3 phone/USB/720p/1080p/real-consumer matrix, Linux privilege/setup behavior and native Windows consumer/installer/GUI checks. Verify the C++-to-Rust installed upgrade separately; the Wine installer test covers Rust-to-Rust updates. Measure actual VAAPI/D3D11VA/CUDA and software fallback, native IME/accessibility, and baseline CPU/GPU/RSS/latency. No native phone or GPU gate is accepted from CI, Wine, cross-compilation, synthetic fixtures or software-rendered screenshots. The user authorized stable Rust release promotion on 2026-10-06. Those hardware checks remain pending; stable release status does not establish hardware parity. iOS/WebRTC and Wi-Fi discovery remain subsequent features.
+
+## Stable release promotion
+
+Version 0.2.0 promotes the beta.4 desktop binaries and Android 0.1.4 APK without
+rebuilding them. The stable tag adds documentation and routes the classic Qt
+release workflow to v0.1 tags. Artifact hashes and producer commits remain in
+build-receipt.json. Existing native/Android CI evidence is reused for unchanged
+code; device, GPU and native Windows acceptance remain separate.

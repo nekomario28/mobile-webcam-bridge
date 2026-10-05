@@ -1,0 +1,13 @@
+Mobile Webcam
+Copyright 2026 Mobile Webcam contributors
+
+Repository-owned source, scripts and documentation are licensed under the
+Apache License, Version 2.0, except files carrying another license notice.
+See LICENSE.
+
+Third-party code, libraries and fonts retain their own licenses and notices.
+See THIRD_PARTY_NOTICES.md and the license files supplied with each package.
+The Unity Capture source in host/third_party/unity_capture/ remains MIT.
+
+Releases through v0.2.0 retain their original repository-owned MIT license.
+The original text is preserved in docs/licenses/MIT-before-Apache.txt.

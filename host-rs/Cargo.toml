@@ -1,0 +1,55 @@
+[package]
+name = "mobile-webcam"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.98"
+license = "Apache-2.0"
+
+[features]
+default = ["gui", "video"]
+gui = ["dep:eframe", "dep:fontdb", "dep:sys-locale", "dep:wgpu"]
+video = ["dep:ffmpeg-sys-next", "dep:bindgen"]
+capture = ["gui", "dep:image"]
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+rusb = "=0.9.4"
+eframe = { version = "=0.36.2", default-features = false, features = ["accesskit", "default_fonts", "wgpu_no_default_features", "wayland", "x11"], optional = true }
+fontdb = { version = "=0.24.0", optional = true }
+sys-locale = { version = "=0.3.2", optional = true }
+ffmpeg-sys-next = { version = "=9.0.0", default-features = false, features = ["avcodec", "swscale"], optional = true }
+image = { version = "=0.25.10", default-features = false, features = ["png"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.190"
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "vulkan"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Memory", "Win32_System_JobObjects", "Win32_Security", "Win32_Globalization"] }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "dx12"], optional = true }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[build-dependencies]
+bindgen = { version = "=0.72.1", optional = true }
+
+[[bin]]
+name = "mobile-webcam"
+path = "src/main.rs"
+required-features = ["gui", "video"]
+
+[[bin]]
+name = "mobile-webcam-usb"
+path = "src/usb_main.rs"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+debug = 0
