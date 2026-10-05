@@ -49,7 +49,6 @@ struct App {
     usb_thread: std::thread::Thread,
     usb_events: mpsc::Receiver<crate::Result<Vec<Candidate>>>,
     usb_error: Option<String>,
-    show_unknown: bool,
     #[cfg(feature = "capture")]
     capture_requested: bool,
 }
@@ -149,7 +148,6 @@ impl App {
             usb_thread: inventory.thread().clone(),
             usb_events: receiver,
             usb_error: None,
-            show_unknown: false,
             #[cfg(feature = "capture")]
             capture_requested: false,
         }
@@ -274,15 +272,7 @@ impl eframe::App for App {
                                 .desired_width(f32::INFINITY),
                         );
                     } else {
-                        let available: Vec<_> = self
-                            .devices
-                            .iter()
-                            .filter(|c| {
-                                c.suggested
-                                    || self.show_unknown
-                                    || self.selected.as_ref() == Some(&c.id)
-                            })
-                            .collect();
+                        let available = &self.devices;
                         let name = self
                             .selected
                             .as_ref()
@@ -311,8 +301,7 @@ impl eframe::App for App {
                         } else {
                             ui.label(name);
                         }
-                        if self.devices.iter().all(|device| !device.suggested) && !self.show_unknown
-                        {
+                        if self.devices.is_empty() {
                             ui.label(self.text("Connect your phone by USB", "スマホをUSBで接続"));
                         }
                         if self.selection_lost {
@@ -369,7 +358,7 @@ impl eframe::App for App {
                             self.session
                                 .allow_usb(self.settings.clone(), ui.ctx().clone())
                         } else {
-                            self.session.start(
+                            self.session.connect(
                                 self.settings.clone(),
                                 self.selected.clone(),
                                 ui.ctx().clone(),
@@ -386,17 +375,6 @@ impl eframe::App for App {
                         }
                     }
                 }
-                #[cfg(target_os = "linux")]
-                if !running
-                    && !std::ffi::CString::new(self.settings.output.trim())
-                        .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0)
-                    && self.session.setup_available()
-                    && ui
-                        .button(self.text("Set up camera", "カメラを設定"))
-                        .clicked()
-                        && let Err(e) = self.session.setup(ui.ctx().clone()) {
-                            self.session.state = State::Failed(e.to_string());
-                        }
                 ui.add_space(12.0);
                 let status = match &self.session.state {
                     State::Idle => "",
@@ -409,13 +387,13 @@ impl eframe::App for App {
                     State::Streaming => self.text("Streaming", "配信中"),
                     State::Stopping => self.text("Disconnecting…", "切断中…"),
                     State::Failed(error) => {
-                        if error.contains("not installed") || error.contains("one-time host setup")
+                        if error.contains("v4l2loopback") || error.contains("host setup is not included")
                         {
-                            self.text("Run camera setup", "カメラの初回設定が必要です")
+                            self.text("Camera driver unavailable", "カメラドライバーを利用できません")
                         } else if self.session.usb_permission.is_some() {
                             self.text("Allow USB access", "USBアクセスを許可してください")
                         } else if error.contains("WinUSB") {
-                            self.text("USB driver setup required", "USBドライバーの設定が必要です")
+                            self.text("USB driver unavailable", "USBドライバーを利用できません")
                         } else {
                             self.text("Connection failed", "接続できませんでした")
                         }
@@ -447,16 +425,6 @@ impl eframe::App for App {
                                     ui.label(error);
                                 }
 
-                                if self.settings.transport == "usb" {
-                                    ui.checkbox(
-                                        &mut self.show_unknown,
-                                        if self.ja {
-                                            "すべてのUSB端末"
-                                        } else {
-                                            "All USB devices"
-                                        },
-                                    );
-                                }
                                 #[cfg(unix)]
                                 {
                                     ui.label(self.text("Camera output", "カメラ出力"));

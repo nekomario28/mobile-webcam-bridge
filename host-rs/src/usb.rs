@@ -38,7 +38,7 @@ fn access_error(error: rusb::Error, id: &DeviceId) -> Box<dyn std::error::Error 
         return Box::new(PermissionDenied(id.clone()));
     }
     #[cfg(windows)]
-    if matches!(error, rusb::Error::Access | rusb::Error::NotSupported) {
+    if error == rusb::Error::NotSupported {
         return format!("WinUSB access unavailable for the selected interface: {error}").into();
     }
     let _ = id;
@@ -50,6 +50,10 @@ fn open_selected(device: &Device<Context>) -> crate::Result<DeviceHandle<Context
 }
 pub fn accessory(vid: u16, pid: u16) -> bool {
     vid == 0x18d1 && [0x2d00, 0x2d01, 0x2d04, 0x2d05].contains(&pid)
+}
+fn suggested(vid: u16, pid: u16, mut interfaces: impl Iterator<Item = (u8, u8, u8)>) -> bool {
+    accessory(vid, pid)
+        || interfaces.any(|interface| matches!(interface, (0xff, 0x42, 1) | (6, 1, 1)))
 }
 fn identity(device: &Device<Context>) -> crate::Result<DeviceId> {
     let d = device.device_descriptor()?;
@@ -72,14 +76,16 @@ pub fn list() -> crate::Result<Vec<Candidate>> {
             continue;
         }
         let Ok(id) = identity(&device) else { continue };
-        let suggested = accessory(id.vid, id.pid)
-            || (0..d.num_configurations())
-                .filter_map(|n| device.config_descriptor(n).ok())
-                .any(|c| {
-                    c.interfaces().flat_map(|i| i.descriptors()).any(|a| {
-                        (a.class_code(), a.sub_class_code(), a.protocol_code()) == (0xff, 0x42, 1)
-                    })
-                });
+        let interfaces: Vec<_> = (0..d.num_configurations())
+            .filter_map(|n| device.config_descriptor(n).ok())
+            .flat_map(|c| {
+                c.interfaces()
+                    .flat_map(|i| i.descriptors())
+                    .map(|a| (a.class_code(), a.sub_class_code(), a.protocol_code()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let suggested = suggested(id.vid, id.pid, interfaces.into_iter());
         let mut name = format!("USB {:04x}:{:04x}", id.vid, id.pid);
         #[cfg(target_os = "linux")]
         if !id.ports.is_empty() {
@@ -129,6 +135,15 @@ fn selected(ctx: &Context, id: &DeviceId, post_switch: bool) -> crate::Result<De
         }
     }
     Err("selected USB device disconnected".into())
+}
+#[cfg(target_os = "linux")]
+pub fn access_denied(id: &DeviceId) -> crate::Result<bool> {
+    let ctx = Context::new()?;
+    match open_selected(&selected(&ctx, id, false)?) {
+        Ok(_) => Ok(false),
+        Err(error) if error.downcast_ref::<PermissionDenied>().is_some() => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 pub fn switch(id: &DeviceId) -> crate::Result<()> {
     switch_selected(id, None)
@@ -337,6 +352,13 @@ impl Transport for Usb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn file_transfer_phone_without_debugging_is_suggested() {
+        // Standard still-image/MTP interface, with no ADB interface.
+        assert!(suggested(0x0fce, 0x020d, [(6, 1, 1)].into_iter()));
+        assert!(suggested(0x1234, 0x5678, [(6, 1, 1)].into_iter()));
+        assert!(!suggested(0x1234, 0x5678, [(3, 1, 1)].into_iter()));
+    }
     #[test]
     fn aoa_audio_only_is_not_accessory() {
         for pid in [0x2d00, 0x2d01, 0x2d04, 0x2d05] {

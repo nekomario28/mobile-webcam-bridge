@@ -218,12 +218,15 @@ impl Session {
                         self.state = State::Idle;
                         if let Some((settings, device, switched)) = aux.restart {
                             let device = if switched {
-                                crate::usb::switched_identity(&device)
+                                device
+                                    .ok_or_else(|| "missing switched USB device".into())
+                                    .and_then(|device| crate::usb::switched_identity(&device))
+                                    .map(Some)
                             } else {
                                 Ok(device)
                             };
                             match device
-                                .and_then(|device| self.start(settings, Some(device), ctx.clone()))
+                                .and_then(|device| self.start(settings, device, ctx.clone()))
                             {
                                 Ok(()) => {}
                                 Err(error) => self.state = State::Failed(error.to_string()),
@@ -362,7 +365,7 @@ impl Drop for Session {
 #[cfg(target_os = "linux")]
 struct Auxiliary {
     child: Child,
-    restart: Option<(Settings, DeviceId, bool)>,
+    restart: Option<(Settings, Option<DeviceId>, bool)>,
     error: Arc<Mutex<String>>,
 }
 #[cfg(target_os = "linux")]
@@ -371,7 +374,7 @@ impl Session {
         &mut self,
         mut command: std::process::Command,
         message: Option<&DeviceId>,
-        restart: Option<(Settings, DeviceId, bool)>,
+        restart: Option<(Settings, Option<DeviceId>, bool)>,
         ctx: egui::Context,
     ) -> crate::Result<()> {
         use std::io::Read;
@@ -427,18 +430,11 @@ impl Session {
             .clone()
             .ok_or("USB permission was not requested")?;
         if crate::usb::accessory(device.vid, device.pid) {
-            if !self.setup_available() {
-                return Err("run the one-time host setup to grant accessory access".into());
-            }
-            let mut command = std::process::Command::new("pkexec");
-            command
-                .args(["--disable-internal-agent", "/bin/sh"])
-                .arg(self.setup_script());
-            return self.auxiliary(command, None, Some((settings, device, false)), ctx);
+            return self.setup(settings, Some(device), ctx);
         }
         let helper = std::path::Path::new("/usr/lib/mobile-webcam/mobile-webcam-usb");
         if !helper.is_file() {
-            return Err("run the one-time host setup to install USB access".into());
+            return self.setup(settings, Some(device), ctx);
         }
         let mut command = std::process::Command::new("pkexec");
         command.arg("--disable-internal-agent").arg(helper).args([
@@ -449,11 +445,11 @@ impl Session {
         self.auxiliary(
             command,
             Some(&device),
-            Some((settings, device.clone(), true)),
+            Some((settings, Some(device.clone()), true)),
             ctx,
         )
     }
-    pub fn setup_available(&self) -> bool {
+    fn setup_available(&self) -> bool {
         self.setup_script().is_file()
     }
     fn setup_script(&self) -> std::path::PathBuf {
@@ -462,12 +458,52 @@ impl Session {
             .unwrap_or(std::path::Path::new("."))
             .join("../share/mobile-webcam/linux/install-host-integration.sh")
     }
-    pub fn setup(&mut self, ctx: egui::Context) -> crate::Result<()> {
+    pub fn connect(
+        &mut self,
+        settings: Settings,
+        device: Option<DeviceId>,
+        ctx: egui::Context,
+    ) -> crate::Result<()> {
+        settings.validate()?;
+        let device = device.filter(|_| settings.transport == "usb");
+        if settings.transport == "usb" && device.is_none() {
+            return Err("select a USB device".into());
+        }
+        if settings.output.trim() == "/dev/video10"
+            && !std::ffi::CString::new(settings.output.trim())
+                .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0)
+            && self.setup_available()
+        {
+            return self.setup(settings, device, ctx);
+        }
+        self.start(settings, device, ctx)
+    }
+    fn setup(
+        &mut self,
+        settings: Settings,
+        device: Option<DeviceId>,
+        ctx: egui::Context,
+    ) -> crate::Result<()> {
+        if !self.setup_available() {
+            return Err("host setup is not included in this build".into());
+        }
+        let switched = match &device {
+            Some(id) if !crate::usb::accessory(id.vid, id.pid) => crate::usb::access_denied(id)?,
+            _ => false,
+        };
         let mut command = std::process::Command::new("pkexec");
         command
             .args(["--disable-internal-agent", "/bin/sh"])
             .arg(self.setup_script());
-        self.auxiliary(command, None, None, ctx)
+        if switched {
+            command.args(["--switch-parent", &std::process::id().to_string()]);
+        }
+        self.auxiliary(
+            command,
+            if switched { device.as_ref() } else { None },
+            Some((settings, device.clone(), switched)),
+            ctx,
+        )
     }
 }
 
@@ -505,7 +541,14 @@ mod tests {
         let mut session = Session::new("unused".into());
         let mut command = std::process::Command::new("sleep");
         command.arg("30");
-        session.auxiliary(command, None, None, ctx.clone()).unwrap();
+        session
+            .auxiliary(
+                command,
+                None,
+                Some((Settings::default(), None, false)),
+                ctx.clone(),
+            )
+            .unwrap();
         session.stop(&ctx);
         let started = Instant::now();
         while session.running() {
@@ -514,5 +557,75 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(matches!(session.state, State::Idle));
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn setup_resumes_saved_connection_and_failure_does_not_start_worker() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("worker");
+        std::fs::write(
+            &executable,
+            b"#!/bin/sh\nIFS= read -r start\nprintf '%s\\n' \"$start\" > \"$0.json\"\nprintf '{\"event\":\"stopped\"}\\n'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let ctx = egui::Context::default();
+        let settings = Settings {
+            transport: "lan".into(),
+            lan_host: "192.168.1.42".into(),
+            ..Default::default()
+        };
+        let mut session = Session::new(executable);
+        session
+            .auxiliary(
+                std::process::Command::new("true"),
+                None,
+                Some((settings.clone(), None, false)),
+                ctx.clone(),
+            )
+            .unwrap();
+        let mut latest = settings;
+        latest.rotation = 90;
+        session.transform(&latest);
+        let started = Instant::now();
+        while session.running() {
+            session.poll(&ctx);
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "{:?}",
+                session.state
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let captured = directory.path().join("worker.json");
+        let command =
+            control::read::<Command>(&mut BufReader::new(std::fs::File::open(&captured).unwrap()))
+                .unwrap()
+                .unwrap();
+        match command {
+            Command::Start { settings, device } => {
+                assert_eq!(settings, latest);
+                assert_eq!(device, None);
+            }
+            other => panic!("unexpected worker command: {other:?}"),
+        }
+        std::fs::remove_file(&captured).unwrap();
+        session
+            .auxiliary(
+                std::process::Command::new("false"),
+                None,
+                Some((latest, None, false)),
+                ctx.clone(),
+            )
+            .unwrap();
+        let started = Instant::now();
+        while session.running() {
+            session.poll(&ctx);
+            assert!(started.elapsed() < Duration::from_secs(2));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(matches!(session.state, State::Failed(_)));
+        assert!(!captured.exists());
     }
 }
