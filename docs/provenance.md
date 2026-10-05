@@ -34,7 +34,7 @@ Mechanism reference only:
 - bounded/latest-frame queue ideas;
 - low-latency socket behavior.
 
-Policy: do not copy/adapt source into this MIT repository.
+Policy: do not copy/adapt source into this repository.
 
 ## Linux Link — `ArvinKavaskov/linux-link`
 
@@ -48,7 +48,7 @@ Mechanism reference only:
 - virtual-device integration lessons.
 
 Its observed webcam path used JPEG/MJPEG, which is not the target media path.
-Policy: do not copy/adapt source into this MIT repository.
+Policy: do not copy/adapt source into this repository.
 
 ## Telescope — `LunarKittyy/Telescope`
 
@@ -61,7 +61,7 @@ Mechanism/reference only:
 - pairing and device-management UX.
 
 Its observed primary video transport was MJPEG/HTTP, which is not the target
-media path. Policy: do not copy/adapt source into this MIT repository.
+media path. Policy: do not copy/adapt source into this repository.
 
 ## Nexora
 

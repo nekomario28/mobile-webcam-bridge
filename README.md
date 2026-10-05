@@ -18,5 +18,5 @@ portable after setup. Linux: make the AppImage executable and launch it.
 [Build and verification](specs/rust-host-rewrite/implementation.md) ·
 [Classic Qt v0.1.2](docs/classic-qt.md)
 
-Source: [MIT](LICENSE). Bundled components have their own licenses; see
+Source: [Apache 2.0](LICENSE). Bundled components have their own licenses; see
 [third-party notices](THIRD_PARTY_NOTICES.md) and the licenses in each package.

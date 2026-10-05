@@ -24,7 +24,7 @@ install -m0644 "$root/host-rs/linux/70-mobile-webcam.rules" "$root/linux/mobile-
 install -Dm0644 "$root/linux/mobile-webcam.desktop" "$stage/usr/share/applications/mobile-webcam.desktop"
 install -Dm0644 "$root/linux/mobile-webcam.svg" "$stage/usr/share/icons/hicolor/scalable/apps/mobile-webcam.svg"
 cp -a "$RUST_LICENSES" "$stage/usr/share/doc/mobile-webcam/licenses/rust"
-install -m0644 "$root/LICENSE" "$root/host-rs/README.md" "$stage/usr/share/doc/mobile-webcam/"
+install -m0644 "$root/LICENSE" "$root/NOTICE" "$root/THIRD_PARTY_NOTICES.md" "$root/host-rs/README.md" "$stage/usr/share/doc/mobile-webcam/"
 install -m0644 "$root/linux/licenses/LGPL-2.1-or-later.txt" "$FFMPEG_DIR/build-manifest.json" "$stage/usr/share/doc/mobile-webcam/licenses/"
 install -m0755 "$root/host-rs/tools/build_ffmpeg.py" "$stage/usr/share/doc/mobile-webcam/"
 printf '%s\n' 'FFmpeg source: https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz' > "$stage/usr/share/doc/mobile-webcam/licenses/FFMPEG_SOURCE.txt"

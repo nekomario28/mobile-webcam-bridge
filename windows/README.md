@@ -1,4 +1,7 @@
-# Mobile Webcam on Windows
+# Classic Qt v0.1.2 on Windows
+
+For the current Rust desktop, use [the Rust guide](../host-rs/README.md).
+The Qt/MSYS2 licensing and packaging instructions below apply to the classic build.
 
 The Windows x86_64 host uses the same Android APK and USB/Wi-Fi protocol as
 Linux. It publishes video through the MIT-licensed
