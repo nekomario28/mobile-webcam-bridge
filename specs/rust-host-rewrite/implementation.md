@@ -1,6 +1,6 @@
 # Rust implementation evidence
 
-The PC host is implemented in `host-rs/` on `rust-host`. The C++ host and production release selector remain the rollback baseline. Software implementation does not close the hardware acceptance slices.
+The PC host is implemented in `host-rs/` on `rust-host`. Classic Qt v0.1.2 remains the rollback baseline. Software implementation does not close the hardware acceptance slices.
 
 ADOPT: Android APK/Kotlin, AMB1/AOA contract, FFmpeg, libusb, pinned Unity Capture filter, installer ownership/uninstall logic, Linux integration assets and existing stream/transform fixtures. ADAPT: framing/deadlines, selected physical USB port, decoder and output ownership, transforms, QSettings scalar storage, and application/worker supervision. The C++ donor remains until parity acceptance.
 
@@ -38,4 +38,12 @@ The production release workflow excludes beta tags, preserving its existing VERS
 
 ## Remaining acceptance
 
-Run the frozen G0–G3 phone/USB/720p/1080p/real-consumer matrix, Linux privilege/setup behavior and native Windows consumer/installer/GUI checks. Verify the C++-to-Rust installed upgrade separately; the Wine installer test covers Rust-to-Rust updates. Measure actual VAAPI/D3D11VA/CUDA and software fallback, native IME/accessibility, and baseline CPU/GPU/RSS/latency. No native phone or GPU gate is accepted from CI, Wine, cross-compilation, synthetic fixtures or software-rendered screenshots. Keep the production C++ release selected until those checks pass. iOS/WebRTC and Wi-Fi discovery remain subsequent features.
+Run the frozen G0–G3 phone/USB/720p/1080p/real-consumer matrix, Linux privilege/setup behavior and native Windows consumer/installer/GUI checks. Verify the C++-to-Rust installed upgrade separately; the Wine installer test covers Rust-to-Rust updates. Measure actual VAAPI/D3D11VA/CUDA and software fallback, native IME/accessibility, and baseline CPU/GPU/RSS/latency. No native phone or GPU gate is accepted from CI, Wine, cross-compilation, synthetic fixtures or software-rendered screenshots. The user authorized stable Rust release promotion on 2026-10-06. Those hardware checks remain pending; stable release status does not establish hardware parity. iOS/WebRTC and Wi-Fi discovery remain subsequent features.
+
+## Stable release promotion
+
+Version 0.2.0 promotes the beta.4 desktop binaries and Android 0.1.4 APK without
+rebuilding them. The stable tag adds documentation and routes the classic Qt
+release workflow to v0.1 tags. Artifact hashes and producer commits remain in
+build-receipt.json. Existing native/Android CI evidence is reused for unchanged
+code; device, GPU and native Windows acceptance remain separate.

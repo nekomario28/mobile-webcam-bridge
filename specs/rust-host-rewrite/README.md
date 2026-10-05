@@ -4,7 +4,7 @@ Status: IMPLEMENTING on `rust-host`. Last updated: 2026-10-05 (Asia/Tokyo). See 
 
 ## Next Agent Prompt
 
-Continue on `rust-host`, reading [implementation.md](implementation.md), [contracts.md](contracts.md), and [choices.md](choices.md) first. The frozen C++ baseline is v0.1.2 (`03e874d7396f1160f73087d657847760226199bb`), refreshed against origin/main on 2026-10-05. Rust source is in `host-rs/`; production and release workflows still select C++. Keep them intact until the acceptance matrix passes. Use bounded builds (CPU 1 core, MemoryMax 2 GiB, Cargo jobs 1, OOM adjustment 800): the user approved this exception while the host resource gate is HOLD. Record exact measurements before accepting slices; unit tests and cross-compilation do not establish native hardware parity.
+Continue on `rust-host`, reading [implementation.md](implementation.md), [contracts.md](contracts.md), and [choices.md](choices.md) first. The frozen C++ baseline is v0.1.2 (`03e874d7396f1160f73087d657847760226199bb`), refreshed against origin/main on 2026-10-05. Rust source is in `host-rs/`. The user authorized stable v0.2.0 release promotion on 2026-10-06; the hardware acceptance matrix remains pending. The v0.1 release workflow and classic Qt tag remain the rollback lane. Use bounded builds (CPU 1 core, MemoryMax 2 GiB, Cargo jobs 1, OOM adjustment 800): the user approved this exception while the host resource gate is HOLD. Record exact measurements before accepting slices; unit tests and cross-compilation do not establish native hardware parity.
 
 - [ ] [01 — Minimal FFmpeg and build closure](slices/01-dependencies.md)
 - [ ] [02 — Native GUI and existing saved settings](slices/02-gui-settings.md)
