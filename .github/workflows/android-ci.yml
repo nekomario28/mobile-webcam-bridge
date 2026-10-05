@@ -65,6 +65,8 @@ jobs:
         run: |
           set -euo pipefail
           sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/mobile-webcam-avd"
+          mkdir -p "$ANDROID_AVD_HOME"
           echo no | avdmanager create avd -n mobile-webcam-ui -k "system-images;android-35;google_apis;x86_64" --device pixel
           sudo chmod a+rw /dev/kvm
           mkdir -p build/android-ui
@@ -85,6 +87,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Upload APKs and lint reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mobile-webcam-debug-apk
