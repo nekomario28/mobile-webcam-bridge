@@ -1,6 +1,13 @@
 # Mobile Webcam
 
-[Rust host preview](host-rs/README.md) is available on this branch. The release instructions below describe v0.1.2.
+[Rust host preview](host-rs/README.md) is available on this branch. Install the
+Android APK and desktop app from the same preview release. Select USB or Wi-Fi,
+press **Connect** on the PC, then **Start camera** on the phone. The camera button
+becomes available after connection. If USB access is declined, select USB again
+to retry. Windows needs Setup.exe once; Linux needs its distribution's
+v4l2loopback module, with camera access configured when connecting.
+
+The instructions below describe the classic Qt host in v0.1.2.
 
 ![Mobile Webcam Linux GUI in English with an Xperia connected over USB](docs/screenshots/mobile-webcam-linux-gui-en.png)
 

@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
@@ -17,17 +19,23 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.view.Gravity
+import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import java.util.UUID
 
 class MainActivity : Activity() {
     private enum class ConnectionMode { USB, LAN }
 
     private lateinit var usb: UsbManager
     private lateinit var status: TextView
+    private lateinit var usbMode: Button
+    private lateinit var lanMode: Button
     private var receiverRegistered = false
     private var connectionMode = ConnectionMode.USB
     private var accessoryFd: ParcelFileDescriptor? = null
@@ -39,7 +47,9 @@ class MainActivity : Activity() {
     private var cameraStartRequested = false
     private var cameraPermissionPending = false
     private var foreground = false
-    private var usbPermissionPending = false
+    private var usbPermissionRequest: PendingIntent? = null
+    private var usbPermissionDeclined = false
+    private var usbPermissionRequestId: String? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private val rediscoverRunnable = Runnable {
@@ -50,16 +60,20 @@ class MainActivity : Activity() {
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != ACTION_USB_PERMISSION) return
-            usbPermissionPending = false
-            val accessory = intent.accessoryExtra() ?: run {
+            if (intent.action != ACTION_USB_PERMISSION || connectionMode != ConnectionMode.USB ||
+                usbPermissionRequest == null || intent.getStringExtra(EXTRA_USB_REQUEST_ID) != usbPermissionRequestId) return
+            clearUsbPermissionRequest()
+            // An immutable PendingIntent cannot receive USB result extras; query the OS grant.
+            val accessory = usb.accessoryList?.firstOrNull() ?: run {
                 scheduleRediscover()
                 return
             }
-            if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
+            if (usb.hasPermission(accessory)) {
+                usbPermissionDeclined = false
                 openAccessory(accessory)
             } else {
-                show(ui("USB accessory permission denied", "USB accessoryの権限がありません"))
+                usbPermissionDeclined = true
+                showUsbPermissionDeclined()
                 scheduleRediscover()
             }
         }
@@ -71,28 +85,39 @@ class MainActivity : Activity() {
 
         status = TextView(this).apply {
             textSize = 17f
-            setPadding(32, 32, 32, 32)
+            id = R.id.connection_status
+            setTextColor(getColor(R.color.app_text))
+            setPadding(0, 0, 0, dp(16))
             setTextIsSelectable(true)
         }
-        val usbMode = Button(this).apply {
+        usbMode = Button(this).apply {
+            id = R.id.usb_mode
             text = "USB"
             setAllCaps(false)
             setOnClickListener { startUsbMode() }
         }
-        val lanMode = Button(this).apply {
+        lanMode = Button(this).apply {
+            id = R.id.lan_mode
             text = "Wi-Fi"
             setAllCaps(false)
             setOnClickListener { startLanMode() }
         }
         details = TextView(this).apply {
             textSize = 13f
-            setPadding(32, 16, 32, 16)
+            setPadding(0, dp(8), 0, dp(8))
             setTextIsSelectable(true)
             visibility = android.view.View.GONE
         }
         val cameras = Button(this).apply {
+            id = R.id.details_action
             text = ui("Details", "詳細")
             setAllCaps(false)
+            backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+            setTextColor(getColor(R.color.app_accent))
+            elevation = 0f
+            stateListAnimator = null
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 0)
             setOnClickListener {
                 if (details.visibility == android.view.View.VISIBLE) {
                     details.visibility = android.view.View.GONE
@@ -103,6 +128,7 @@ class MainActivity : Activity() {
             }
         }
         cameraButton = Button(this).apply {
+            id = R.id.camera_action
             text = ui("Start camera", "カメラ開始")
             setAllCaps(false)
             setOnClickListener {
@@ -111,24 +137,49 @@ class MainActivity : Activity() {
                     showConnectionStatus(ui("Camera stopped", "カメラを停止しました"))
                 } else {
                     cameraStartRequested = true
+                    updateControls()
                     startCamera720p()
                 }
             }
         }
-        setContentView(ScrollView(this).apply {
+        val root = ScrollView(this).apply {
+            setBackgroundColor(getColor(R.color.app_background))
+            isFillViewport = true
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
+                setPadding(dp(16), dp(16), dp(16), dp(16))
                 addView(status, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
-                    addView(usbMode, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-                    addView(lanMode, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(usbMode, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginEnd = dp(4) })
+                    addView(lanMode, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginStart = dp(4) })
                 })
-                addView(cameraButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                addView(cameras, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                addView(cameraButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(12) })
+                addView(cameras, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(details, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             })
-        })
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false)
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            if (Build.VERSION.SDK_INT >= 30) {
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            }
+            insets
+        }
+        setContentView(root)
+        root.requestApplyInsets()
 
         val filter = IntentFilter(ACTION_USB_PERMISSION)
         if (Build.VERSION.SDK_INT >= 33) {
@@ -162,21 +213,22 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (connectionMode == ConnectionMode.USB && intent.action == UsbManager.ACTION_USB_ACCESSORY_ATTACHED) {
-            usbPermissionPending = false
+            clearUsbPermissionRequest()
+            usbPermissionDeclined = false
             discoverUsb()
         }
     }
 
     private fun startUsbMode() {
-        if (connectionMode == ConnectionMode.USB && (session != null || usbPermissionPending || cameraStartRequested)) return
+        if (connectionMode == ConnectionMode.USB && (session != null || usbPermissionRequest != null || cameraStartRequested)) return
         handler.removeCallbacks(rediscoverRunnable)
         stopCamera()
         lanServer?.close()
         lanServer = null
         closeSession()
         connectionMode = ConnectionMode.USB
+        usbPermissionDeclined = false
         saveConnectionMode()
-        show(ui("USB: waiting for Android Open Accessory…", "USB: Android Open Accessoryを待っています…"))
         discoverUsb()
     }
 
@@ -186,6 +238,7 @@ class MainActivity : Activity() {
         stopCamera()
         closeSession()
         connectionMode = ConnectionMode.LAN
+        clearUsbPermissionRequest()
         saveConnectionMode()
         lanServer?.close()
 
@@ -234,7 +287,7 @@ class MainActivity : Activity() {
             buildString {
                 append(ui("Phone IP\n", "スマホのIPアドレス\n"))
                 append(addresses.joinToString("\n"))
-                append(ui("\nEnter this IP on the PC and press Connect", "\nPCにこのIPを入力して「接続」"))
+                append(ui("\nEnter this IP on the PC and press Connect", "\nPCにこのIPを入力し「接続」を押す"))
                 if (!detail.isNullOrBlank()) append("\n").append(detail)
             },
         )
@@ -246,27 +299,41 @@ class MainActivity : Activity() {
 
         val accessory = usb.accessoryList?.firstOrNull()
         if (accessory == null) {
-            usbPermissionPending = false
+            clearUsbPermissionRequest()
+            usbPermissionDeclined = false
             show(ui("USB: press Connect on the PC", "USB: PCで「接続」を押してください"))
             scheduleRediscover()
             return
         }
         if (usb.hasPermission(accessory)) {
-            usbPermissionPending = false
+            clearUsbPermissionRequest()
+            usbPermissionDeclined = false
             openAccessory(accessory)
             return
         }
-        if (!usbPermissionPending) {
-            val permissionIntent = PendingIntent.getBroadcast(
-                this,
-                0,
-                Intent(ACTION_USB_PERMISSION).setPackage(packageName),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-            usbPermissionPending = true
+        if (usbPermissionDeclined) {
+            showUsbPermissionDeclined()
+            scheduleRediscover()
+            return
+        }
+        if (usbPermissionRequest == null) {
+            val requestId = UUID.randomUUID().toString()
+            usbPermissionRequestId = requestId
+            val permissionIntent = createUsbPermissionRequest(this, requestId)
+            usbPermissionRequest = permissionIntent
             usb.requestPermission(accessory, permissionIntent)
         }
-        show(ui("USB: waiting for accessory permission…", "USB: accessory permissionを待っています…"))
+        show(ui("Allow USB access in the Android prompt", "Androidの確認画面でUSBの利用を許可してください"))
+    }
+
+    private fun showUsbPermissionDeclined() {
+        show(ui("USB access declined\nTap USB to try again", "USBの利用許可がありません\nUSBを選び直すと再試行します"))
+    }
+
+    private fun clearUsbPermissionRequest() {
+        usbPermissionRequest?.cancel()
+        usbPermissionRequest = null
+        usbPermissionRequestId = null
     }
 
     private fun scheduleRediscover() {
@@ -335,7 +402,7 @@ class MainActivity : Activity() {
 
     private fun startCamera720p() {
         if (!cameraStartRequested || cameraBridge != null || !foreground) return
-        if (connectionMode == ConnectionMode.LAN && session == null) {
+        if (session == null) {
             cameraStartRequested = false
             showConnectionStatus(ui("Connect the PC, then press Start camera", "PCを接続してからカメラ開始を押してください"))
             return
@@ -347,10 +414,7 @@ class MainActivity : Activity() {
             }
             return
         }
-        val activeSession = session ?: run {
-            showConnectionStatus(ui("Waiting for the PC · Cancel to stop", "PC接続待ち · キャンセルで停止できます"))
-            return
-        }
+        val activeSession = session ?: return
 
         val cameras = runCatching { CameraCatalog.enumerate(this) }.getOrElse {
             stopCamera()
@@ -371,7 +435,10 @@ class MainActivity : Activity() {
             session = activeSession,
             onStatus = { message ->
                 runOnUiThread {
-                    if (cameraBridge === bridge) showConnectionStatus(ui("Streaming\n$message", "配信中\n$message"))
+                    if (cameraBridge === bridge) {
+                        details.text = message
+                        showConnectionStatus(ui("Camera running", "カメラ配信中"))
+                    }
                 }
             },
             onError = { message ->
@@ -384,7 +451,7 @@ class MainActivity : Activity() {
             },
         )
         cameraBridge = bridge
-        updateCameraButton()
+        updateControls()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         runCatching {
             bridge.start(
@@ -410,7 +477,16 @@ class MainActivity : Activity() {
         show("$transport · $message")
     }
 
-    private fun updateCameraButton() {
+    private fun updateControls() {
+        for ((button, mode) in listOf(usbMode to ConnectionMode.USB, lanMode to ConnectionMode.LAN)) {
+            val selected = connectionMode == mode
+            button.isSelected = selected
+            button.backgroundTintList = ColorStateList.valueOf(getColor(if (selected) R.color.app_accent else R.color.app_inactive))
+            button.setTextColor(if (selected) Color.WHITE else getColor(R.color.app_text))
+        }
+        cameraButton.isEnabled = session != null || cameraStartRequested
+        cameraButton.backgroundTintList = ColorStateList.valueOf(getColor(if (cameraButton.isEnabled) R.color.app_accent else R.color.app_inactive))
+        cameraButton.setTextColor(if (cameraButton.isEnabled) Color.WHITE else getColor(R.color.app_muted))
         cameraButton.text = when {
             cameraBridge != null -> ui("Stop camera", "カメラ停止")
             cameraStartRequested -> ui("Cancel", "キャンセル")
@@ -428,7 +504,7 @@ class MainActivity : Activity() {
         cameraBridge?.close()
         cameraBridge = null
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        updateCameraButton()
+        updateControls()
     }
 
     override fun onRequestPermissionsResult(
@@ -449,9 +525,9 @@ class MainActivity : Activity() {
     }
 
     private fun closeSession(clearStartRequest: Boolean = true) {
-        stopCamera(clearStartRequest)
         val current = session
         session = null
+        stopCamera(clearStartRequest)
         runCatching { current?.close() }
         runCatching { accessoryFd?.close() }
         accessoryFd = null
@@ -459,6 +535,7 @@ class MainActivity : Activity() {
 
     private fun stopConnections() {
         handler.removeCallbacks(rediscoverRunnable)
+        clearUsbPermissionRequest()
         closeSession()
         lanServer?.close()
         lanServer = null
@@ -466,8 +543,10 @@ class MainActivity : Activity() {
 
     private fun show(message: String) {
         status.text = message
-        updateCameraButton()
+        updateControls()
     }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun ui(english: String, japanese: String): String =
         if (resources.configuration.locales[0].language == "ja") japanese else english
@@ -478,17 +557,19 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
-    @Suppress("DEPRECATION")
-    private fun Intent.accessoryExtra(): UsbAccessory? =
-        if (Build.VERSION.SDK_INT >= 33) {
-            getParcelableExtra(UsbManager.EXTRA_ACCESSORY, UsbAccessory::class.java)
-        } else {
-            getParcelableExtra(UsbManager.EXTRA_ACCESSORY)
-        }
-
     companion object {
-        private const val ACTION_USB_PERMISSION = "dev.nekomario.amb.USB_PERMISSION"
+        internal const val ACTION_USB_PERMISSION = "dev.nekomario.amb.USB_PERMISSION"
+        internal const val EXTRA_USB_REQUEST_ID = "usb_permission_request_id"
         private const val CAMERA_PERMISSION_REQUEST = 1001
         private const val REDISCOVER_DELAY_MS = 1000L
+
+        internal fun createUsbPermissionRequest(context: Context, requestId: String): PendingIntent =
+            PendingIntent.getBroadcast(
+                context,
+                0,
+                Intent(ACTION_USB_PERMISSION).setPackage(context.packageName)
+                    .putExtra(EXTRA_USB_REQUEST_ID, requestId),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_CANCEL_CURRENT,
+            )
     }
 }

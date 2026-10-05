@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="connection_status" type="id" />
+    <item name="usb_mode" type="id" />
+    <item name="lan_mode" type="id" />
+    <item name="camera_action" type="id" />
+    <item name="details_action" type="id" />
+</resources>

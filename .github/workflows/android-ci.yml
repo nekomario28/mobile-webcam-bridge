@@ -51,7 +51,7 @@ jobs:
           gradle-version: '8.9'
       - name: Assemble and lint debug/release APKs
         working-directory: android
-        run: gradle --no-daemon --stacktrace assembleDebug lintDebug assembleRelease lintRelease
+        run: gradle --no-daemon --stacktrace assembleDebug lintDebug assembleRelease lintRelease assembleDebugAndroidTest
       - name: Verify APK
         shell: bash
         run: |

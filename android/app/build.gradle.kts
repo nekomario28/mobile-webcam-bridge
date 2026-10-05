@@ -27,6 +27,7 @@ android {
         applicationId = "dev.nekomario.amb"
         minSdk = 26
         targetSdk = 35
+        testInstrumentationRunner = "dev.nekomario.amb.UsbPermissionInstrumentation"
         versionCode = appVersionParts[0] * 1_000_000 +
             appVersionParts[1] * 1_000 + appVersionParts[2]
         versionName = appVersion

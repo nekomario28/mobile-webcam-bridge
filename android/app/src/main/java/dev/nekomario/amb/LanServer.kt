@@ -1,5 +1,6 @@
 package dev.nekomario.amb
 
+import java.io.EOFException
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.ServerSocket
@@ -52,7 +53,7 @@ class LanSession(
                 }
             }
         } catch (t: Throwable) {
-            if (running.get()) finish(t.message ?: t.javaClass.simpleName)
+            if (running.get()) finish(if (t is EOFException) null else t.message ?: t.javaClass.simpleName)
         } finally {
             finish(null)
         }
