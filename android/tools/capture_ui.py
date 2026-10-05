@@ -78,7 +78,7 @@ for version, apk in [
     adb("install", str(apk))
     if version == "after":
         adb("install", "android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
-        result = adb("shell", "am", "instrument", "-w", f"{PACKAGE}.test/{PACKAGE}.UsbPermissionInstrumentation")
+        result = adb("shell", "am", "instrument", "-w", "-r", f"{PACKAGE}.test/{PACKAGE}.UsbPermissionInstrumentation")
         (OUTPUT / "usb-permission-instrumentation.log").write_bytes(result)
         assert b"PASS USB permission callback" in result and b"INSTRUMENTATION_CODE: -1" in result, result
     for locale in ("en-US", "ja-JP"):
