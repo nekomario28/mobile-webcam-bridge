@@ -37,7 +37,9 @@ impl ServerCertVerifier for PinnedCertificate {
     ) -> Result<ServerCertVerified, Error> {
         let found = Sha256::digest(certificate.as_ref());
         if found.as_slice() != self.sha256 {
-            return Err(Error::General("Wi-Fi phone certificate fingerprint mismatch".into()));
+            return Err(Error::General(
+                "Wi-Fi phone certificate fingerprint mismatch".into(),
+            ));
         }
         // The actual TLS handshake signature is independently verified below.
         Ok(ServerCertVerified::assertion())
@@ -134,7 +136,10 @@ impl SecureTcp {
         for address in addresses {
             let raw = match TcpStream::connect_timeout(&address, remaining(deadline)?) {
                 Ok(s) => s,
-                Err(e) => { last = Box::new(e); continue; }
+                Err(e) => {
+                    last = Box::new(e);
+                    continue;
+                }
             };
             raw.set_nodelay(true)?;
             let client = ClientConnection::new(Arc::new(config.clone()), server_name.clone())?;
@@ -147,7 +152,10 @@ impl SecureTcp {
                     tls.conn.complete_io(&mut tls.sock)?;
                 }
                 let mut secure = Self(tls);
-                secure.send(&Frame::new(wire::HELLO, 1, credential.clone())?, remaining(deadline)?)?;
+                secure.send(
+                    &Frame::new(wire::HELLO, 1, credential.clone())?,
+                    remaining(deadline)?,
+                )?;
                 let ack = secure.receive(remaining(deadline)?)?;
                 if ack.header.kind != wire::HELLO_ACK
                     || ack.header.sequence != 1
@@ -171,7 +179,12 @@ impl SecureTcp {
         while offset < bytes.len() {
             self.0.sock.set_read_timeout(Some(remaining(deadline)?))?;
             match self.0.read(&mut bytes[offset..]) {
-                Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "TLS peer closed")),
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "TLS peer closed",
+                    ));
+                }
                 Ok(n) => offset += n,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
@@ -217,7 +230,12 @@ mod tests {
     use super::*;
     #[test]
     fn pairing_keys_have_fixed_binary_length() {
-        assert_eq!(parse_hex("00112233445566778899aabbccddeeff", 16).unwrap().len(), 16);
+        assert_eq!(
+            parse_hex("00112233445566778899aabbccddeeff", 16)
+                .unwrap()
+                .len(),
+            16
+        );
         assert!(parse_hex("000000", 16).is_err());
         assert!(parse_hex("00112233445566778899AABBCCDDEEFG", 16).is_err());
     }
@@ -229,6 +247,9 @@ mod tests {
             provider: Arc::new(rustls::crypto::ring::default_provider()),
         };
         let name = ServerName::try_from("mobile-webcam.local").unwrap();
-        assert!(pin.verify_server_cert(&cert, &[], &name, &[], UnixTime::now()).is_err());
+        assert!(
+            pin.verify_server_cert(&cert, &[], &name, &[], UnixTime::now())
+                .is_err()
+        );
     }
 }

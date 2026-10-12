@@ -4,10 +4,10 @@ pub mod gui;
 #[cfg(feature = "video")]
 pub mod output;
 pub mod platform;
+pub mod secure;
 #[cfg(feature = "gui")]
 pub mod session;
 pub mod settings;
-pub mod secure;
 pub mod transport;
 pub mod usb;
 #[cfg(feature = "video")]

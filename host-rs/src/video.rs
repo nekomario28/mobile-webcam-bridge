@@ -4,9 +4,9 @@ mod pixels;
 pub mod transform;
 use crate::{
     control::{self, Command, Event},
+    secure::SecureTcp,
     settings::Settings,
     transport::Transport,
-    secure::SecureTcp,
     usb::{DeviceId, Usb},
     wire,
 };
