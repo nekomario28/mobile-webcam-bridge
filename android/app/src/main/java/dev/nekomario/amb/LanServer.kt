@@ -1,10 +1,13 @@
 package dev.nekomario.amb
 
 import java.io.EOFException
+import java.io.FilterInputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -43,11 +46,19 @@ class LanSession(
 
     private fun readLoop() {
         try {
+            var pingWindowStart = System.nanoTime()
+            var pingCount = 0
             while (running.get()) {
                 val (header, payload) = Wire.readFrame(input, maxPayloadLength = 8)
                 when (header.type) {
                     Wire.TYPE_PING -> {
                         require(payload.size == 8) { "PING payload must be 8 bytes" }
+                        val now = System.nanoTime()
+                        if (now - pingWindowStart >= 1_000_000_000L) {
+                            pingWindowStart = now
+                            pingCount = 0
+                        }
+                        require(++pingCount <= 64) { "PING rate limit exceeded" }
                         outbound.sendPong(header, payload)
                     }
                     Wire.TYPE_VIDEO_IDR_REQUEST -> {
@@ -144,10 +155,7 @@ class LanServer(
     private fun authenticate(socket: Socket) {
         socket.tcpNoDelay = true
         socket.keepAlive = true
-        socket.soTimeout = 5_000
-        val (hello, payload) = Wire.readFrame(socket.getInputStream(), maxPayloadLength = 0)
-        require(hello.type == Wire.TYPE_HELLO) { "expected HELLO" }
-        require(payload.isEmpty()) { "HELLO payload must be empty" }
+        val hello = readHelloWithDeadline(socket, 5_000)
         Wire.writeFrame(
             socket.getOutputStream(),
             Wire.Header(Wire.TYPE_HELLO_ACK, 0, hello.sequence, 0, 0),
@@ -182,4 +190,26 @@ class LanServer(
                 .distinct()
         }.getOrDefault(emptyList())
     }
+}
+
+/**
+ * Enforce one absolute HELLO deadline, not a new socket timeout per received byte.
+ * A slow sender must not occupy the single-threaded accept loop indefinitely.
+ */
+internal fun readHelloWithDeadline(socket: Socket, timeoutMillis: Int): Wire.Header {
+    require(timeoutMillis > 0)
+    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis.toLong())
+    val limitedInput = object : FilterInputStream(socket.getInputStream()) {
+        override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+            val remaining = deadline - System.nanoTime()
+            if (remaining <= 0) throw SocketTimeoutException("Wi-Fi HELLO deadline expired")
+            socket.soTimeout = TimeUnit.NANOSECONDS.toMillis(remaining)
+                .coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
+            return super.read(bytes, offset, length)
+        }
+    }
+    val (hello, payload) = Wire.readFrame(limitedInput, maxPayloadLength = 0)
+    require(hello.type == Wire.TYPE_HELLO) { "expected HELLO" }
+    require(payload.isEmpty()) { "HELLO payload must be empty" }
+    return hello
 }

@@ -8,6 +8,9 @@ import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.SocketTimeoutException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -40,6 +43,35 @@ class WireAndQueueTest {
         assertEquals(Wire.TYPE_PING, header.type)
         assertEquals(42, header.sequence)
         assertArrayEquals(payload, decoded)
+    }
+
+    @Test
+    fun aByteAtATimeHelloCannotExtendTheDeadline() {
+        ServerSocket(0).use { listener ->
+            val sender = Thread {
+                runCatching {
+                    Socket("127.0.0.1", listener.localPort).use { socket ->
+                        repeat(20) {
+                            socket.getOutputStream().write('A'.code)
+                            Thread.sleep(40)
+                        }
+                    }
+                }
+            }
+            sender.start()
+            try {
+                listener.accept().use { socket ->
+                    val began = System.nanoTime()
+                    assertThrows(SocketTimeoutException::class.java) {
+                        readHelloWithDeadline(socket, 200)
+                    }
+                    val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - began)
+                    assertTrue("deadline took $elapsedMs ms", elapsedMs < 1500)
+                }
+            } finally {
+                sender.join(1500)
+            }
+        }
     }
 
     @Test
