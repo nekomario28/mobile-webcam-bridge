@@ -165,6 +165,9 @@ class MainActivity : Activity() {
                         "\n\nPCに128ビット接続キーを入力:\n" + identity.pairingCode() +
                         "\n\n接続キーは秘密にしてください。"
                     )
+                    // Block screenshots and Android's recent-app snapshot while the
+                    // bearer key is on screen.
+                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                     pairInfo.visibility = View.VISIBLE
                 }.onFailure { show("Wi-Fi identity error: " + it.message) }
             }
@@ -178,6 +181,7 @@ class MainActivity : Activity() {
                     lanServer?.close()
                     lanServer = null
                     pairInfo.visibility = View.GONE
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                     startLanMode()
                 }.onFailure { show("Wi-Fi key rotation failed: " + it.message) }
             }
@@ -251,6 +255,9 @@ class MainActivity : Activity() {
         // Do not keep capturing video after the activity leaves the foreground.
         if (cameraBridge != null) stopCamera()
         handler.removeCallbacks(rediscoverRunnable)
+        // Never leave the secret visible in the task switcher or on return.
+        pairInfo.visibility = View.GONE
+        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         super.onPause()
     }
 
@@ -536,7 +543,10 @@ class MainActivity : Activity() {
         }
         pairAction.visibility = if (connectionMode == ConnectionMode.LAN) View.VISIBLE else View.GONE
         rotateAction.visibility = pairAction.visibility
-        if (connectionMode != ConnectionMode.LAN) pairInfo.visibility = View.GONE
+        if (connectionMode != ConnectionMode.LAN) {
+            pairInfo.visibility = View.GONE
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
         cameraButton.isEnabled = session != null || cameraStartRequested
         cameraButton.backgroundTintList = ColorStateList.valueOf(getColor(if (cameraButton.isEnabled) R.color.app_accent else R.color.app_inactive))
         cameraButton.setTextColor(if (cameraButton.isEnabled) Color.WHITE else getColor(R.color.app_muted))
