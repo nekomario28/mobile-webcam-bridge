@@ -51,7 +51,7 @@ class AccessorySession(
         var verified = 0
         try {
             while (running.get()) {
-                val (header, payload) = Wire.readFrame(input)
+                val (header, payload) = Wire.readFrame(input, maxPayloadLength = 8)
                 when (header.type) {
                     Wire.TYPE_PING -> {
                         require(payload.size == 8) { "G0.5 PING payload must be 8 bytes" }

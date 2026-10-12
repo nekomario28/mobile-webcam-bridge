@@ -24,6 +24,8 @@ class LanSession(
     )
     private var readerThread: Thread? = null
 
+    fun isActive(): Boolean = running.get()
+
     fun start() {
         if (!running.compareAndSet(false, true)) return
         outbound.start()
@@ -42,9 +44,12 @@ class LanSession(
     private fun readLoop() {
         try {
             while (running.get()) {
-                val (header, payload) = Wire.readFrame(input)
+                val (header, payload) = Wire.readFrame(input, maxPayloadLength = 8)
                 when (header.type) {
-                    Wire.TYPE_PING -> outbound.sendPong(header, payload)
+                    Wire.TYPE_PING -> {
+                        require(payload.size == 8) { "PING payload must be 8 bytes" }
+                        outbound.sendPong(header, payload)
+                    }
                     Wire.TYPE_VIDEO_IDR_REQUEST -> {
                         require(payload.isEmpty()) { "VIDEO_IDR_REQUEST payload must be empty" }
                         outbound.forceRecovery()
@@ -77,7 +82,7 @@ class LanSession(
 
 class LanServer(
     private val port: Int = DEFAULT_PORT,
-    private val onSession: (LanSession?) -> Unit,
+    private val onSession: (LanSession, Boolean) -> Unit,
     private val onStatus: (String) -> Unit,
     private val onError: (String) -> Unit,
 ) : AutoCloseable {
@@ -120,13 +125,14 @@ class LanServer(
                     }
                     lateinit var session: LanSession
                     session = LanSession(socket) { closed, error ->
-                        active.compareAndSet(closed, null)
-                        onSession(null)
+                        if (active.compareAndSet(closed, null)) {
+                            onSession(closed, false)
+                        }
                         if (!error.isNullOrBlank()) onError(error)
                     }
                     active.set(session)
-                    onSession(session)
                     session.start()
+                    onSession(session, true)
                 }
                 .onFailure {
                     runCatching { socket.close() }
@@ -139,7 +145,7 @@ class LanServer(
         socket.tcpNoDelay = true
         socket.keepAlive = true
         socket.soTimeout = 5_000
-        val (hello, payload) = Wire.readFrame(socket.getInputStream())
+        val (hello, payload) = Wire.readFrame(socket.getInputStream(), maxPayloadLength = 0)
         require(hello.type == Wire.TYPE_HELLO) { "expected HELLO" }
         require(payload.isEmpty()) { "HELLO payload must be empty" }
         Wire.writeFrame(
@@ -160,7 +166,6 @@ class LanServer(
         runCatching { acceptThread?.join(500) }
         acceptThread = null
         server = null
-        onSession(null)
     }
 
     companion object {

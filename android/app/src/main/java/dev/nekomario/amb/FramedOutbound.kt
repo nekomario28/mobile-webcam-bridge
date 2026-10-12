@@ -2,7 +2,6 @@ package dev.nekomario.amb
 
 import java.io.OutputStream
 import java.util.ArrayDeque
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -20,7 +19,10 @@ class FramedOutbound(
 
     private val running = AtomicBoolean(false)
     private val sequence = AtomicInteger(1)
-    private val controlQueue = ConcurrentLinkedQueue<Frame>()
+    // Both control and video must be bounded; untrusted peers can flood PING.
+    private val controlLock = Any()
+    private val controlQueue = ArrayDeque<Frame>()
+    private val controlOverflowed = AtomicBoolean(false)
     private val videoLock = Any()
     private val videoQueue = ArrayDeque<Frame>()
     private val wake = Semaphore(0)
@@ -146,9 +148,20 @@ class FramedOutbound(
     }
 
     private fun enqueueControl(frame: Frame) {
-        if (!running.get()) return
-        controlQueue.add(frame)
-        wake.release()
+        if (!running.get() || controlOverflowed.get()) return
+        val admitted = synchronized(controlLock) {
+            if (controlQueue.size >= MAX_CONTROL_FRAMES) {
+                false
+            } else {
+                controlQueue.addLast(frame)
+                true
+            }
+        }
+        if (admitted) {
+            wake.release()
+        } else if (controlOverflowed.compareAndSet(false, true)) {
+            onError("control queue limit exceeded")
+        }
     }
 
     private fun writerLoop() {
@@ -156,7 +169,9 @@ class FramedOutbound(
             while (running.get()) {
                 wake.acquire()
                 if (!running.get()) break
-                val frame = controlQueue.poll() ?: synchronized(videoLock) {
+                val frame = synchronized(controlLock) {
+                    if (controlQueue.isEmpty()) null else controlQueue.removeFirst()
+                } ?: synchronized(videoLock) {
                     if (videoQueue.isEmpty()) null else videoQueue.removeFirst()
                 } ?: continue
                 Wire.writeFrame(output, frame.header, frame.payload)
@@ -180,7 +195,11 @@ class FramedOutbound(
             runCatching { writerThread?.join(500) }
         }
         writerThread = null
-        controlQueue.clear()
+        synchronized(controlLock) { controlQueue.clear() }
         synchronized(videoLock) { videoQueue.clear() }
+    }
+
+    companion object {
+        private const val MAX_CONTROL_FRAMES = 32
     }
 }
