@@ -301,6 +301,19 @@ impl eframe::App for App {
                                         .hint_text("32 hexadecimal characters")
                                         .desired_width(f32::INFINITY),
                                 );
+                                let valid_fingerprint = self.settings.lan_fingerprint.len() == 64
+                                    && self.settings.lan_fingerprint.bytes().all(|c| c.is_ascii_hexdigit());
+                                let valid_key = self.settings.lan_key.len() == 32
+                                    && self.settings.lan_key.bytes().all(|c| c.is_ascii_hexdigit());
+                                if !valid_fingerprint || !valid_key {
+                                    ui.colored_label(
+                                        egui::Color32::YELLOW,
+                                        self.text(
+                                            "Pairing required: enter the 64-digit phone fingerprint and 32-digit access key.",
+                                            "ペアリングが必要です：端末の64桁の指紋と32桁の接続キーを入力してください。",
+                                        ),
+                                    );
+                                }
                                 ui.weak(self.text(
                                     "Wi-Fi requires TLS 1.3. No plaintext fallback.",
                                     "Wi-FiはTLS 1.3必須。平文接続への切替なし。",
@@ -379,6 +392,10 @@ impl eframe::App for App {
                         let allowed = running
                             || self.settings.transport == "lan"
                                 && !self.settings.lan_host.trim().is_empty()
+                                && self.settings.lan_fingerprint.len() == 64
+                                && self.settings.lan_fingerprint.bytes().all(|c| c.is_ascii_hexdigit())
+                                && self.settings.lan_key.len() == 32
+                                && self.settings.lan_key.bytes().all(|c| c.is_ascii_hexdigit())
                             || self.settings.transport == "usb"
                                 && self.selected.is_some()
                                 && !self.selection_lost;

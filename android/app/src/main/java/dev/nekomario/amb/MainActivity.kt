@@ -3,6 +3,7 @@ package dev.nekomario.amb
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -152,9 +153,16 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         pairAction = Button(this).apply {
-            text = ui("Show Wi-Fi pairing details", "Wi-Fiペアリング情報を表示")
+            text = ui("Show pairing key", "接続キーを表示")
             setAllCaps(false)
             setOnClickListener {
+                if (pairInfo.visibility == View.VISIBLE) {
+                    pairInfo.visibility = View.GONE
+                    pairInfo.text = ""
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    text = ui("Show pairing key", "接続キーを表示")
+                    return@setOnClickListener
+                }
                 val identity = lanIdentity ?: return@setOnClickListener
                 runCatching {
                     pairInfo.text = ui(
@@ -169,21 +177,34 @@ class MainActivity : Activity() {
                     // bearer key is on screen.
                     window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                     pairInfo.visibility = View.VISIBLE
+                    text = ui("Hide pairing key", "接続キーを隠す")
                 }.onFailure { show("Wi-Fi identity error: " + it.message) }
             }
         }
         rotateAction = Button(this).apply {
-            text = ui("Revoke Wi-Fi access key", "Wi-Fi接続キーを失効")
+            text = ui("Revoke all paired PCs", "登録PCをすべて失効")
             setAllCaps(false)
             setOnClickListener {
-                runCatching {
-                    lanIdentity?.rotate()
-                    lanServer?.close()
-                    lanServer = null
-                    pairInfo.visibility = View.GONE
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                    startLanMode()
-                }.onFailure { show("Wi-Fi key rotation failed: " + it.message) }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle(ui("Revoke all Wi-Fi connections?", "すべてのWi-Fi接続を失効しますか？"))
+                    .setMessage(ui(
+                        "Every PC using the current key will disconnect and must be paired again.",
+                        "現在のキーを使うPCはすべて切断され、再ペアリングが必要になります。"
+                    ))
+                    .setNegativeButton(ui("Cancel", "キャンセル"), null)
+                    .setPositiveButton(ui("Revoke", "失効")) { _, _ ->
+                        runCatching {
+                            lanIdentity?.rotate()
+                            lanServer?.close()
+                            lanServer = null
+                            pairInfo.visibility = View.GONE
+                            pairInfo.text = ""
+                            pairAction.text = ui("Show pairing key", "接続キーを表示")
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                            startLanMode()
+                        }.onFailure { show("Wi-Fi key rotation failed: " + it.message) }
+                    }
+                    .show()
             }
         }
         val root = ScrollView(this).apply {
@@ -257,6 +278,8 @@ class MainActivity : Activity() {
         handler.removeCallbacks(rediscoverRunnable)
         // Never leave the secret visible in the task switcher or on return.
         pairInfo.visibility = View.GONE
+        pairInfo.text = ""
+        pairAction.text = ui("Show pairing key", "接続キーを表示")
         window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         super.onPause()
     }
@@ -545,6 +568,8 @@ class MainActivity : Activity() {
         rotateAction.visibility = pairAction.visibility
         if (connectionMode != ConnectionMode.LAN) {
             pairInfo.visibility = View.GONE
+            pairInfo.text = ""
+            pairAction.text = ui("Show pairing key", "接続キーを表示")
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
         cameraButton.isEnabled = session != null || cameraStartRequested

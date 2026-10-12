@@ -2,6 +2,7 @@ package dev.nekomario.amb
 
 import android.content.Context
 import android.os.Build
+import android.util.Base64
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.math.BigInteger
@@ -11,6 +12,10 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.security.spec.ECGenParameterSpec
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 import java.util.Date
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLServerSocket
@@ -21,16 +26,57 @@ import javax.security.auth.x500.X500Principal
  */
 class SecureLanIdentity(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("secure_wifi", Context.MODE_PRIVATE)
-    @Volatile private var secret = prefs.getString("secret", null)
-        ?.takeIf { isHex(it, 32) } ?: newSecret().also {
-            check(prefs.edit().putString("secret", it).commit()) { "unable to save Wi-Fi secret" }
+    @Volatile private var secret: String = loadOrCreateSecret()
+
+    private fun loadOrCreateSecret(): String {
+        val encrypted = prefs.getString(ENCRYPTED_SECRET, null)
+        if (encrypted != null) {
+            val bytes = Base64.decode(encrypted, Base64.NO_WRAP)
+            require(bytes.size in 29..128) { "invalid stored Wi-Fi credential length" }
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, encryptionKey(), GCMParameterSpec(128, bytes, 0, 12))
+            val candidate = String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.US_ASCII)
+            require(isHex(candidate, 32)) { "invalid decrypted Wi-Fi credential" }
+            return candidate
         }
+        // One-way migration of the original unencrypted development-build preference.
+        val migrated = prefs.getString("secret", null)?.takeIf { isHex(it, 32) }
+        return (migrated ?: newSecret()).also { persist(it) }
+    }
+
+    private fun encryptionKey(): SecretKey {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val existing = store.getKey(ENCRYPTION_ALIAS, null)
+        if (existing != null) return existing as SecretKey
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        generator.init(
+            KeyGenParameterSpec.Builder(
+                ENCRYPTION_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build()
+        )
+        return generator.generateKey()
+    }
+
+    private fun persist(next: String) {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, encryptionKey())
+        val ciphertext = cipher.doFinal(next.toByteArray(Charsets.US_ASCII))
+        val encoded = Base64.encodeToString(cipher.iv + ciphertext, Base64.NO_WRAP)
+        check(prefs.edit().putString(ENCRYPTED_SECRET, encoded).remove("secret").commit()) {
+            "unable to protect Wi-Fi credential"
+        }
+    }
 
     fun pairingCode(): String = secret
 
     fun rotate() {
         val next = newSecret()
-        check(prefs.edit().putString("secret", next).commit()) { "unable to rotate Wi-Fi secret" }
+        persist(next)
         secret = next
     }
 
@@ -80,6 +126,8 @@ class SecureLanIdentity(context: Context) {
 
     companion object {
         private const val KEY_ALIAS = "mobile_webcam_wifi_tls_v1"
+        private const val ENCRYPTION_ALIAS = "mobile_webcam_wifi_secret_aes_v1"
+        private const val ENCRYPTED_SECRET = "encrypted_secret_v1"
         internal fun isHex(value: String, size: Int): Boolean =
             value.length == size && value.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
 
