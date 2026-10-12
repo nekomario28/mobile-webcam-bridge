@@ -1,0 +1,63 @@
+name: secure-wifi-android-emulator
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/secure-wifi-android-emulator.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: secure-wifi-emulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  keystore-tls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build Android app and instrumented smoke test
+        working-directory: android
+        run: gradle --no-daemon assembleDebug assembleDebugAndroidTest
+      - name: Verify Android Keystore and TLS 1.3 on API 35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "emulator" "system-images;android-35;google_apis;x86_64"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/secure-wifi-avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | avdmanager create avd -n secure-wifi -k "system-images;android-35;google_apis;x86_64" --device pixel
+          sudo chmod a+rw /dev/kvm
+          mkdir -p build/secure-wifi
+          "$ANDROID_HOME/emulator/emulator" -avd secure-wifi -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 > build/secure-wifi/emulator.log 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'
+          adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+          adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          adb shell am instrument -w dev.nekomario.amb.test/dev.nekomario.amb.UsbPermissionInstrumentation | tee build/secure-wifi/instrumentation.log
+          grep -q "PASS USB permission and Android Keystore TLS 1.3 loopback handshake" build/secure-wifi/instrumentation.log
+          grep -q "INSTRUMENTATION_CODE: -1" build/secure-wifi/instrumentation.log
+      - name: Upload emulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-wifi-emulator-logs
+          path: build/secure-wifi
+          retention-days: 7
+          if-no-files-found: warn
