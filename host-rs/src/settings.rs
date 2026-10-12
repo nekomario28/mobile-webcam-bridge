@@ -3,22 +3,43 @@ use std::collections::BTreeMap;
 #[cfg(unix)]
 use std::path::PathBuf;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
     pub transport: String,
     pub lan_host: String,
+    pub lan_fingerprint: String,
+    pub lan_key: String,
     pub decode: String,
     pub output: String,
     pub rotation: u16,
     pub mirror: bool,
     pub vertical_flip: bool,
 }
+
+impl std::fmt::Debug for Settings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Settings")
+            .field("transport", &self.transport)
+            .field("lan_host", &self.lan_host)
+            .field("lan_fingerprint", &self.lan_fingerprint)
+            .field("lan_key", &"<redacted>")
+            .field("decode", &self.decode)
+            .field("output", &self.output)
+            .field("rotation", &self.rotation)
+            .field("mirror", &self.mirror)
+            .field("vertical_flip", &self.vertical_flip)
+            .finish()
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
             transport: "usb".into(),
             lan_host: String::new(),
+            lan_fingerprint: String::new(),
+            lan_key: String::new(),
             decode: "auto".into(),
             output: if cfg!(windows) {
                 "Unity Video Capture"
@@ -36,6 +57,13 @@ impl Settings {
     pub fn validate(&self) -> crate::Result<()> {
         if !["usb", "lan"].contains(&self.transport.as_str()) {
             return Err("invalid transport".into());
+        }
+        for (value, size) in [(&self.lan_fingerprint, 64), (&self.lan_key, 32)] {
+            if !value.is_empty()
+                && (value.len() != size || !value.bytes().all(|c| c.is_ascii_hexdigit()))
+            {
+                return Err("invalid Wi-Fi pairing fingerprint or key".into());
+            }
         }
         if ![0, 90, 180, 270].contains(&self.rotation) {
             return Err("invalid rotation".into());
@@ -56,6 +84,8 @@ impl Settings {
         [
             ("transport", self.transport.clone()),
             ("lanHost", self.lan_host.trim().into()),
+            ("lanFingerprint", self.lan_fingerprint.trim().into()),
+            ("lanKey", self.lan_key.trim().into()),
             ("decode", self.decode.clone()),
             ("output", self.output.trim().into()),
             ("rotation", self.rotation.to_string()),
@@ -72,6 +102,8 @@ impl Settings {
             match key.as_str() {
                 "transport" => s.transport = value.clone(),
                 "lanHost" => s.lan_host = value.clone(),
+                "lanFingerprint" => s.lan_fingerprint = value.clone(),
+                "lanKey" => s.lan_key = value.clone(),
                 "decode" => s.decode = value.clone(),
                 "output" => s.output = value.clone(),
                 "rotation" => s.rotation = value.parse()?,
