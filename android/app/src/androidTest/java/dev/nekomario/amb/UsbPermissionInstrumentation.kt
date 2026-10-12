@@ -74,7 +74,8 @@ class UsbPermissionInstrumentation : Instrumentation() {
             }
             val tls = SSLContext.getInstance("TLS")
             tls.init(null, arrayOf(testTrust), SecureRandom())
-            (tls.socketFactory.createSocket("127.0.0.1", listener.localPort) as SSLSocket).use { client ->
+            try {
+                (tls.socketFactory.createSocket("127.0.0.1", listener.localPort) as SSLSocket).use { client ->
                 client.enabledProtocols = arrayOf("TLSv1.3")
                 client.soTimeout = 4_000
                 client.startHandshake()
@@ -87,6 +88,15 @@ class UsbPermissionInstrumentation : Instrumentation() {
                 Wire.writeFrame(client.outputStream, Wire.Header(Wire.TYPE_HELLO, 0, 1, 16, 0), credential)
                 val (ack, payload) = Wire.readFrame(client.inputStream, 0)
                 check(ack.type == Wire.TYPE_HELLO_ACK && ack.sequence == 1 && payload.isEmpty())
+            }
+            } catch (failure: Throwable) {
+                worker.join(5_000)
+                val serverCause = serverFailure.get()?.stackTraceToString() ?: "no server-side failure recorded"
+                throw IllegalStateException(
+                    "TLS client failed: " + failure.stackTraceToString() +
+                    "\nServer result: " + serverCause,
+                    failure,
+                )
             }
             worker.join(5_000)
             check(!worker.isAlive) { "TLS server thread did not finish" }
