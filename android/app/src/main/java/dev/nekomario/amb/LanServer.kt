@@ -8,8 +8,11 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
 import javax.net.ssl.SSLSocket
-import java.util.concurrent.TimeUnit
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -107,6 +110,11 @@ class LanServer(
     private val handshakeTimer = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "mwb-tls-handshake-deadline").apply { isDaemon = true }
     }
+    private val handshakeWorkers = Executors.newFixedThreadPool(MAX_HANDSHAKES) { task ->
+        Thread(task, "mwb-tls-handshake").apply { isDaemon = true }
+    }
+    private val handshakeSlots = Semaphore(MAX_HANDSHAKES)
+    private val unauthenticated = Collections.newSetFromMap(ConcurrentHashMap<Socket, Boolean>())
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
@@ -130,15 +138,30 @@ class LanServer(
                 if (running.get()) onError(t.message ?: t.javaClass.simpleName)
                 break
             }
-            if (active.get() != null) {
+            // Do not let one stalled TLS handshake monopolize the accept loop.
+            // Only a fixed number of untrusted sockets may consume worker slots.
+            if (active.get() != null || !handshakeSlots.tryAcquire()) {
                 runCatching { socket.close() }
                 continue
             }
-            // Socket read timeouts are per-read; close the socket after a total
-            // 5 seconds so trickled TLS records cannot monopolize accept().
-            val timeout = handshakeTimer.schedule(
-                { runCatching { socket.close() } }, 5, TimeUnit.SECONDS
-            )
+            unauthenticated.add(socket)
+            try {
+                handshakeWorkers.execute { completeHandshake(socket) }
+            } catch (_: java.util.concurrent.RejectedExecutionException) {
+                unauthenticated.remove(socket)
+                handshakeSlots.release()
+                runCatching { socket.close() }
+            }
+        }
+    }
+
+    private fun completeHandshake(socket: Socket) {
+        // Per-read SO_TIMEOUT is insufficient against a TLS record byte trickle.
+        // This task closes the unauthenticated connection after an absolute deadline.
+        val timeout = handshakeTimer.schedule(
+            { runCatching { socket.close() } }, HANDSHAKE_TIMEOUT_MS, TimeUnit.MILLISECONDS
+        )
+        try {
             runCatching { authenticate(socket as SSLSocket) }
                 .onSuccess {
                     if (!running.get()) {
@@ -147,20 +170,30 @@ class LanServer(
                     }
                     lateinit var session: LanSession
                     session = LanSession(socket) { closed, error ->
-                        if (active.compareAndSet(closed, null)) {
-                            onSession(closed, false)
-                        }
+                        if (active.compareAndSet(closed, null)) onSession(closed, false)
                         if (!error.isNullOrBlank()) onError(error)
                     }
-                    active.set(session)
+                    // Parallel handshakes must never seize the same receiver slot.
+                    if (!active.compareAndSet(null, session)) {
+                        runCatching { socket.close() }
+                        return@onSuccess
+                    }
+                    if (!running.get()) {
+                        session.close()
+                        return@onSuccess
+                    }
                     session.start()
                     onSession(session, true)
                 }
                 .onFailure {
                     runCatching { socket.close() }
-                    onError("Wi-Fi client rejected: ${it.message}")
+                    // Do not echo arbitrary peer-induced TLS exceptions into UI.
+                    if (running.get()) onError("Wi-Fi client rejected (check pairing details)")
                 }
+        } finally {
             timeout.cancel(false)
+            unauthenticated.remove(socket)
+            handshakeSlots.release()
         }
     }
 
@@ -168,9 +201,9 @@ class LanServer(
         socket.tcpNoDelay = true
         socket.keepAlive = true
         socket.enabledProtocols = arrayOf("TLSv1.3")
-        socket.soTimeout = 5_000
+        socket.soTimeout = HANDSHAKE_TIMEOUT_MS.toInt()
         socket.startHandshake()
-        val (hello, credential) = readHelloWithDeadline(socket, 5_000, 16)
+        val (hello, credential) = readHelloWithDeadline(socket, HANDSHAKE_TIMEOUT_MS.toInt(), 16)
         require(credential.size == 16 && identity.authenticates(credential)) {
             "Wi-Fi pairing key rejected"
         }
@@ -188,6 +221,9 @@ class LanServer(
         if (!running.compareAndSet(true, false)) return
         active.getAndSet(null)?.close()
         runCatching { server?.close() }
+        // Closing pending sockets wakes every worker that was blocked in TLS.
+        unauthenticated.forEach { runCatching { it.close() } }
+        handshakeWorkers.shutdownNow()
         acceptThread?.interrupt()
         runCatching { acceptThread?.join(500) }
         acceptThread = null
@@ -197,6 +233,8 @@ class LanServer(
 
     companion object {
         const val DEFAULT_PORT = 48_527
+        private const val MAX_HANDSHAKES = 4
+        private const val HANDSHAKE_TIMEOUT_MS = 5_000L
 
         fun localIpv4Addresses(): List<String> = runCatching {
             NetworkInterface.getNetworkInterfaces().toList()
