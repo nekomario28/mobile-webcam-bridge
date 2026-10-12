@@ -41,6 +41,10 @@ class MainActivity : Activity() {
     private var accessoryFd: ParcelFileDescriptor? = null
     private var session: MediaSession? = null
     private var lanServer: LanServer? = null
+    private var lanIdentity: SecureLanIdentity? = null
+    private lateinit var pairAction: Button
+    private lateinit var rotateAction: Button
+    private lateinit var pairInfo: TextView
     private var cameraBridge: CameraBridgeController? = null
     private lateinit var cameraButton: Button
     private lateinit var details: TextView
@@ -142,6 +146,42 @@ class MainActivity : Activity() {
                 }
             }
         }
+        pairInfo = TextView(this).apply {
+            textSize = 12f
+            setTextIsSelectable(true)
+            visibility = View.GONE
+        }
+        pairAction = Button(this).apply {
+            text = ui("Show Wi-Fi pairing details", "Wi-Fiペアリング情報を表示")
+            setAllCaps(false)
+            setOnClickListener {
+                val identity = lanIdentity ?: return@setOnClickListener
+                runCatching {
+                    pairInfo.text = ui(
+                        "Verify phone certificate SHA-256 on PC:\n" + identity.fingerprint() +
+                        "\n\nEnter this 128-bit access key on PC:\n" + identity.pairingCode() +
+                        "\n\nKeep the key private.",
+                        "PCでスマホ証明書のSHA-256を確認:\n" + identity.fingerprint() +
+                        "\n\nPCに128ビット接続キーを入力:\n" + identity.pairingCode() +
+                        "\n\n接続キーは秘密にしてください。"
+                    )
+                    pairInfo.visibility = View.VISIBLE
+                }.onFailure { show("Wi-Fi identity error: " + it.message) }
+            }
+        }
+        rotateAction = Button(this).apply {
+            text = ui("Revoke Wi-Fi access key", "Wi-Fi接続キーを失効")
+            setAllCaps(false)
+            setOnClickListener {
+                runCatching {
+                    lanIdentity?.rotate()
+                    lanServer?.close()
+                    lanServer = null
+                    pairInfo.visibility = View.GONE
+                    startLanMode()
+                }.onFailure { show("Wi-Fi key rotation failed: " + it.message) }
+            }
+        }
         val root = ScrollView(this).apply {
             setBackgroundColor(getColor(R.color.app_background))
             isFillViewport = true
@@ -156,6 +196,9 @@ class MainActivity : Activity() {
                 })
                 addView(cameraButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(12) })
                 addView(cameras, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                addView(pairAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                addView(rotateAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                addView(pairInfo, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(details, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             })
         }
@@ -227,6 +270,7 @@ class MainActivity : Activity() {
         stopCamera()
         lanServer?.close()
         lanServer = null
+        lanIdentity = null
         closeSession()
         connectionMode = ConnectionMode.USB
         usbPermissionDeclined = false
@@ -243,9 +287,11 @@ class MainActivity : Activity() {
         clearUsbPermissionRequest()
         saveConnectionMode()
         lanServer?.close()
+        val identity = lanIdentity ?: SecureLanIdentity(this).also { lanIdentity = it }
 
         lateinit var server: LanServer
         server = LanServer(
+            identity = identity,
             onSession = { lanSession, connected ->
                 runOnUiThread {
                     if (lanServer !== server) {
@@ -488,6 +534,9 @@ class MainActivity : Activity() {
             button.backgroundTintList = ColorStateList.valueOf(getColor(if (selected) R.color.app_accent else R.color.app_inactive))
             button.setTextColor(if (selected) Color.WHITE else getColor(R.color.app_text))
         }
+        pairAction.visibility = if (connectionMode == ConnectionMode.LAN) View.VISIBLE else View.GONE
+        rotateAction.visibility = pairAction.visibility
+        if (connectionMode != ConnectionMode.LAN) pairInfo.visibility = View.GONE
         cameraButton.isEnabled = session != null || cameraStartRequested
         cameraButton.backgroundTintList = ColorStateList.valueOf(getColor(if (cameraButton.isEnabled) R.color.app_accent else R.color.app_inactive))
         cameraButton.setTextColor(if (cameraButton.isEnabled) Color.WHITE else getColor(R.color.app_muted))
