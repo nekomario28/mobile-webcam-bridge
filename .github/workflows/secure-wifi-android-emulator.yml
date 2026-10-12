@@ -44,6 +44,18 @@ jobs:
           echo no | avdmanager create avd -n secure-wifi -k "system-images;android-35;google_apis;x86_64" --device pixel
           sudo chmod a+rw /dev/kvm
           mkdir -p build/secure-wifi
+          # Collect the Android-side failure even when the external TLS client
+          # aborts before the instrumentation process returns.
+          dump_android_failure() {
+            result=$?
+            if [ "$result" -ne 0 ]; then
+              echo "--- Android instrumentation ---"
+              cat build/secure-wifi/instrumentation.log 2>/dev/null || true
+              echo "--- TLS app/platform logcat ---"
+              adb logcat -d -t 350 SecureWifiGate:I Conscrypt:V AndroidKeyStore:V '*:E' 2>/dev/null | tail -130 || true
+            fi
+          }
+          trap dump_android_failure EXIT
           "$ANDROID_HOME/emulator/emulator" -avd secure-wifi -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 > build/secure-wifi/emulator.log 2>&1 &
           emulator_pid=$!
           trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
