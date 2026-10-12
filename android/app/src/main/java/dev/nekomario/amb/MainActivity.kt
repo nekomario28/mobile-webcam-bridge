@@ -205,6 +205,8 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         foreground = false
+        // Do not keep capturing video after the activity leaves the foreground.
+        if (cameraBridge != null) stopCamera()
         handler.removeCallbacks(rediscoverRunnable)
         super.onPause()
     }
@@ -244,19 +246,21 @@ class MainActivity : Activity() {
 
         lateinit var server: LanServer
         server = LanServer(
-            onSession = { lanSession ->
+            onSession = { lanSession, connected ->
                 runOnUiThread {
                     if (lanServer !== server) {
-                        lanSession?.close()
+                        if (connected) lanSession.close()
                         return@runOnUiThread
                     }
-                    if (lanSession == null) {
-                        if (session is LanSession) {
+                    if (!connected) {
+                        // Only the currently displayed session may clear the UI.
+                        if (session === lanSession) {
                             stopCamera()
                             session = null
+                            showLanWaiting()
                         }
-                        showLanWaiting()
-                    } else {
+                    } else if (lanSession.isActive()) {
+                        // Ignore a late connect event after that client disconnected.
                         closeSession(clearStartRequest = false)
                         session = lanSession
                         show(ui("PC connected\nPress Start camera", "PC接続済み\n「カメラ開始」を押してください"))

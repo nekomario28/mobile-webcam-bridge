@@ -33,7 +33,8 @@ object Wire {
         val ptsUs: Long,
     )
 
-    fun readFrame(input: InputStream): Pair<Header, ByteArray> {
+    fun readFrame(input: InputStream, maxPayloadLength: Int = MAX_PAYLOAD): Pair<Header, ByteArray> {
+        require(maxPayloadLength in 0..MAX_PAYLOAD) { "invalid caller payload limit" }
         val headerBytes = ByteArray(HEADER_SIZE)
         readExact(input, headerBytes)
         val b = ByteBuffer.wrap(headerBytes).order(ByteOrder.LITTLE_ENDIAN)
@@ -44,7 +45,7 @@ object Wire {
         val sequence = b.int
         val payloadLength = b.int
         val ptsUs = b.long
-        require(payloadLength in 0..MAX_PAYLOAD) { "invalid payload length: $payloadLength" }
+        require(payloadLength in 0..maxPayloadLength) { "invalid payload length: $payloadLength" }
         val payload = ByteArray(payloadLength)
         readExact(input, payload)
         return Header(type, flags, sequence, payloadLength, ptsUs) to payload
