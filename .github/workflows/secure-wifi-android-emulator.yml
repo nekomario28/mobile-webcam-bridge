@@ -50,15 +50,24 @@ jobs:
             result=$?
             if [ "$result" -ne 0 ]; then
               echo "--- Android instrumentation ---"
+              if [ -n "${instrument_pid:-}" ]; then
+                # Give the Android-side instrumentation bounded time to write
+                # its own failure/exception after the client disconnects.
+                for _ in $(seq 1 20); do
+                  if ! kill -0 "$instrument_pid" 2>/dev/null; then break; fi
+                  sleep 1
+                done
+              fi
               cat build/secure-wifi/instrumentation.log 2>/dev/null || true
               echo "--- TLS app/platform logcat ---"
               adb logcat -d -t 350 SecureWifiGate:I Conscrypt:V AndroidKeyStore:V '*:E' 2>/dev/null | tail -130 || true
             fi
           }
-          trap dump_android_failure EXIT
           "$ANDROID_HOME/emulator/emulator" -avd secure-wifi -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 > build/secure-wifi/emulator.log 2>&1 &
           emulator_pid=$!
-          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          # A second EXIT trap previously replaced dump_android_failure,
+          # hiding the Android-side exception behind OpenSSL EOF.
+          trap 'dump_android_failure; kill "$emulator_pid" 2>/dev/null || true' EXIT
           timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'
           adb install -r android/app/build/outputs/apk/debug/app-debug.apk
           adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk

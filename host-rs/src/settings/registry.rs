@@ -121,7 +121,11 @@ pub fn save(values: &BTreeMap<String, String>) -> crate::Result<()> {
         } else {
             None
         };
-        let stored_name = if name == "lanKey" { "lanKeyProtected" } else { name.as_str() };
+        let stored_name = if name == "lanKey" {
+            "lanKeyProtected"
+        } else {
+            name.as_str()
+        };
         let text = wide(protected.as_deref().unwrap_or(value));
         let number = if name == "rotation" {
             Some(value.parse::<u32>()?)
@@ -133,7 +137,8 @@ pub fn save(values: &BTreeMap<String, String>) -> crate::Result<()> {
         } else {
             (REG_SZ, text.as_ptr().cast(), (text.len() * 2) as u32)
         };
-        let code = unsafe { RegSetValueExW(key.0, wide(stored_name).as_ptr(), 0, kind, data, size) };
+        let code =
+            unsafe { RegSetValueExW(key.0, wide(stored_name).as_ptr(), 0, kind, data, size) };
         if code != ERROR_SUCCESS {
             return Err(std::io::Error::from_raw_os_error(code as i32).into());
         }
