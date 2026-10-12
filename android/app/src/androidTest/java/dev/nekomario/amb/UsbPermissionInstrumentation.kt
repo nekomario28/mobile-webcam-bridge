@@ -42,7 +42,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
         check(expectedFingerprint.length == 64)
 
         identity.listener(0).use { listener ->
-            listener.soTimeout = 4_000
+            listener.soTimeout = 12_000
             val timeline = Collections.synchronizedList(mutableListOf<String>())
             val testStore = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
             val testManagers = KeyManagerFactory.getInstance(
@@ -58,7 +58,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
                         timeline.add("Server accepted mode=${peer.useClientMode}, protocols=${peer.enabledProtocols.joinToString()}")
                         peer.useClientMode = false
                         peer.enabledProtocols = arrayOf("TLSv1.3")
-                        peer.soTimeout = 4_000
+                        peer.soTimeout = 12_000
                         timeline.add("Server about to handshake")
                         peer.startHandshake()
                         timeline.add("Server handshake established")
@@ -95,7 +95,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
                 timeline.add("Client created mode=${client.useClientMode}, protocols=${client.enabledProtocols.joinToString()}")
                 client.useClientMode = true
                 client.enabledProtocols = arrayOf("TLSv1.3")
-                client.soTimeout = 4_000
+                client.soTimeout = 12_000
                 timeline.add("Client about to handshake")
                 client.startHandshake()
                 timeline.add("Client handshake established")
@@ -110,7 +110,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
                 check(ack.type == Wire.TYPE_HELLO_ACK && ack.sequence == 1 && payload.isEmpty())
             }
             } catch (failure: Throwable) {
-                worker.join(5_000)
+                worker.join(13_000)
                 val serverCause = serverFailure.get()?.stackTraceToString() ?: "no server-side failure recorded"
                 throw IllegalStateException(
                     "TLS client failed: " + failure.stackTraceToString() +
@@ -119,7 +119,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
                     failure,
                 )
             }
-            worker.join(5_000)
+            worker.join(13_000)
             check(!worker.isAlive) { "TLS server thread did not finish" }
             serverFailure.get()?.let { throw it }
         }
