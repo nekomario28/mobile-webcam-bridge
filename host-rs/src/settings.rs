@@ -250,7 +250,18 @@ impl Store {
 #[cfg(unix)]
 fn read_file(path: &std::path::Path) -> crate::Result<String> {
     match std::fs::read_to_string(path) {
-        Ok(data) if data.len() <= 1024 * 1024 => Ok(data),
+        Ok(data) if data.len() <= 1024 * 1024 => {
+            use std::os::unix::fs::PermissionsExt;
+            // A legacy/external config may have been written as mode 0644.
+            // Never load a bearer token from a file readable by other users.
+            let contains_key = data.lines().any(|line| {
+                line.trim_start().starts_with("lanKey=")
+            });
+            if contains_key && std::fs::metadata(path)?.permissions().mode() & 0o077 != 0 {
+                return Err("Wi-Fi credentials are readable by other users; run chmod 600 on the settings file".into());
+            }
+            Ok(data)
+        },
         Ok(_) => Err("settings file exceeds 1 MiB".into()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(e) => Err(e.into()),
@@ -365,6 +376,21 @@ mod registry;
 mod tests {
     use super::*;
     #[cfg(unix)]
+    #[test]
+    fn refuses_world_readable_wifi_secret() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.conf");
+        std::fs::write(&path, "[General]\nlanKey=00112233445566778899aabbccddeeff\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(Store::at(path.clone()).load().is_err());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            Store::at(path).load().unwrap().lan_key,
+            "00112233445566778899aabbccddeeff"
+        );
+    }
+
     #[test]
     fn qt_fixture_unknown_keys_and_failed_save() {
         let dir = tempfile::tempdir().unwrap();

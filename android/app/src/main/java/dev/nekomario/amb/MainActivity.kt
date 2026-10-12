@@ -367,7 +367,10 @@ class MainActivity : Activity() {
             buildString {
                 append(ui("Phone IP\n", "スマホのIPアドレス\n"))
                 append(addresses.joinToString("\n"))
-                append(ui("\nEnter this IP on the PC and press Connect", "\nPCにこのIPを入力し「接続」を押す"))
+                append(ui(
+                    "\nTLS 1.3 is required. Tap Show pairing key to find the phone fingerprint and key for your PC.",
+                    "\nTLS 1.3必須。接続キーを表示し、PCで証明書の指紋と接続キーを入力してください。"
+                ))
                 if (!detail.isNullOrBlank()) append("\n").append(detail)
             },
         )

@@ -28,8 +28,9 @@ Setup.exe installs the virtual camera only.
 **Published v0.2.0 releases use plaintext Wi-Fi.** In this unreleased
 security branch, Wi-Fi is TLS 1.3-only and requires the correct pinned
 certificate and access key; it does not silently fall back to plaintext.
-The pairing key is currently stored in regular desktop settings, not an
-OS-protected credential vault. Treat the key as sensitive, and rotate it
+On Windows the access key is stored with per-user DPAPI protection. On Linux
+the settings file uses permissions 0600; secrets are not encrypted at rest.
+Treat the key as sensitive, and rotate it
 from the phone if exposed (this disconnects/revokes *all* paired PCs).
 Physical Android, Linux and Windows end-to-end acceptance is still pending.
 See [security and test boundaries](../docs/security.md).

@@ -40,9 +40,12 @@ on earlier supported Android releases.
 
 This first implementation still has limitations: a single bearer key is
 shared by any PCs that the owner provisions, so one lost key forces global
-rotation rather than per-PC revocation. Desktop settings store it in a
-user-private config file on Linux or per-user registry on Windows; a dedicated
-Windows DPAPI-protected credential store is not yet implemented. There is no
+rotation rather than per-PC revocation. Desktop settings now enforce mode 0600 for Linux files containing a Wi-Fi
+key and store the Windows credential as per-user DPAPI ciphertext in the
+registry. An earlier plain-text development-build registry value is read for
+migration and removed once the protected value is successfully saved.
+**Linux mode 0600 is access control, not encryption at rest**; application-
+level encryption or desktop Secret Service integration remains open. There is no
 client certificate or authenticated device label. The deprecated classic C++
 host cannot connect to the TLS-only Android Wi-Fi listener. A leaked pairing
 key alone does not defeat phone-certificate pinning, but it does authorize an

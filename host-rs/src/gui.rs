@@ -445,7 +445,12 @@ impl eframe::App for App {
                             State::Idle => "",
                             State::Connecting => self.text("Connecting…", "接続中…"),
                             State::Waiting => {
-                                if cfg!(windows) && matches!(&self.session.stats, Some(Event::Stats { decoded, active: false, .. }) if *decoded > 0) {
+                                if self.settings.transport == "lan" {
+                                    self.text(
+                                        "TLS 1.3 verified · Press Start camera on your phone",
+                                        "TLS 1.3で認証済み · スマホで「カメラ開始」を押してください",
+                                    )
+                                } else if cfg!(windows) && matches!(&self.session.stats, Some(Event::Stats { decoded, active: false, .. }) if *decoded > 0) {
                                     self.text("Select Mobile Webcam in your PC's camera app", "PCのカメラアプリでMobile Webcamを選択")
                             } else { self.text("Connected · Press Start camera on your phone", "接続済み · スマホで「カメラ開始」を押してください") }
                             },
