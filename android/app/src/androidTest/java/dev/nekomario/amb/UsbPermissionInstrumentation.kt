@@ -10,7 +10,14 @@ import android.content.IntentFilter
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
-import java.util.concurrent.LinkedBlockingQueue
+import java.net.InetAddress
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import java.util.concurrent.atomic.AtomicReference
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.X509TrustManagerimport java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /** Exercises the platform notification boundary without pretending a USB device is attached. */
@@ -18,6 +25,73 @@ class UsbPermissionInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         start()
+    }
+
+    private fun smokeSecureWifi(context: Context) {
+        val identity = SecureLanIdentity(context)
+        val stored = context.getSharedPreferences("secure_wifi", Context.MODE_PRIVATE)
+        check(!stored.contains("secret")) { "plaintext Wi-Fi credential remains on disk" }
+        check(stored.contains("encrypted_secret_v1")) { "encrypted Wi-Fi credential missing" }
+        check(SecureLanIdentity(context).pairingCode() == identity.pairingCode()) {
+            "Wi-Fi access key did not persist"
+        }
+        val expectedFingerprint = identity.fingerprint()
+        check(expectedFingerprint.length == 64)
+
+        identity.listener(0).use { listener ->
+            listener.soTimeout = 4_000
+            val serverFailure = AtomicReference<Throwable?>(null)
+            val worker = Thread {
+                try {
+                    (listener.accept() as SSLSocket).use { peer ->
+                        peer.soTimeout = 4_000
+                        peer.startHandshake()
+                        val (header, secret) = Wire.readFrame(peer.inputStream, 16)
+                        check(header.type == Wire.TYPE_HELLO && header.sequence == 1)
+                        check(MessageDigest.isEqual(
+                            secret,
+                            SecureLanIdentity.decodeHex(identity.pairingCode())
+                        ))
+                        Wire.writeFrame(
+                            peer.outputStream,
+                            Wire.Header(Wire.TYPE_HELLO_ACK, 0, 1, 0, 0),
+                            ByteArray(0)
+                        )
+                    }
+                } catch (failure: Throwable) {
+                    serverFailure.set(failure)
+                }
+            }
+            worker.start()
+
+            // This trust-all manager exists ONLY in the isolated loopback
+            // instrumentation client. Production Rust verifies the SHA-256 pin
+            // and TLS signature before sending a secret.
+            val testTrust = object : X509TrustManager {
+                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+                override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+                override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+            }
+            val tls = SSLContext.getInstance("TLS")
+            tls.init(null, arrayOf(testTrust), SecureRandom())
+            (tls.socketFactory.createSocket("127.0.0.1", listener.localPort) as SSLSocket).use { client ->
+                client.enabledProtocols = arrayOf("TLSv1.3")
+                client.soTimeout = 4_000
+                client.startHandshake()
+                val certificate = client.session.peerCertificates[0] as X509Certificate
+                val actual = MessageDigest.getInstance("SHA-256")
+                    .digest(certificate.encoded)
+                    .joinToString("") { "%02X".format(it.toInt() and 0xff) }
+                check(actual == expectedFingerprint) { "presented TLS certificate differs from phone display" }
+                val credential = SecureLanIdentity.decodeHex(identity.pairingCode())
+                Wire.writeFrame(client.outputStream, Wire.Header(Wire.TYPE_HELLO, 0, 1, 16, 0), credential)
+                val (ack, payload) = Wire.readFrame(client.inputStream, 0)
+                check(ack.type == Wire.TYPE_HELLO_ACK && ack.sequence == 1 && payload.isEmpty())
+            }
+            worker.join(5_000)
+            check(!worker.isAlive) { "TLS server thread did not finish" }
+            serverFailure.get()?.let { throw it }
+        }
     }
 
     override fun onStart() {
@@ -51,8 +125,9 @@ class UsbPermissionInstrumentation : Instrumentation() {
                     "USB request could be replayed"
                 }
             }
+            if (Build.VERSION.SDK_INT >= 29) smokeSecureWifi(context)
             finish(Activity.RESULT_OK, Bundle().apply {
-                putString("stream", "PASS USB permission callback: stale request cancellation, identity, immutable extras, one-shot delivery\n")
+                putString("stream", "PASS USB permission and Android Keystore TLS 1.3 loopback handshake\n")
             })
         } catch (error: Throwable) {
             finish(Activity.RESULT_CANCELED, Bundle().apply { putString("stream", "FAIL: $error\n") })
