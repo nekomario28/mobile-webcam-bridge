@@ -13,8 +13,11 @@ import android.os.Bundle
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.Collections
 import java.util.concurrent.atomic.AtomicReference
+import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
+import javax.net.ssl.X509KeyManager
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 import java.util.concurrent.LinkedBlockingQueue
@@ -40,12 +43,25 @@ class UsbPermissionInstrumentation : Instrumentation() {
 
         identity.listener(0).use { listener ->
             listener.soTimeout = 4_000
+            val timeline = Collections.synchronizedList(mutableListOf<String>())
+            val testStore = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            val testManagers = KeyManagerFactory.getInstance(
+                KeyManagerFactory.getDefaultAlgorithm()
+            ).apply { init(testStore, null) }
+            val aliases = testManagers.keyManagers.filterIsInstance<X509KeyManager>()
+                .map { it.chooseServerAlias("EC", null, null) ?: "none" }
+            timeline.add("KeyManagers EC aliases=$aliases; listener clientMode=${listener.useClientMode}")
             val serverFailure = AtomicReference<Throwable?>(null)
             val worker = Thread {
                 try {
                     (listener.accept() as SSLSocket).use { peer ->
+                        timeline.add("Server accepted mode=${peer.useClientMode}, protocols=${peer.enabledProtocols.joinToString()}")
+                        peer.useClientMode = false
+                        peer.enabledProtocols = arrayOf("TLSv1.3")
                         peer.soTimeout = 4_000
+                        timeline.add("Server about to handshake")
                         peer.startHandshake()
+                        timeline.add("Server handshake established")
                         val (header, secret) = Wire.readFrame(peer.inputStream, 16)
                         check(header.type == Wire.TYPE_HELLO && header.sequence == 1)
                         check(MessageDigest.isEqual(
@@ -76,9 +92,13 @@ class UsbPermissionInstrumentation : Instrumentation() {
             tls.init(null, arrayOf(testTrust), SecureRandom())
             try {
                 (tls.socketFactory.createSocket("127.0.0.1", listener.localPort) as SSLSocket).use { client ->
+                timeline.add("Client created mode=${client.useClientMode}, protocols=${client.enabledProtocols.joinToString()}")
+                client.useClientMode = true
                 client.enabledProtocols = arrayOf("TLSv1.3")
                 client.soTimeout = 4_000
+                timeline.add("Client about to handshake")
                 client.startHandshake()
+                timeline.add("Client handshake established")
                 val certificate = client.session.peerCertificates[0] as X509Certificate
                 val actual = MessageDigest.getInstance("SHA-256")
                     .digest(certificate.encoded)
@@ -94,7 +114,8 @@ class UsbPermissionInstrumentation : Instrumentation() {
                 val serverCause = serverFailure.get()?.stackTraceToString() ?: "no server-side failure recorded"
                 throw IllegalStateException(
                     "TLS client failed: " + failure.stackTraceToString() +
-                    "\nServer result: " + serverCause,
+                    "\nServer result: " + serverCause +
+                    "\nHandshake timeline: " + timeline.joinToString("; "),
                     failure,
                 )
             }

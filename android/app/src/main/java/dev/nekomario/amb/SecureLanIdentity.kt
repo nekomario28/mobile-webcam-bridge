@@ -99,6 +99,7 @@ class SecureLanIdentity(context: Context) {
         tls.init(manager.keyManagers, null, SecureRandom())
         return (tls.serverSocketFactory.createServerSocket(port) as SSLServerSocket).apply {
             enabledProtocols = arrayOf("TLSv1.3")
+            useClientMode = false
             reuseAddress = true
         }
     }

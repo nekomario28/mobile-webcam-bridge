@@ -200,6 +200,7 @@ class LanServer(
     private fun authenticate(socket: SSLSocket) {
         socket.tcpNoDelay = true
         socket.keepAlive = true
+        socket.useClientMode = false
         socket.enabledProtocols = arrayOf("TLSv1.3")
         socket.soTimeout = HANDSHAKE_TIMEOUT_MS.toInt()
         socket.startHandshake()
