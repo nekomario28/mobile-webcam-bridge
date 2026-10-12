@@ -56,3 +56,18 @@ compromise and traffic metadata remain out of scope of TLS guarantees.
 devices, Linux and Windows end-to-end consumer frames, incorrect pin, incorrect
 key, MITM substitution, revocation during streaming, stalled TLS handshake,
 and USB regression. No security claim is established by build-only CI.
+
+
+### External Rust security controls
+
+The Rust Wi-Fi client uses **rustls** for the TLS 1.3 record layer and handshake.
+GitHub Actions `rust-dependency-security` audits the committed
+`host-rs/Cargo.lock` using a pinned release of **RustSec cargo-audit** on
+lockfile changes and weekly. This detects published third-party crate
+advisories; it does not prove the pairing protocol or native FFmpeg/Android
+runtime is safe. Treat findings as actionable; don't add blanket ignores.
+
+The Android Keystore TLS signing identity uses alias v2 and authorizes
+`DIGEST_NONE` alongside `DIGEST_SHA256`: Android's TLS implementation
+signs a pre-digested transcript. Clients paired with the earlier development
+v1 certificate must compare and re-pin the new certificate fingerprint.
