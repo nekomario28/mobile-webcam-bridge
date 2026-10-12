@@ -3,6 +3,10 @@
 Use an Android phone as a webcam over USB or Wi-Fi. English/Japanese follows
 the system language. Your PC remembers the phone address and settings.
 
+**Wi-Fi security:** Wi-Fi streaming is currently **unauthenticated and unencrypted**.
+Use it only on a private, trusted local network. Do not expose TCP port 48527
+to the Internet or untrusted clients. [Security details](docs/security.md).
+
 [Download](https://github.com/nekomario28/mobile-webcam-bridge/releases/latest)
 the Android APK and the desktop app for your OS.
 
