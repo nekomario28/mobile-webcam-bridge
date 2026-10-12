@@ -303,10 +303,10 @@ impl eframe::App for App {
                                         .hint_text("32 hexadecimal characters")
                                         .desired_width(f32::INFINITY),
                                 );
-                                let valid_fingerprint = self.settings.lan_fingerprint.len() == 64
-                                    && self.settings.lan_fingerprint.bytes().all(|c| c.is_ascii_hexdigit());
-                                let valid_key = self.settings.lan_key.len() == 32
-                                    && self.settings.lan_key.bytes().all(|c| c.is_ascii_hexdigit());
+                                let valid_fingerprint =
+                                    crate::secure::is_hex(&self.settings.lan_fingerprint, 32);
+                                let valid_key =
+                                    crate::secure::is_hex(&self.settings.lan_key, 16);
                                 if !valid_fingerprint || !valid_key {
                                     ui.colored_label(
                                         egui::Color32::YELLOW,
@@ -425,10 +425,8 @@ impl eframe::App for App {
                         let allowed = running
                             || self.settings.transport == "lan"
                                 && !self.settings.lan_host.trim().is_empty()
-                                && self.settings.lan_fingerprint.len() == 64
-                                && self.settings.lan_fingerprint.bytes().all(|c| c.is_ascii_hexdigit())
-                                && self.settings.lan_key.len() == 32
-                                && self.settings.lan_key.bytes().all(|c| c.is_ascii_hexdigit())
+                                && crate::secure::is_hex(&self.settings.lan_fingerprint, 32)
+                                && crate::secure::is_hex(&self.settings.lan_key, 16)
                             || self.settings.transport == "usb"
                                 && self.selected.is_some()
                                 && !self.selection_lost;

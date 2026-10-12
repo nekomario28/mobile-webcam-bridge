@@ -1,41 +1,18 @@
 //! Negative-path TLS tests: mismatched fingerprints and unauthorized access
 //! must never complete AMB1 pairing or silently downgrade to plaintext.
+mod common;
+
+use common::{ACCESS_KEY, PHONE_SHA256, accept_phone};
 use mobile_webcam::secure::SecureTcp;
-use rustls::{
-    ServerConfig, ServerConnection, StreamOwned,
-    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
-};
 use std::{
     io::{Read, Write},
     net::TcpListener,
-    sync::Arc,
     thread,
     time::Duration,
 };
 
-const PHONE_SHA256: &str = "5331e886b4b4a360fb7ae16a0afc15791c595354a3c9bf329bf8b4a3eef25a25";
-const ACCESS_KEY: &str = "00112233445566778899aabbccddeeff";
-
 fn server(listener: TcpListener, allow: bool) {
-    let (socket, _) = listener.accept().expect("accept");
-    socket
-        .set_read_timeout(Some(Duration::from_secs(4)))
-        .unwrap();
-    socket
-        .set_write_timeout(Some(Duration::from_secs(4)))
-        .unwrap();
-    let cert = CertificateDer::from(include_bytes!("fixtures/test-phone-cert.der").to_vec());
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-        include_bytes!("fixtures/test-phone-key.der").to_vec(),
-    ));
-    let config =
-        ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_no_client_auth()
-            .with_single_cert(vec![cert], key)
-            .unwrap();
-    let mut tls = StreamOwned::new(ServerConnection::new(Arc::new(config)).unwrap(), socket);
+    let mut tls = accept_phone(listener);
     let mut header = [0u8; 24];
     // With an incorrect server pin the client aborts during the TLS handshake.
     if tls.read_exact(&mut header).is_err() {

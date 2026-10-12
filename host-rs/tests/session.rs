@@ -1,13 +1,11 @@
 #![cfg(all(feature = "gui", feature = "video", any(target_os = "linux", windows)))]
+mod common;
+
+use common::{ACCESS_KEY, PHONE_SHA256, accept_phone};
 use mobile_webcam::{
     session::{Session, State},
     settings::Settings,
 };
-use rustls::{
-    ServerConfig, ServerConnection, StreamOwned,
-    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
-};
-use std::sync::Arc;
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
@@ -16,39 +14,19 @@ use std::{
     time::{Duration, Instant},
 };
 
-const PHONE_SHA256: &str = "5331e886b4b4a360fb7ae16a0afc15791c595354a3c9bf329bf8b4a3eef25a25";
-const PAIRING_KEY: &str = "00112233445566778899aabbccddeeff";
-
 fn paired_settings() -> Settings {
     Settings {
         transport: "lan".into(),
         lan_host: "127.0.0.1".into(),
         lan_fingerprint: PHONE_SHA256.into(),
-        lan_key: PAIRING_KEY.into(),
+        lan_key: ACCESS_KEY.into(),
         decode: "off".into(),
         ..Default::default()
     }
 }
 
 fn peer(listener: TcpListener) {
-    let (socket, _) = listener.accept().unwrap();
-    socket
-        .set_read_timeout(Some(Duration::from_secs(4)))
-        .unwrap();
-    let cert = CertificateDer::from(include_bytes!("fixtures/test-phone-cert.der").to_vec());
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-        include_bytes!("fixtures/test-phone-key.der").to_vec(),
-    ));
-    // Test-only fixture identity. Never ship private fixtures as real device identities.
-    let config =
-        ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_no_client_auth()
-            .with_single_cert(vec![cert], key)
-            .unwrap();
-    let connection = ServerConnection::new(Arc::new(config)).unwrap();
-    let mut socket = StreamOwned::new(connection, socket);
+    let mut socket = accept_phone(listener);
     let mut header = [0; 24];
     socket.read_exact(&mut header).unwrap();
     assert_eq!(header[5], 1);
@@ -58,7 +36,7 @@ fn peer(listener: TcpListener) {
     socket.read_exact(&mut token).unwrap();
     assert_eq!(
         token.as_slice(),
-        &mobile_webcam::secure::parse_hex(PAIRING_KEY, 16).unwrap()
+        &mobile_webcam::secure::parse_hex(ACCESS_KEY, 16).unwrap()
     );
     header[5] = 2;
     header[12..16].copy_from_slice(&0u32.to_le_bytes());

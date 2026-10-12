@@ -1,3 +1,6 @@
+//! AMB1 transports. Every connection speaks the same frame contract; the
+//! socket framing, deadline handling and pairing exchange are owned here once
+//! and shared by every `TcpStream`-backed transport.
 use crate::wire::{self, Frame, Header};
 use std::{
     io::{self, Read, Write},
@@ -5,98 +8,173 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// A bidirectional AMB1 conversation.
 pub trait Transport {
     fn receive(&mut self, timeout: Duration) -> crate::Result<Frame>;
     fn send(&mut self, frame: &Frame, timeout: Duration) -> crate::Result<()>;
 }
 
-pub struct Tcp(pub TcpStream);
+/// A byte stream that is both readable and writable; every socket transport
+/// provides one.
+pub trait ByteStream: Read + Write {}
+impl<S: Read + Write> ByteStream for S {}
 
-fn remaining(deadline: Instant) -> io::Result<Duration> {
+/// A `Transport` whose bytes flow through a `TcpStream`, optionally beneath a
+/// security layer. Owns the shared framing, deadline handling and pairing
+/// exchange; a socket transport only names its socket and its byte stream.
+pub trait SocketTransport {
+    /// The raw socket; read/write deadlines are enforced on it.
+    fn socket(&mut self) -> &mut TcpStream;
+    /// The byte stream AMB1 sees: raw TCP, or TLS over the same socket.
+    fn stream(&mut self) -> &mut dyn ByteStream;
+
+    fn receive(&mut self, timeout: Duration) -> crate::Result<Frame> {
+        let mut header = [0; wire::HEADER_SIZE];
+        self.read_exact(&mut header, timeout)?;
+        let header = Header::decode(&header)?;
+        let mut payload = vec![0; header.payload_len as usize];
+        self.read_exact(&mut payload, timeout)?;
+        Ok(Frame { header, payload })
+    }
+
+    fn send(&mut self, frame: &Frame, timeout: Duration) -> crate::Result<()> {
+        frame.validate()?;
+        let deadline = Instant::now() + timeout;
+        let header = frame.header.encode()?;
+        for bytes in [header.as_slice(), frame.payload.as_slice()] {
+            let mut offset = 0;
+            while offset < bytes.len() {
+                self.socket()
+                    .set_write_timeout(Some(remaining(deadline)?))?;
+                match self.stream().write(&bytes[offset..]) {
+                    Ok(0) => return Err("transport made no write progress".into()),
+                    Ok(count) => offset += count,
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        self.stream().flush()?;
+        Ok(())
+    }
+
+    /// Read exactly `bytes.len()` bytes; partial reads never extend the
+    /// deadline. A closed peer is an error, not a short read.
+    fn read_exact(&mut self, bytes: &mut [u8], timeout: Duration) -> io::Result<()> {
+        let deadline = Instant::now() + timeout;
+        let mut offset = 0;
+        while offset < bytes.len() {
+            self.socket().set_read_timeout(Some(remaining(deadline)?))?;
+            match self.stream().read(&mut bytes[offset..]) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "peer disconnected",
+                    ));
+                }
+                Ok(count) => offset += count,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
+    /// AMB1 pairing: HELLO carrying an optional credential, completed only by
+    /// an empty HELLO_ACK with sequence 1.
+    fn pair(&mut self, credential: Vec<u8>, timeout: Duration) -> crate::Result<()> {
+        self.send(&Frame::new(wire::HELLO, 1, credential)?, timeout)?;
+        let ack = self.receive(timeout)?;
+        if ack.header.kind != wire::HELLO_ACK || ack.header.sequence != 1 || !ack.payload.is_empty()
+        {
+            return Err("pairing was not authorized".into());
+        }
+        Ok(())
+    }
+}
+
+impl<T: SocketTransport> Transport for T {
+    fn receive(&mut self, timeout: Duration) -> crate::Result<Frame> {
+        SocketTransport::receive(self, timeout)
+    }
+    fn send(&mut self, frame: &Frame, timeout: Duration) -> crate::Result<()> {
+        SocketTransport::send(self, frame, timeout)
+    }
+}
+
+/// Time left on a deadline, never zero: some USB stacks read a zero timeout
+/// as "wait forever".
+pub(crate) fn remaining(deadline: Instant) -> io::Result<Duration> {
     deadline
         .checked_duration_since(Instant::now())
-        .filter(|d| !d.is_zero())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "TCP deadline expired"))
+        .filter(|duration| !duration.is_zero())
+        .map(|duration| duration.max(Duration::from_millis(1)))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "deadline expired"))
+}
+
+/// Resolve a host to candidate addresses; a literal address is used as-is.
+pub(crate) fn resolve(host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
+    let host = host.trim();
+    if host.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "enter an IP address",
+        ));
+    }
+    match host.parse::<SocketAddr>() {
+        Ok(address) => Ok(vec![address]),
+        Err(_) => Ok((host, port).to_socket_addrs()?.collect()),
+    }
+}
+
+/// Try every resolved address within one shared deadline. `attempt` receives
+/// the connected socket and that deadline; the first attempt that connects
+/// and pairs wins, otherwise the last error is reported.
+pub(crate) fn dial<T>(
+    host: &str,
+    port: u16,
+    timeout: Duration,
+    mut attempt: impl FnMut(TcpStream, Instant) -> crate::Result<T>,
+) -> crate::Result<T> {
+    let deadline = Instant::now() + timeout;
+    let mut last: Box<dyn std::error::Error + Send + Sync> = "no addresses".into();
+    for address in resolve(host, port)? {
+        let socket = match TcpStream::connect_timeout(&address, remaining(deadline)?) {
+            Ok(socket) => socket,
+            Err(error) => {
+                last = Box::new(error);
+                continue;
+            }
+        };
+        match attempt(socket, deadline) {
+            Ok(connected) => return Ok(connected),
+            Err(error) => last = error,
+        }
+    }
+    Err(last)
+}
+
+/// Plaintext AMB1 over TCP. Production Wi-Fi always uses the TLS transport;
+/// this remains the framing test surface without certificate fixtures.
+pub struct Tcp(pub TcpStream);
+
+impl SocketTransport for Tcp {
+    fn socket(&mut self) -> &mut TcpStream {
+        &mut self.0
+    }
+    fn stream(&mut self) -> &mut dyn ByteStream {
+        &mut self.0
+    }
 }
 
 impl Tcp {
     pub fn connect(host: &str, port: u16, timeout: Duration) -> crate::Result<Self> {
-        if host.trim().is_empty() {
-            return Err("enter an IP address".into());
-        }
-        let addresses: Vec<_> = match host.trim().parse::<SocketAddr>() {
-            Ok(address) => vec![address],
-            Err(_) => (host.trim(), port).to_socket_addrs()?.collect(),
-        };
-        let deadline = Instant::now() + timeout;
-        let mut last = io::Error::new(io::ErrorKind::AddrNotAvailable, "no TCP addresses");
-        for address in addresses {
-            match TcpStream::connect_timeout(&address, remaining(deadline)?) {
-                Ok(stream) => {
-                    stream.set_nodelay(true)?;
-                    let mut tcp = Self(stream);
-                    tcp.send(&Frame::new(wire::HELLO, 1, Vec::new())?, timeout)?;
-                    let ack = tcp.receive(timeout)?;
-                    if ack.header.kind != wire::HELLO_ACK
-                        || ack.header.sequence != 1
-                        || !ack.payload.is_empty()
-                    {
-                        return Err("invalid HELLO_ACK".into());
-                    }
-                    return Ok(tcp);
-                }
-                Err(error) => last = error,
-            }
-        }
-        Err(last.into())
-    }
-
-    fn read_exact_deadline(&mut self, bytes: &mut [u8], timeout: Duration) -> io::Result<()> {
-        let deadline = Instant::now() + timeout;
-        let mut offset = 0;
-        while offset < bytes.len() {
-            self.0.set_read_timeout(Some(remaining(deadline)?))?;
-            match self.0.read(&mut bytes[offset..]) {
-                Ok(0) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "TCP peer disconnected",
-                    ));
-                }
-                Ok(n) => offset += n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Transport for Tcp {
-    fn receive(&mut self, timeout: Duration) -> crate::Result<Frame> {
-        let mut bytes = [0; wire::HEADER_SIZE];
-        self.read_exact_deadline(&mut bytes, timeout)?;
-        let header = Header::decode(&bytes)?;
-        let mut payload = vec![0; header.payload_len as usize];
-        self.read_exact_deadline(&mut payload, timeout)?;
-        Ok(Frame { header, payload })
-    }
-    fn send(&mut self, frame: &Frame, timeout: Duration) -> crate::Result<()> {
-        frame.validate()?;
-        let deadline = Instant::now() + timeout;
-        for bytes in [frame.header.encode()?.as_slice(), frame.payload.as_slice()] {
-            let mut offset = 0;
-            while offset < bytes.len() {
-                self.0.set_write_timeout(Some(remaining(deadline)?))?;
-                match self.0.write(&bytes[offset..]) {
-                    Ok(0) => return Err("TCP write made no progress".into()),
-                    Ok(n) => offset += n,
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                    Err(e) => return Err(e.into()),
-                }
-            }
-        }
-        Ok(())
+        dial(host, port, timeout, |socket, _| {
+            socket.set_nodelay(true)?;
+            let mut tcp = Self(socket);
+            tcp.pair(Vec::new(), timeout)?;
+            Ok(tcp)
+        })
     }
 }
 
@@ -111,9 +189,10 @@ mod tests {
         let peer = thread::spawn(move || {
             let (socket, _) = listener.accept().unwrap();
             let mut tcp = Tcp(socket);
-            let hello = tcp.receive(Duration::from_secs(2)).unwrap();
+            let hello = Transport::receive(&mut tcp, Duration::from_secs(2)).unwrap();
             assert_eq!(hello.header.kind, wire::HELLO);
-            tcp.send(
+            Transport::send(
+                &mut tcp,
                 &Frame::new(wire::HELLO_ACK, hello.header.sequence, Vec::new()).unwrap(),
                 Duration::from_secs(2),
             )
@@ -151,7 +230,7 @@ mod tests {
         });
         let mut tcp = Tcp::connect("127.0.0.1", port, Duration::from_secs(2)).unwrap();
         assert!(
-            tcp.receive(Duration::from_secs(2))
+            Transport::receive(&mut tcp, Duration::from_secs(2))
                 .unwrap_err()
                 .to_string()
                 .contains("disconnected")
@@ -170,7 +249,7 @@ mod tests {
             }
         });
         let started = Instant::now();
-        assert!(client.receive(Duration::from_millis(75)).is_err());
+        assert!(Transport::receive(&mut client, Duration::from_millis(75)).is_err());
         assert!(started.elapsed() < Duration::from_millis(130));
         peer.join().unwrap();
     }

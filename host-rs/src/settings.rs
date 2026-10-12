@@ -58,10 +58,8 @@ impl Settings {
         if !["usb", "lan"].contains(&self.transport.as_str()) {
             return Err("invalid transport".into());
         }
-        for (value, size) in [(&self.lan_fingerprint, 64), (&self.lan_key, 32)] {
-            if !value.is_empty()
-                && (value.len() != size || !value.bytes().all(|c| c.is_ascii_hexdigit()))
-            {
+        for (value, bytes) in [(&self.lan_fingerprint, 32), (&self.lan_key, 16)] {
+            if !value.is_empty() && !crate::secure::is_hex(value, bytes) {
                 return Err("invalid Wi-Fi pairing fingerprint or key".into());
             }
         }

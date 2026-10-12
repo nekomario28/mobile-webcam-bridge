@@ -2,10 +2,7 @@
 //! TLS 1.3 uses a fingerprint pinned from the phone screen, then presents a
 //! 128-bit random per-installation credential inside the encrypted channel.
 //! No code path attempts plaintext after a handshake failure.
-use crate::{
-    transport::Transport,
-    wire::{self, Frame, Header},
-};
+use crate::transport::{self, ByteStream, SocketTransport};
 use rustls::{
     ClientConfig, ClientConnection, DigitallySignedStruct, Error, SignatureScheme, StreamOwned,
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
@@ -13,12 +10,7 @@ use rustls::{
     pki_types::{CertificateDer, ServerName, UnixTime},
 };
 use sha2::{Digest, Sha256};
-use std::{
-    io::{self, Read, Write},
-    net::{SocketAddr, TcpStream, ToSocketAddrs},
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{net::TcpStream, sync::Arc, time::Duration};
 
 #[derive(Debug)]
 struct PinnedCertificate {
@@ -80,17 +72,13 @@ impl ServerCertVerifier for PinnedCertificate {
     }
 }
 
-pub struct SecureTcp(StreamOwned<ClientConnection, TcpStream>);
-
-fn remaining(deadline: Instant) -> io::Result<Duration> {
-    deadline
-        .checked_duration_since(Instant::now())
-        .filter(|d| !d.is_zero())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "TLS deadline exceeded"))
+/// A pairing credential is exactly `bytes * 2` ASCII hex digits.
+pub fn is_hex(value: &str, bytes: usize) -> bool {
+    value.len() == bytes * 2 && value.bytes().all(|c| c.is_ascii_hexdigit())
 }
 
 pub fn parse_hex(value: &str, bytes: usize) -> crate::Result<Vec<u8>> {
-    if value.len() != bytes * 2 || !value.bytes().all(|c| c.is_ascii_hexdigit()) {
+    if !is_hex(value, bytes) {
         return Err("Wi-Fi pairing fingerprint or key is missing/invalid".into());
     }
     value
@@ -100,6 +88,17 @@ pub fn parse_hex(value: &str, bytes: usize) -> crate::Result<Vec<u8>> {
         .iter()
         .map(|pair| Ok(u8::from_str_radix(std::str::from_utf8(pair)?, 16)?))
         .collect()
+}
+
+pub struct SecureTcp(StreamOwned<ClientConnection, TcpStream>);
+
+impl SocketTransport for SecureTcp {
+    fn socket(&mut self) -> &mut TcpStream {
+        &mut self.0.sock
+    }
+    fn stream(&mut self) -> &mut dyn ByteStream {
+        &mut self.0
+    }
 }
 
 impl SecureTcp {
@@ -114,9 +113,6 @@ impl SecureTcp {
             .try_into()
             .map_err(|_| "invalid phone certificate fingerprint")?;
         let credential = parse_hex(key, 16)?;
-        if host.trim().is_empty() {
-            return Err("enter a phone IP address".into());
-        }
 
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let config = ClientConfig::builder_with_provider(provider.clone())
@@ -129,101 +125,19 @@ impl SecureTcp {
             .with_no_client_auth();
         // Identity is established by the pinned certificate, not by DNS.
         let server_name = ServerName::try_from("mobile-webcam.local")?.to_owned();
-        let addresses: Vec<SocketAddr> = match host.trim().parse::<SocketAddr>() {
-            Ok(addr) => vec![addr],
-            Err(_) => (host.trim(), port).to_socket_addrs()?.collect(),
-        };
-        let deadline = Instant::now() + timeout;
-        let mut last: Box<dyn std::error::Error + Send + Sync> = "no phone address".into();
-        for address in addresses {
-            let raw = match TcpStream::connect_timeout(&address, remaining(deadline)?) {
-                Ok(s) => s,
-                Err(e) => {
-                    last = Box::new(e);
-                    continue;
-                }
-            };
-            raw.set_nodelay(true)?;
+        transport::dial(host, port, timeout, |socket, deadline| {
+            socket.set_nodelay(true)?;
             let client = ClientConnection::new(Arc::new(config.clone()), server_name.clone())?;
-            let mut tls = StreamOwned::new(client, raw);
-            let attempt = (|| -> crate::Result<Self> {
-                while tls.conn.is_handshaking() {
-                    let left = remaining(deadline)?;
-                    tls.sock.set_read_timeout(Some(left))?;
-                    tls.sock.set_write_timeout(Some(left))?;
-                    tls.conn.complete_io(&mut tls.sock)?;
-                }
-                let mut secure = Self(tls);
-                secure.send(
-                    &Frame::new(wire::HELLO, 1, credential.clone())?,
-                    remaining(deadline)?,
-                )?;
-                let ack = secure.receive(remaining(deadline)?)?;
-                if ack.header.kind != wire::HELLO_ACK
-                    || ack.header.sequence != 1
-                    || !ack.payload.is_empty()
-                {
-                    return Err("Wi-Fi pairing was not authorized".into());
-                }
-                Ok(secure)
-            })();
-            match attempt {
-                Ok(secure) => return Ok(secure),
-                Err(e) => last = e,
+            let mut secure = Self(StreamOwned::new(client, socket));
+            while secure.0.conn.is_handshaking() {
+                let left = transport::remaining(deadline)?;
+                secure.0.sock.set_read_timeout(Some(left))?;
+                secure.0.sock.set_write_timeout(Some(left))?;
+                secure.0.conn.complete_io(&mut secure.0.sock)?;
             }
-        }
-        Err(last)
-    }
-
-    fn read_exact_deadline(&mut self, bytes: &mut [u8], timeout: Duration) -> io::Result<()> {
-        let deadline = Instant::now() + timeout;
-        let mut offset = 0;
-        while offset < bytes.len() {
-            self.0.sock.set_read_timeout(Some(remaining(deadline)?))?;
-            match self.0.read(&mut bytes[offset..]) {
-                Ok(0) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "TLS peer closed",
-                    ));
-                }
-                Ok(n) => offset += n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Transport for SecureTcp {
-    fn receive(&mut self, timeout: Duration) -> crate::Result<Frame> {
-        let mut bytes = [0; wire::HEADER_SIZE];
-        self.read_exact_deadline(&mut bytes, timeout)?;
-        let header = Header::decode(&bytes)?;
-        let mut payload = vec![0; header.payload_len as usize];
-        self.read_exact_deadline(&mut payload, timeout)?;
-        Ok(Frame { header, payload })
-    }
-
-    fn send(&mut self, frame: &Frame, timeout: Duration) -> crate::Result<()> {
-        frame.validate()?;
-        let deadline = Instant::now() + timeout;
-        let header = frame.header.encode()?;
-        for bytes in [header.as_slice(), frame.payload.as_slice()] {
-            let mut offset = 0;
-            while offset < bytes.len() {
-                self.0.sock.set_write_timeout(Some(remaining(deadline)?))?;
-                match self.0.write(&bytes[offset..]) {
-                    Ok(0) => return Err("TLS write made no progress".into()),
-                    Ok(n) => offset += n,
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                    Err(e) => return Err(e.into()),
-                }
-            }
-        }
-        self.0.flush()?;
-        Ok(())
+            secure.pair(credential.clone(), transport::remaining(deadline)?)?;
+            Ok(secure)
+        })
     }
 }
 
