@@ -49,6 +49,7 @@ struct App {
     usb_thread: std::thread::Thread,
     usb_events: mpsc::Receiver<crate::Result<Vec<Candidate>>>,
     usb_error: Option<String>,
+    confirm_forget_phone: bool,
     #[cfg(feature = "capture")]
     capture_requested: bool,
 }
@@ -147,6 +148,7 @@ impl App {
             usb_thread: inventory.thread().clone(),
             usb_events: receiver,
             usb_error: None,
+            confirm_forget_phone: false,
             #[cfg(feature = "capture")]
             capture_requested: false,
         }
@@ -318,6 +320,37 @@ impl eframe::App for App {
                                     "Wi-Fi requires TLS 1.3. No plaintext fallback.",
                                     "Wi-FiはTLS 1.3必須。平文接続への切替なし。",
                                 ));
+                                if !self.session.running()
+                                    && (!self.settings.lan_key.is_empty()
+                                        || !self.settings.lan_fingerprint.is_empty())
+                                {
+                                    if self.confirm_forget_phone {
+                                        ui.horizontal(|ui| {
+                                            ui.label(self.text(
+                                                "Remove stored pairing details?",
+                                                "保存したペアリング情報を削除しますか？",
+                                            ));
+                                            if ui.button(self.text("Remove", "削除")).clicked() {
+                                                self.settings.lan_host.clear();
+                                                self.settings.lan_fingerprint.clear();
+                                                self.settings.lan_key.clear();
+                                                self.confirm_forget_phone = false;
+                                                self.save();
+                                            }
+                                            if ui.button(self.text("Cancel", "キャンセル")).clicked() {
+                                                self.confirm_forget_phone = false;
+                                            }
+                                        });
+                                    } else if ui
+                                        .small_button(self.text(
+                                            "Forget paired phone",
+                                            "登録済みスマホの情報を削除",
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.confirm_forget_phone = true;
+                                    }
+                                }
                             } else {
                                 if matches!(self.session.state, State::Idle) {
                                     ui.label(self.text(
