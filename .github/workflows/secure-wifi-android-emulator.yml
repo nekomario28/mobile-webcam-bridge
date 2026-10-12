@@ -50,8 +50,59 @@ jobs:
           timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'
           adb install -r android/app/build/outputs/apk/debug/app-debug.apk
           adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-          adb shell am instrument -w dev.nekomario.amb.test/dev.nekomario.amb.UsbPermissionInstrumentation | tee build/secure-wifi/instrumentation.log
-          grep -q "PASS USB permission and Android Keystore TLS 1.3 loopback handshake" build/secure-wifi/instrumentation.log
+          # ADB forwards the Linux runner's TCP connection to the emulator's
+          # real Android SSLServerSocket; this does not exercise another
+          # Android Conscrypt client inside the same instrumentation process.
+          adb logcat -c
+          adb forward tcp:48527 tcp:48527
+          adb shell am instrument -w dev.nekomario.amb.test/dev.nekomario.amb.UsbPermissionInstrumentation > build/secure-wifi/instrumentation.log 2>&1 &
+          instrument_pid=$!
+          phone_pin=""
+          for i in $(seq 1 45); do
+            phone_pin="$(adb logcat -d -s SecureWifiGate:I 2>/dev/null | grep -oE 'READY SHA256=[A-F0-9]{64}' | tail -1 | cut -d= -f2 || true)"
+            if [ -n "$phone_pin" ]; then break; fi
+            if ! kill -0 "$instrument_pid" 2>/dev/null; then
+              cat build/secure-wifi/instrumentation.log
+              echo "Instrumentation exited before starting the TLS listener" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          test -n "$phone_pin"
+          export PHONE_SHA256="$phone_pin"
+          python3 - <<'PY_TLS'
+          import hashlib, os, socket, ssl, struct
+          context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+          context.check_hostname = False
+          context.verify_mode = ssl.CERT_NONE  # TEST CLIENT ONLY: pin is checked explicitly below
+          context.minimum_version = ssl.TLSVersion.TLSv1_3
+          context.maximum_version = ssl.TLSVersion.TLSv1_3
+          def receive_exact(connection, count):
+              output = bytearray()
+              while len(output) < count:
+                  chunk = connection.recv(count - len(output))
+                  if not chunk:
+                      raise RuntimeError("TLS peer closed before sending authenticated ACK")
+                  output.extend(chunk)
+              return bytes(output)
+          with socket.create_connection(("127.0.0.1", 48527), timeout=6) as raw:
+              with context.wrap_socket(raw, server_hostname="mobile-webcam.local") as connection:
+                  connection.settimeout(6)
+                  assert connection.version() == "TLSv1.3", connection.version()
+                  actual = hashlib.sha256(connection.getpeercert(binary_form=True)).hexdigest().upper()
+                  assert actual == os.environ["PHONE_SHA256"], "Android certificate does not match screen fingerprint"
+                  header = struct.pack("<4sBBHIIQ", b"AMB1", 1, 1, 0, 1, 16, 0)
+                  assert len(header) == 24
+                  connection.sendall(header + bytes.fromhex("00112233445566778899aabbccddeeff"))
+                  magic, version, kind, flags, sequence, length, timestamp = struct.unpack(
+                      "<4sBBHIIQ", receive_exact(connection, 24))
+                  assert (magic, version, kind, flags, sequence, length, timestamp) == (
+                      b"AMB1", 1, 2, 0, 1, 0, 0)
+          print("PASS external TLS 1.3 client, pinned Android Keystore certificate and AMB1 response")
+          PY_TLS
+          wait "$instrument_pid"
+          cat build/secure-wifi/instrumentation.log
+          grep -q "PASS USB permission and Android Keystore TLS 1.3 host handshake" build/secure-wifi/instrumentation.log
           grep -q "INSTRUMENTATION_CODE: -1" build/secure-wifi/instrumentation.log
       - name: Upload emulator diagnostics
         if: always()

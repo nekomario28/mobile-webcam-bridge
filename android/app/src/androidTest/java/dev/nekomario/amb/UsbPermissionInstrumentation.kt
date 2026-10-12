@@ -92,7 +92,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
             }
             if (Build.VERSION.SDK_INT >= 29) smokeSecureWifi(context)
             finish(Activity.RESULT_OK, Bundle().apply {
-                putString("stream", "PASS USB permission and Android Keystore TLS 1.3 loopback handshake\n")
+                putString("stream", "PASS USB permission and Android Keystore TLS 1.3 host handshake\n")
             })
         } catch (error: Throwable) {
             finish(Activity.RESULT_CANCELED, Bundle().apply { putString("stream", "FAIL: $error\n") })
