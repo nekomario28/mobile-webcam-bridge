@@ -17,6 +17,8 @@ Internet, guest Wi-Fi, or untrusted LAN clients.
 - Disconnect notifications identify their originating session, preventing a
   stale close event from discarding a newer connection.
 - The Android activity stops camera capture when leaving the foreground.
+- The Wi-Fi HELLO handshake has a five-second absolute deadline (a byte-by-byte
+  sender cannot restart it), and active LAN sessions reject excessive PING rates.
 
 ## Outstanding security requirements
 
