@@ -288,14 +288,14 @@ impl eframe::App for App {
                                     "スマホの証明書SHA-256（端末画面で確認）",
                                 ));
                                 ui.add_enabled(
-                                    !running,
+                                    !self.session.running(),
                                     egui::TextEdit::singleline(&mut self.settings.lan_fingerprint)
                                         .hint_text("64 hexadecimal characters")
                                         .desired_width(f32::INFINITY),
                                 );
                                 ui.label(self.text("128-bit Wi-Fi pairing key", "128ビットWi-Fi接続キー"));
                                 ui.add_enabled(
-                                    !running,
+                                    !self.session.running(),
                                     egui::TextEdit::singleline(&mut self.settings.lan_key)
                                         .password(true)
                                         .hint_text("32 hexadecimal characters")

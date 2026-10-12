@@ -36,7 +36,7 @@ impl ServerCertVerifier for PinnedCertificate {
         _now: UnixTime,
     ) -> Result<ServerCertVerified, Error> {
         let found = Sha256::digest(certificate.as_ref());
-        if found.as_slice() != self.sha256 {
+        if found[..] != self.sha256[..] {
             return Err(Error::General(
                 "Wi-Fi phone certificate fingerprint mismatch".into(),
             ));
