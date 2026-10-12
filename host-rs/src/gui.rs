@@ -283,6 +283,28 @@ impl eframe::App for App {
                                 .min_size(egui::vec2(0.0, 28.0))
                                         .desired_width(f32::INFINITY),
                                 );
+                                ui.label(self.text(
+                                    "Phone certificate SHA-256 (verify on phone)",
+                                    "スマホの証明書SHA-256（端末画面で確認）",
+                                ));
+                                ui.add_enabled(
+                                    !running,
+                                    egui::TextEdit::singleline(&mut self.settings.lan_fingerprint)
+                                        .hint_text("64 hexadecimal characters")
+                                        .desired_width(f32::INFINITY),
+                                );
+                                ui.label(self.text("128-bit Wi-Fi pairing key", "128ビットWi-Fi接続キー"));
+                                ui.add_enabled(
+                                    !running,
+                                    egui::TextEdit::singleline(&mut self.settings.lan_key)
+                                        .password(true)
+                                        .hint_text("32 hexadecimal characters")
+                                        .desired_width(f32::INFINITY),
+                                );
+                                ui.weak(self.text(
+                                    "Wi-Fi requires TLS 1.3. No plaintext fallback.",
+                                    "Wi-FiはTLS 1.3必須。平文接続への切替なし。",
+                                ));
                             } else {
                                 if matches!(self.session.state, State::Idle) {
                                     ui.label(self.text(
