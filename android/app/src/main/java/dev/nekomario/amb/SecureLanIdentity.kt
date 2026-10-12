@@ -113,7 +113,7 @@ class SecureLanIdentity(context: Context) {
                     KEY_ALIAS, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
                 )
                     .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                    .setDigests(KeyProperties.DIGEST_SHA256)
+                    .setDigests(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA256)
                     .setCertificateSubject(X500Principal("CN=Mobile Webcam"))
                     .setCertificateSerialNumber(BigInteger.ONE)
                     .setCertificateNotBefore(Date(1_700_000_000_000L))
@@ -126,7 +126,11 @@ class SecureLanIdentity(context: Context) {
     }
 
     companion object {
-        private const val KEY_ALIAS = "mobile_webcam_wifi_tls_v1"
+        // A new alias is required: the v1 Android Keystore signing key only
+        // authorized SHA-256, but Android's TLS provider signs a pre-digested
+        // handshake transcript using NONEwithECDSA. Existing v1 keys cannot
+        // be reconfigured, and the certificate fingerprint changes.
+        private const val KEY_ALIAS = "mobile_webcam_wifi_tls_v2"
         private const val ENCRYPTION_ALIAS = "mobile_webcam_wifi_secret_aes_v1"
         private const val ENCRYPTED_SECRET = "encrypted_secret_v1"
         internal fun isHex(value: String, size: Int): Boolean =
