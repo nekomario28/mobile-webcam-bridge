@@ -9,6 +9,7 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 import javax.net.ssl.SSLSocket
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -103,6 +104,9 @@ class LanServer(
     private val active = AtomicReference<LanSession?>(null)
     private var server: ServerSocket? = null
     private var acceptThread: Thread? = null
+    private val handshakeTimer = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "mwb-tls-handshake-deadline").apply { isDaemon = true }
+    }
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
@@ -130,6 +134,11 @@ class LanServer(
                 runCatching { socket.close() }
                 continue
             }
+            // Socket read timeouts are per-read; close the socket after a total
+            // 5 seconds so trickled TLS records cannot monopolize accept().
+            val timeout = handshakeTimer.schedule(
+                { runCatching { socket.close() } }, 5, TimeUnit.SECONDS
+            )
             runCatching { authenticate(socket as SSLSocket) }
                 .onSuccess {
                     if (!running.get()) {
@@ -151,6 +160,7 @@ class LanServer(
                     runCatching { socket.close() }
                     onError("Wi-Fi client rejected: ${it.message}")
                 }
+            timeout.cancel(false)
         }
     }
 
@@ -182,6 +192,7 @@ class LanServer(
         runCatching { acceptThread?.join(500) }
         acceptThread = null
         server = null
+        handshakeTimer.shutdownNow()
     }
 
     companion object {
