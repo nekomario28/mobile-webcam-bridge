@@ -5,7 +5,8 @@ pub mod transform;
 use crate::{
     control::{self, Command, Event},
     settings::Settings,
-    transport::{Tcp, Transport},
+    transport::Transport,
+    secure::SecureTcp,
     usb::{DeviceId, Usb},
     wire,
 };
@@ -131,9 +132,11 @@ fn receive(
 ) -> crate::Result<()> {
     let mut decoder = decoder::Decoder::open(&settings.decode)?;
     let mut transport: Box<dyn Transport> = if settings.transport == "lan" {
-        Box::new(Tcp::connect(
+        Box::new(SecureTcp::connect(
             &settings.lan_host,
             48527,
+            &settings.lan_fingerprint,
+            &settings.lan_key,
             Duration::from_secs(5),
         )?)
     } else {

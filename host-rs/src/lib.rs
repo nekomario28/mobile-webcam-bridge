@@ -7,6 +7,7 @@ pub mod platform;
 #[cfg(feature = "gui")]
 pub mod session;
 pub mod settings;
+pub mod secure;
 pub mod transport;
 pub mod usb;
 #[cfg(feature = "video")]
