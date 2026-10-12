@@ -7,6 +7,7 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import javax.net.ssl.SSLSocket
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -92,6 +93,7 @@ class LanSession(
 }
 
 class LanServer(
+    private val identity: SecureLanIdentity,
     private val port: Int = DEFAULT_PORT,
     private val onSession: (LanSession, Boolean) -> Unit,
     private val onStatus: (String) -> Unit,
@@ -105,7 +107,7 @@ class LanServer(
     fun start() {
         if (!running.compareAndSet(false, true)) return
         try {
-            val socket = ServerSocket(port).apply { reuseAddress = true }
+            val socket: ServerSocket = identity.listener(port)
             server = socket
             acceptThread = Thread({ acceptLoop(socket) }, "mwb-lan-accept").also { it.start() }
             onStatus("Wi-Fi listening on ${endpoints().joinToString()}")
@@ -128,7 +130,7 @@ class LanServer(
                 runCatching { socket.close() }
                 continue
             }
-            runCatching { authenticate(socket) }
+            runCatching { authenticate(socket as SSLSocket) }
                 .onSuccess {
                     if (!running.get()) {
                         runCatching { socket.close() }
@@ -152,10 +154,16 @@ class LanServer(
         }
     }
 
-    private fun authenticate(socket: Socket) {
+    private fun authenticate(socket: SSLSocket) {
         socket.tcpNoDelay = true
         socket.keepAlive = true
-        val hello = readHelloWithDeadline(socket, 5_000)
+        socket.enabledProtocols = arrayOf("TLSv1.3")
+        socket.soTimeout = 5_000
+        socket.startHandshake()
+        val (hello, credential) = readHelloWithDeadline(socket, 5_000, 16)
+        require(credential.size == 16 && identity.authenticates(credential)) {
+            "Wi-Fi pairing key rejected"
+        }
         Wire.writeFrame(
             socket.getOutputStream(),
             Wire.Header(Wire.TYPE_HELLO_ACK, 0, hello.sequence, 0, 0),
@@ -196,7 +204,11 @@ class LanServer(
  * Enforce one absolute HELLO deadline, not a new socket timeout per received byte.
  * A slow sender must not occupy the single-threaded accept loop indefinitely.
  */
-internal fun readHelloWithDeadline(socket: Socket, timeoutMillis: Int): Wire.Header {
+internal fun readHelloWithDeadline(
+    socket: Socket,
+    timeoutMillis: Int,
+    credentialBytes: Int = 0,
+): Pair<Wire.Header, ByteArray> {
     require(timeoutMillis > 0)
     val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis.toLong())
     val limitedInput = object : FilterInputStream(socket.getInputStream()) {
@@ -208,8 +220,8 @@ internal fun readHelloWithDeadline(socket: Socket, timeoutMillis: Int): Wire.Hea
             return super.read(bytes, offset, length)
         }
     }
-    val (hello, payload) = Wire.readFrame(limitedInput, maxPayloadLength = 0)
+    val (hello, payload) = Wire.readFrame(limitedInput, maxPayloadLength = credentialBytes)
     require(hello.type == Wire.TYPE_HELLO) { "expected HELLO" }
-    require(payload.isEmpty()) { "HELLO payload must be empty" }
-    return hello
+    require(payload.size == credentialBytes) { "invalid Wi-Fi HELLO credential length" }
+    return hello to payload
 }
