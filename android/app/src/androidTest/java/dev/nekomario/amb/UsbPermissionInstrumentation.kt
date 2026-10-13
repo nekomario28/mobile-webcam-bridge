@@ -10,7 +10,6 @@ import android.content.IntentFilter
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
-import java.security.MessageDigest
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -22,9 +21,11 @@ class UsbPermissionInstrumentation : Instrumentation() {
     }
 
     /**
-     * Runs on the Android emulator while GitHub Actions connects to this
-     * socket from the host via adb forward. Using an independent desktop TLS
-     * stack tests the same Android Keystore server path as the Rust receiver.
+     * Runs the real LanServer on the Android emulator while GitHub Actions
+     * connects to it from the host via adb forward. Using an independent
+     * desktop TLS stack tests the same Android Keystore server path as the
+     * Rust receiver: an unauthorized HELLO is rejected before any session
+     * exists, then the authorized client completes pairing.
      */
     private fun smokeSecureWifi(context: Context) {
         val identity = SecureLanIdentity(context)
@@ -36,26 +37,33 @@ class UsbPermissionInstrumentation : Instrumentation() {
         }
         val pin = identity.fingerprint()
         check(pin.length == 64)
-        val fixedTestKey = SecureLanIdentity.decodeHex("00112233445566778899aabbccddeeff")
-        identity.listener(48_527).use { listener ->
-            listener.soTimeout = 15_000
-            android.util.Log.i("SecureWifiGate", "READY SHA256=" + pin)
-            (listener.accept() as javax.net.ssl.SSLSocket).use { peer ->
-                peer.soTimeout = 8_000
-                peer.useClientMode = false
-                peer.enabledProtocols = arrayOf("TLSv1.3")
-                peer.startHandshake()
-                check(peer.session.protocol == "TLSv1.3")
-                val (header, credential) = Wire.readFrame(peer.inputStream, 16)
-                check(header.type == Wire.TYPE_HELLO && header.sequence == 1)
-                check(MessageDigest.isEqual(credential, fixedTestKey))
-                Wire.writeFrame(
-                    peer.outputStream,
-                    Wire.Header(Wire.TYPE_HELLO_ACK, 0, 1, 0, 0),
-                    ByteArray(0),
-                )
-                android.util.Log.i("SecureWifiGate", "PASS native TLS 1.3 handshake and authenticated AMB framing")
+        val sessions = LinkedBlockingQueue<Pair<LanSession, Boolean>>()
+        val errors = LinkedBlockingQueue<String>()
+        val server = LanServer(
+            identity = identity,
+            port = 48_527,
+            onSession = { session, connected -> sessions.add(session to connected) },
+            onStatus = {},
+            onError = { error -> errors.add(error) },
+        )
+        server.start()
+        android.util.Log.i("SecureWifiGate", "READY SHA256=" + pin)
+        try {
+            // An unauthorized HELLO must be rejected before any session exists.
+            val rejected = errors.poll(20, TimeUnit.SECONDS)
+            check(rejected != null && rejected.contains("rejected")) {
+                "wrong access key was not rejected: $rejected"
             }
+            check(sessions.isEmpty) { "wrong access key created a session" }
+            // The authorized client then completes pairing through the real server.
+            val authorized = sessions.poll(20, TimeUnit.SECONDS)
+            check(authorized != null && authorized.second) { "authorized client did not connect" }
+            android.util.Log.i(
+                "SecureWifiGate",
+                "PASS native TLS 1.3 handshake, wrong-key rejection and authenticated AMB framing",
+            )
+        } finally {
+            server.close()
         }
     }
 
@@ -92,7 +100,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
             }
             if (Build.VERSION.SDK_INT >= 29) smokeSecureWifi(context)
             finish(Activity.RESULT_OK, Bundle().apply {
-                putString("stream", "PASS USB permission and Android Keystore TLS 1.3 host handshake\n")
+                putString("stream", "PASS USB permission, Android Keystore TLS 1.3, wrong-key rejection and host handshake\n")
             })
         } catch (error: Throwable) {
             finish(Activity.RESULT_CANCELED, Bundle().apply { putString("stream", "FAIL: $error\n") })

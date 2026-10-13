@@ -106,27 +106,40 @@ jobs:
                       raise RuntimeError("TLS peer closed before sending authenticated ACK")
                   output.extend(chunk)
               return bytes(output)
-          with socket.create_connection(("127.0.0.1", 48527), timeout=6) as raw:
-              with context.wrap_socket(raw, server_hostname="mobile-webcam.local") as connection:
-                  connection.settimeout(6)
-                  assert connection.version() == "TLSv1.3", connection.version()
-                  actual = hashlib.sha256(connection.getpeercert(binary_form=True)).hexdigest().upper()
-                  assert actual == os.environ["PHONE_SHA256"], "Android certificate does not match screen fingerprint"
-                  header = struct.pack("<4sBBHIIQ", b"AMB1", 1, 1, 0, 1, 16, 0)
-                  assert len(header) == 24
-                  connection.sendall(header + bytes.fromhex("00112233445566778899aabbccddeeff"))
-                  magic, version, kind, flags, sequence, length, timestamp = struct.unpack(
-                      "<4sBBHIIQ", receive_exact(connection, 24))
-                  assert (magic, version, kind, flags, sequence, length, timestamp) == (
-                      b"AMB1", 1, 2, 0, 1, 0, 0)
-          print("PASS external TLS 1.3 client, pinned Android Keystore certificate and AMB1 response")
+          def tls_hello(key_hex, expect_ack):
+              with socket.create_connection(("127.0.0.1", 48527), timeout=6) as raw:
+                  with context.wrap_socket(raw, server_hostname="mobile-webcam.local") as connection:
+                      connection.settimeout(6)
+                      assert connection.version() == "TLSv1.3", connection.version()
+                      actual = hashlib.sha256(connection.getpeercert(binary_form=True)).hexdigest().upper()
+                      assert actual == os.environ["PHONE_SHA256"], "Android certificate does not match screen fingerprint"
+                      header = struct.pack("<4sBBHIIQ", b"AMB1", 1, 1, 0, 1, 16, 0)
+                      assert len(header) == 24
+                      connection.sendall(header + bytes.fromhex(key_hex))
+                      if expect_ack:
+                          magic, version, kind, flags, sequence, length, timestamp = struct.unpack(
+                              "<4sBBHIIQ", receive_exact(connection, 24))
+                          assert (magic, version, kind, flags, sequence, length, timestamp) == (
+                              b"AMB1", 1, 2, 0, 1, 0, 0)
+                      else:
+                          # Unauthorized: the real server must close without HELLO_ACK.
+                          try:
+                              data = connection.recv(24)
+                          except ssl.SSLError:
+                              data = b""
+                          assert data == b"", f"unauthorized client received {data!r}"
+          # Wrong key first: rejected before any session is created.
+          tls_hello("ffeeddccbbaa99887766554433221100", expect_ack=False)
+          # Authorized key: completes pairing through the same real server.
+          tls_hello("00112233445566778899aabbccddeeff", expect_ack=True)
+          print("PASS external TLS 1.3 client, wrong-key rejection, pinned Android Keystore certificate and AMB1 response")
           PY_TLS
           wait "$instrument_pid"
           cat build/secure-wifi/instrumentation.log
           # The custom instrumentation writes a PASS marker via finish(stream)
           # but Android's am instrument -w does not necessarily print a final
           # INSTRUMENTATION_CODE line. Require the authenticated result itself.
-          grep -q "PASS USB permission and Android Keystore TLS 1.3 host handshake" build/secure-wifi/instrumentation.log
+          grep -q "PASS USB permission, Android Keystore TLS 1.3, wrong-key rejection and host handshake" build/secure-wifi/instrumentation.log
           if grep -q '^FAIL:' build/secure-wifi/instrumentation.log; then
             echo "Instrumentation reported a failure" >&2
             exit 1
