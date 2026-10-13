@@ -84,7 +84,7 @@ class CameraEncoderSession(
 
         val manager = context.getSystemService(CameraManager::class.java)
         manager.openCamera(
-            requested.cameraId,
+            mode.cameraId,
             object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
                     if (closed.get()) {
@@ -96,13 +96,13 @@ class CameraEncoderSession(
                 }
 
                 override fun onDisconnected(device: CameraDevice) {
-                    listener.onCameraError("camera disconnected: ${requested.cameraId}")
+                    listener.onCameraError("camera disconnected: ${mode.cameraId}")
                     device.close()
                     close()
                 }
 
                 override fun onError(device: CameraDevice, error: Int) {
-                    listener.onCameraError("Camera2 error=$error on ${requested.cameraId}")
+                    listener.onCameraError("Camera2 error=$error on ${mode.cameraId}")
                     device.close()
                     close()
                 }
