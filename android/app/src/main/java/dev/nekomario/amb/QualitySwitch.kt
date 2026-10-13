@@ -20,7 +20,15 @@ object QualitySwitch {
      *  for the user's camera start instead. */
     const val PREPARED_DEADLINE_MS = 5_000L
 
-    enum class Phase { Idle, Prepared, Starting, Applied, Failed }
+    enum class Phase {
+        Idle,
+        Prepared,
+        /// The mode is staged for the user's camera start; no commit follows.
+        Staged,
+        Starting,
+        Applied,
+        Failed,
+    }
 
     /** Why a prepare was rejected; matches the wire reason codes. */
     const val REASON_PERMISSION = 1
