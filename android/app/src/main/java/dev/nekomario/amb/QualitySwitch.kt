@@ -214,8 +214,10 @@ object QualitySwitch {
                         width = num(2) ?: return null,
                         height = num(3) ?: return null,
                         fps = num(4) ?: return null,
-                        verdict = verdictOf(words.getOrNull(5)),
-                        streaming = words.getOrNull(6) == "streaming",
+                        // Five numbers (id, revision, w, h, fps) occupy indices
+                        // 1..5, so the verdict and state words sit at 6 and 7.
+                        verdict = verdictOf(words.getOrNull(6)),
+                        streaming = words.getOrNull(7) == "streaming",
                     )
 
                     "commit" -> Event.Commit(num(0) ?: return null, num(1) ?: return null)
