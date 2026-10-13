@@ -56,18 +56,18 @@ class CaptureModesTest {
     @Test
     fun listsOnlyIntersectedSizeFpsModes() {
         val modes = CaptureModes.supported(fps30Only())
+        // The 15–30 range's upper bound is 30, so it serves fps 30 only —
+        // there is no 15 fps mode and no 24 or 60 fps mode on this device.
         assertEquals(
             setOf(
-                Triple(1280, 720, 15),
                 Triple(1280, 720, 30),
-                Triple(1920, 1080, 15),
                 Triple(1920, 1080, 30),
             ),
             modes.map { Triple(it.width, it.height, it.targetFps) }.toSet(),
         )
-        // 24 fps has no AE range whose upper bound is 24, and no 60 range exists.
         assertTrue(modes.none { it.targetFps == 24 })
         assertTrue(modes.none { it.targetFps == 60 })
+        assertTrue(modes.none { it.targetFps == 15 })
     }
 
     @Test
