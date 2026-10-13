@@ -35,8 +35,9 @@ on earlier supported Android releases.
   stale close event from discarding a newer connection.
 - The Android activity stops camera capture when leaving the foreground.
 - The AMB1 HELLO deadline is absolute, and active LAN sessions reject excessive
-  PING rates. TLS negotiation also has a socket timeout. An absolute whole-TLS
-  handshake deadline remains an explicit denial-of-service hardening task.
+  PING rates. TLS negotiation has both a per-operation socket timeout and an
+  absolute 5-second whole-handshake deadline that closes the unauthenticated
+  socket, with at most four concurrent untrusted handshakes in flight.
 
 ## Outstanding security requirements
 

@@ -24,8 +24,9 @@ The protocol intentionally does not permit the pre-TLS plaintext AMB1 greeting.
 The old C++/Qt host cannot connect until a separately reviewed secure update
 is available. USB/AOA framing is unchanged.
 
-**Known gaps:** full TLS handshake wall-clock cap, native device acceptance,
-separate per-PC credentials and revocation, desktop credential-store hardening,
-and anti-phishing UI for the full out-of-band pin. Never treat a manually
+**Known gaps:** native device acceptance, separate per-PC credentials and
+revocation, desktop credential-store hardening, and anti-phishing UI for the
+full out-of-band pin. The handshake wall-clock cap and the concurrent-handshake
+bound are implemented (see `LanServer`). Never treat a manually
 typed access key as protected if an attacker can view the phone screen or
 compromise a desktop with the saved secret.
