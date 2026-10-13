@@ -81,13 +81,22 @@ pub trait SocketTransport {
     }
 
     /// AMB1 pairing: HELLO carrying an optional credential, completed only by
-    /// an empty HELLO_ACK with sequence 1.
+    /// an empty HELLO_ACK with sequence 1. A server that closes the connection
+    /// instead of answering has rejected the credential — the same signal the
+    /// real phone produces for a wrong access key.
     fn pair(&mut self, credential: Vec<u8>, timeout: Duration) -> crate::Result<()> {
         self.send(&Frame::new(wire::HELLO, 1, credential)?, timeout)?;
-        let ack = self.receive(timeout)?;
+        let ack =
+            self.receive(timeout)
+                .map_err(|error| match error.downcast_ref::<io::Error>() {
+                    Some(closed) if closed.kind() == io::ErrorKind::UnexpectedEof => {
+                        "Wi-Fi pairing was not authorized".into()
+                    }
+                    _ => error,
+                })?;
         if ack.header.kind != wire::HELLO_ACK || ack.header.sequence != 1 || !ack.payload.is_empty()
         {
-            return Err("pairing was not authorized".into());
+            return Err("Wi-Fi pairing was not authorized".into());
         }
         Ok(())
     }

@@ -32,41 +32,43 @@ fn server(listener: TcpListener, allow: bool) {
         tls.flush().unwrap();
     } else {
         assert_ne!(received.as_slice(), expected.as_slice());
-        // An unauthorized client receives no HELLO_ACK or VIDEO_AU.
+        // The real phone closes the connection on a rejected credential;
+        // an unauthorized client receives no HELLO_ACK or VIDEO_AU.
     }
 }
 
-fn attempt(fingerprint: &str, access_key: &str, allow: bool) -> bool {
+fn attempt(fingerprint: &str, access_key: &str, allow: bool) -> Result<(), String> {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let thread = thread::spawn(move || server(listener, allow));
-    let connected = SecureTcp::connect(
+    let outcome = SecureTcp::connect(
         "127.0.0.1",
         port,
         fingerprint,
         access_key,
         Duration::from_secs(4),
     )
-    .is_ok();
+    .map(|_| ())
+    .map_err(|error| error.to_string());
     thread.join().expect("test TLS server thread");
-    connected
+    outcome
 }
 
 #[test]
 fn pinned_and_authorized_client_completes_pairing() {
-    assert!(attempt(PHONE_SHA256, ACCESS_KEY, true));
+    attempt(PHONE_SHA256, ACCESS_KEY, true).expect("authorized client must pair");
 }
 
 #[test]
 fn wrong_fingerprint_is_rejected_during_tls_handshake() {
-    assert!(!attempt(&"0".repeat(64), ACCESS_KEY, false));
+    let error =
+        attempt(&"0".repeat(64), ACCESS_KEY, false).expect_err("wrong fingerprint must not pair");
+    assert!(error.contains("fingerprint mismatch"), "{error}");
 }
 
 #[test]
 fn wrong_access_key_is_rejected_before_any_video() {
-    assert!(!attempt(
-        PHONE_SHA256,
-        "ffeeddccbbaa99887766554433221100",
-        false
-    ));
+    let error = attempt(PHONE_SHA256, "ffeeddccbbaa99887766554433221100", false)
+        .expect_err("wrong access key must not pair");
+    assert!(error.contains("not authorized"), "{error}");
 }

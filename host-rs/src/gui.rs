@@ -524,6 +524,11 @@ impl eframe::App for App {
                                     "The phone rejected the access key. Re-check all 32 characters; a rotated key revokes the old one.",
                                     "スマホが接続キーを拒否しました。32桁を再確認してください。ローテーション後のスマホでは旧キーは無効です。",
                                 )
+                            } else if error.contains("peer disconnected") {
+                                self.text(
+                                    "The phone closed the connection. Check the phone's Wi-Fi screen or app.",
+                                    "スマホが接続を閉じました。スマホのWi-Fi画面またはアプリを確認してください。",
+                                )
                             } else if error.contains("WinUSB") {
                                 self.text("The selected phone needs a compatible USB driver.", "選択したスマホ用のUSBドライバーが必要です。")
                             } else if self.session.usb_permission.is_some() {
