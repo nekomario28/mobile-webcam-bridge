@@ -57,7 +57,9 @@ class UsbPermissionInstrumentation : Instrumentation() {
             check(sessions.isEmpty) { "wrong access key created a session" }
             // The authorized client then completes pairing through the real server.
             val authorized = sessions.poll(20, TimeUnit.SECONDS)
-            check(authorized != null && authorized.second) { "authorized client did not connect" }
+            check(authorized != null && authorized.second) {
+                "authorized client did not connect; server errors observed: $errors"
+            }
             android.util.Log.i(
                 "SecureWifiGate",
                 "PASS native TLS 1.3 handshake, wrong-key rejection and authenticated AMB framing",
