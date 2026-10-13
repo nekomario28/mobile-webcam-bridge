@@ -118,7 +118,9 @@ object QualitySwitch {
                 deadlineMs = nowMs + PREPARED_DEADLINE_MS
                 return listOf(Action.SendPaused(event.requestId, epoch))
             }
-            // Nothing streams: the staged mode waits for the user's camera start.
+            // Nothing streams: the staged mode waits for the user's camera
+            // start. The PC sends no CommitQuality here — no Paused happened.
+            phase = Phase.Staged
             return listOf(
                 Action.SendQualityResult(
                     event.requestId,
@@ -142,7 +144,7 @@ object QualitySwitch {
         }
 
         private fun captureStarted(event: Event.CaptureStarted): List<Action> {
-            if (phase != Phase.Starting) return emptyList()
+            if (phase != Phase.Starting && phase != Phase.Staged) return emptyList()
             phase = Phase.Applied
             return listOf(
                 Action.SendQualityResult(

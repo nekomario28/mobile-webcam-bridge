@@ -9,7 +9,6 @@ commit 1 41 -> start-capture 1280 720 30
 capture-started 1280 720 -> send-quality-result 1 applied none 1280 720 30
 prepare 2 7 1920 1080 30 reject-permission streaming -> send-quality-result 2 rejected permission 0 0 0
 prepare 3 7 1920 1080 30 accept idle -> send-quality-result 3 switching none 0 0 0
-commit 3 41 -> start-capture 1920 1080 30
 capture-started 1920 1080 -> send-quality-result 3 applied none 1920 1080 30
 prepare 4 7 1280 720 30 accept streaming -> send-paused 4 41
 deadline-exceeded 5000 -> stop-capture

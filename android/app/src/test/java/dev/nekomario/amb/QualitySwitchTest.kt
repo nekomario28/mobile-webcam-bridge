@@ -103,10 +103,9 @@ class QualitySwitchTest {
             staged,
         )
         assertEquals(1920, machine.stagedWidth)
-        // No timer expires a human's wait.
+        // No timer expires a human's wait, and the PC sends no commit here.
         assertTrue(machine.step(600_000, QualitySwitch.Event.DeadlineExceeded(600_000)).isEmpty())
-        // The user starts the camera; the commit completes the apply.
-        machine.step(600_001, QualitySwitch.Event.Commit(1, 41))
+        // The user starts the camera; the capture start completes the apply.
         val applied = machine.step(600_002, QualitySwitch.Event.CaptureStarted(1920, 1080))
         assertEquals(
             listOf(
