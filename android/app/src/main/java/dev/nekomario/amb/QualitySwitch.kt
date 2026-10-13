@@ -107,16 +107,18 @@ object QualitySwitch {
                     ),
                 )
             }
+            // The accepted mode is staged in both cases: the streaming switch
+            // starts it on CommitQuality, the idle case on the user's start.
+            stagedWidth = event.width
+            stagedHeight = event.height
+            stagedFps = event.fps
             if (event.streaming) {
                 // The boundary: capture closes; the uncommitted state starts.
                 phase = Phase.Prepared
                 deadlineMs = nowMs + PREPARED_DEADLINE_MS
                 return listOf(Action.SendPaused(event.requestId, epoch))
             }
-            // Nothing streams: stage the mode for the user's camera start.
-            stagedWidth = event.width
-            stagedHeight = event.height
-            stagedFps = event.fps
+            // Nothing streams: the staged mode waits for the user's camera start.
             return listOf(
                 Action.SendQualityResult(
                     event.requestId,
