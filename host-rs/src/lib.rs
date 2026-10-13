@@ -4,6 +4,7 @@ pub mod gui;
 #[cfg(feature = "video")]
 pub mod output;
 pub mod platform;
+pub mod quality;
 #[cfg(feature = "gui")]
 pub mod session;
 pub mod settings;
