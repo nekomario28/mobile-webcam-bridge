@@ -240,13 +240,16 @@ object QualitySwitch {
                 fun num(index: Int): Int? = numbers.getOrNull(index)
                 return when (words.firstOrNull()) {
                     "send-paused" -> Action.SendPaused(num(0) ?: return null, num(1) ?: return null)
+                    // send-quality-result <id> <status> <reason> <w> <h> <fps>:
+                    // the status and reason are words, so the numbers sit at
+                    // indices 0..3, not 0,3,4,5.
                     "send-quality-result" -> Action.SendQualityResult(
                         num(0) ?: return null,
                         statusOf(words.getOrNull(1)),
                         reasonOf(words.getOrNull(2)),
+                        num(1) ?: return null,
+                        num(2) ?: return null,
                         num(3) ?: return null,
-                        num(4) ?: return null,
-                        num(5) ?: return null,
                     )
 
                     "start-capture" -> Action.StartCapture(num(0) ?: return null, num(1) ?: return null, num(2) ?: return null)
