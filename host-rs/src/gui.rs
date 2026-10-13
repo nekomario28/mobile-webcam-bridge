@@ -138,7 +138,7 @@ impl App {
         Self {
             settings,
             store,
-            save_error: save_error,
+            save_error,
             load_error,
             dirty: None,
             session: Session::default(),
