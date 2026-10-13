@@ -167,9 +167,18 @@ impl Store {
         #[cfg(unix)]
         {
             let mut values = BTreeMap::new();
-            for path in std::iter::once(&self.path).chain(self.fallbacks.iter()) {
+            for (primary, path) in std::iter::once((true, &self.path))
+                .chain(self.fallbacks.iter().map(|path| (false, path)))
+            {
                 let data = read_file(path)?;
                 for (key, value) in parse_ini(&data)? {
+                    // Pairing credentials bind to one user's own phone. A
+                    // system-wide fallback may provide non-secret defaults but
+                    // never a fingerprint or access key — the same scope rule
+                    // the Windows loader applies to machine-scope values.
+                    if !primary && matches!(key.as_str(), "lanKey" | "lanFingerprint") {
+                        continue;
+                    }
                     values.entry(key).or_insert(value);
                 }
             }
@@ -391,6 +400,33 @@ mod tests {
             Store::at(path).load().unwrap().lan_key,
             "00112233445566778899aabbccddeeff"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn system_fallback_never_supplies_pairing_credentials() {
+        use std::os::unix::fs::PermissionsExt;
+        let user_dir = tempfile::tempdir().unwrap();
+        let system_dir = tempfile::tempdir().unwrap();
+        let user_path = user_dir.path().join("settings.conf");
+        let system_path = system_dir.path().join("settings.conf");
+        std::fs::write(&user_path, "[General]\ntransport=usb\n").unwrap();
+        std::fs::write(
+            &system_path,
+            "[General]\ntransport=lan\nlanHost=203.0.113.7\nlanFingerprint=5331e886b4b4a360fb7ae16a0afc15791c595354a3c9bf329bf8b4a3eef25a25\nlanKey=00112233445566778899aabbccddeeff\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&system_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let store = Store {
+            path: user_path,
+            fallbacks: vec![system_path],
+        };
+        let settings = store.load().unwrap();
+        // Non-secret defaults still inherit; credentials never do.
+        assert_eq!(settings.transport, "usb");
+        assert_eq!(settings.lan_host, "203.0.113.7");
+        assert!(settings.lan_fingerprint.is_empty());
+        assert!(settings.lan_key.is_empty());
     }
 
     #[test]
