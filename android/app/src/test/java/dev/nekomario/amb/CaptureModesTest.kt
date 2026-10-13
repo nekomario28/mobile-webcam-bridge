@@ -1,11 +1,11 @@
 package dev.nekomario.amb
 
-private typealias FpsRange = CaptureModes.FpsRange
-
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+
+private typealias FpsRange = CaptureModes.FpsRange
 
 /**
  * Capability-fixture tests for the capture-mode resolver: no device, no PC
