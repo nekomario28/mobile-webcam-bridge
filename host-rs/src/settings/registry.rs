@@ -81,12 +81,20 @@ pub fn read() -> crate::Result<BTreeMap<String, String>> {
             }
             continue;
         }
+        // Pairing credentials bind to one user's own phone: the fingerprint
+        // is never read from machine scope either — the same scope rule the
+        // Unix loader applies to XDG fallbacks. Non-secret defaults may
+        // still inherit from a system-wide configuration.
+        let credential = key == "lanFingerprint";
         for (root, path) in [
             (HKEY_CURRENT_USER, PATH),
             (HKEY_CURRENT_USER, "Software\\nekomario28"),
             (HKEY_LOCAL_MACHINE, PATH),
             (HKEY_LOCAL_MACHINE, "Software\\nekomario28"),
         ] {
+            if credential && root == HKEY_LOCAL_MACHINE {
+                continue;
+            }
             if let Some(value) = read_value(root, path, key)? {
                 values.insert(key.clone(), value);
                 break;
