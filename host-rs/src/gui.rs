@@ -38,6 +38,7 @@ struct App {
     settings: Settings,
     store: Option<Store>,
     save_error: Option<String>,
+    load_error: Option<String>,
     dirty: Option<Instant>,
     session: Session,
     ja: bool,
@@ -56,17 +57,18 @@ struct App {
 impl App {
     fn new(ctx: &egui::Context) -> Self {
         let store = Store::native();
-        let mut error = None;
+        let mut save_error = None;
+        let mut load_error = None;
         let (store, settings) = match store {
             Ok(store) => {
                 let s = store.load().unwrap_or_else(|e| {
-                    error = Some(e.to_string());
+                    load_error = Some(e.to_string());
                     Settings::default()
                 });
                 (Some(store), s)
             }
             Err(e) => {
-                error = Some(e.to_string());
+                save_error = Some(e.to_string());
                 (None, Settings::default())
             }
         };
@@ -136,7 +138,8 @@ impl App {
         Self {
             settings,
             store,
-            save_error: error,
+            save_error: save_error,
+            load_error,
             dirty: None,
             session: Session::default(),
             ja: japanese(),
@@ -241,6 +244,19 @@ impl eframe::App for App {
             .inner_margin(24.0)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        if let Some(error) = &self.load_error {
+                            ui.colored_label(
+                                egui::Color32::LIGHT_RED,
+                                format!(
+                                    "{}: {error}",
+                                    self.text(
+                                        "Settings could not be loaded",
+                                        "設定を読み込めませんでした"
+                                    )
+                                ),
+                            );
+                            ui.add_space(8.0);
+                        }
                         ui.add_enabled_ui(!self.session.running(), |ui| {
                             ui.horizontal(|ui| {
                                 let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
