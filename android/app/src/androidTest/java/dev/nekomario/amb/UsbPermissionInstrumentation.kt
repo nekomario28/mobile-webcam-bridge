@@ -47,7 +47,9 @@ class UsbPermissionInstrumentation : Instrumentation() {
             onError = { error -> errors.add(error) },
         )
         server.start()
-        android.util.Log.i("SecureWifiGate", "READY SHA256=" + pin)
+        // Test-only: the CI client needs the real per-install credential the
+        // same way the real desktop user reads it off the phone screen.
+        android.util.Log.i("SecureWifiGate", "READY SHA256=" + pin + " KEY=" + identity.pairingCode())
         try {
             // An unauthorized HELLO must be rejected before any session exists.
             val rejected = errors.poll(20, TimeUnit.SECONDS)
