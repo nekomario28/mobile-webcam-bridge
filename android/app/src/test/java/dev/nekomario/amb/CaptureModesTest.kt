@@ -1,6 +1,7 @@
 package dev.nekomario.amb
 
-import android.util.Range
+private typealias FpsRange = CaptureModes.FpsRange
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -15,7 +16,7 @@ class CaptureModesTest {
     private fun caps(
         sizes: List<CaptureModes.SizeFps>,
         aeRanges: List<Range<Int>>,
-        bitrateRange: Range<Int> = Range(100_000, 100_000_000),
+        bitrateRange: IntRange = 100_000..100_000_000,
         widthAlignment: Int = 2,
         heightAlignment: Int = 2,
         cameraId: String = "0",
@@ -40,13 +41,13 @@ class CaptureModesTest {
     /** A 30-only device: 720p and 1080p, AE ranges 15–30 and fixed 30. */
     private fun fps30Only() = caps(
         sizes = listOf(size(1280, 720), size(1920, 1080)),
-        aeRanges = listOf(Range(15, 30), Range(30, 30)),
+        aeRanges = listOf(FpsRange(15, 30), FpsRange(30, 30)),
     )
 
     /** A device whose 720p reaches 60 fps but whose 1080p is capped at 30. */
     private fun perSizeCapped() = caps(
         sizes = listOf(size(1280, 720, minFpsCap = 60), size(1920, 1080, minFpsCap = 30)),
-        aeRanges = listOf(Range(15, 30), Range(30, 30), Range(60, 60)),
+        aeRanges = listOf(FpsRange(15, 30), FpsRange(30, 30), FpsRange(60, 60)),
     )
 
     private fun resolved(caps: CaptureModes.Capabilities, preference: CaptureModes.CapturePreference) =
@@ -84,7 +85,7 @@ class CaptureModesTest {
     fun unknownMinimumDurationKeepsTheMode() {
         val caps = caps(
             sizes = listOf(size(1280, 720, minFpsCap = null)),
-            aeRanges = listOf(Range(60, 60)),
+            aeRanges = listOf(FpsRange(60, 60)),
         )
         val modes = CaptureModes.supported(caps)
         assertTrue(modes.any { it.width == 1280 && it.height == 720 && it.targetFps == 60 })
@@ -93,15 +94,15 @@ class CaptureModesTest {
     @Test
     fun aeRangeUpperMustEqualTheCandidate() {
         // A 15–30 range cannot promise 24, and a fixed range wins over a variable one.
-        assertNull(CaptureModes.chooseAeRange(listOf(Range(15, 30)), 24))
-        assertEquals(Range(30, 30), CaptureModes.chooseAeRange(listOf(Range(15, 30), Range(30, 30)), 30))
-        assertEquals(Range(30, 30), CaptureModes.chooseAeRange(listOf(Range(30, 30), Range(15, 30)), 30))
+        assertNull(CaptureModes.chooseAeRange(listOf(FpsRange(15, 30)), 24))
+        assertEquals(CaptureModes.FpsRange(30, 30), CaptureModes.chooseAeRange(listOf(FpsRange(15, 30), FpsRange(30, 30)), 30))
+        assertEquals(CaptureModes.FpsRange(30, 30), CaptureModes.chooseAeRange(listOf(FpsRange(30, 30), FpsRange(15, 30)), 30))
     }
 
     @Test
     fun emptyCapabilitiesAreRejected() {
         val resolution = CaptureModes.resolve(
-            caps(sizes = emptyList(), aeRanges = listOf(Range(30, 30))),
+            caps(sizes = emptyList(), aeRanges = listOf(FpsRange(30, 30))),
             CaptureModes.CapturePreference(),
         )
         assertTrue(resolution is CaptureModes.Resolution.Rejected)
@@ -112,7 +113,7 @@ class CaptureModesTest {
         val modes = CaptureModes.supported(
             caps(
                 sizes = listOf(size(1281, 721), size(1280, 720)),
-                aeRanges = listOf(Range(30, 30)),
+                aeRanges = listOf(FpsRange(30, 30)),
             ),
         )
         assertEquals(listOf(1280), modes.map { it.width }.distinct())
@@ -140,12 +141,12 @@ class CaptureModesTest {
 
     @Test
     fun autoBitrateScalesFromTheBaselineAndClamps() {
-        val wide = Range(100_000, 100_000_000)
+        val wide = 100_000..100_000_000
         assertEquals(6_000_000, CaptureModes.autoBitrate(1280, 720, 30, wide).toLong())
         assertEquals(13_500_000, CaptureModes.autoBitrate(1920, 1080, 30, wide).toLong())
         assertEquals(12_000_000, CaptureModes.autoBitrate(1280, 720, 60, wide).toLong())
-        assertEquals(8_000_000, CaptureModes.autoBitrate(1920, 1080, 30, Range(1_000_000, 8_000_000)).toLong())
-        assertEquals(1_000_000, CaptureModes.autoBitrate(320, 240, 15, Range(1_000_000, 8_000_000)).toLong())
+        assertEquals(8_000_000, CaptureModes.autoBitrate(1920, 1080, 30, 1_000_000..8_000_000).toLong())
+        assertEquals(1_000_000, CaptureModes.autoBitrate(320, 240, 15, 1_000_000..8_000_000).toLong())
     }
 
     @Test
@@ -153,7 +154,7 @@ class CaptureModesTest {
         // Same fps and aspect; the closer area to 720p wins.
         val tied = caps(
             sizes = listOf(size(640, 360), size(1280, 720)),
-            aeRanges = listOf(Range(30, 30)),
+            aeRanges = listOf(FpsRange(30, 30)),
         )
         val auto = resolved(tied, CaptureModes.CapturePreference())
         assertEquals(1280, auto.width)
@@ -164,7 +165,7 @@ class CaptureModesTest {
     fun differentDevicesReResolveTheSamePreference() {
         val frontOnly1080 = caps(
             sizes = listOf(size(1920, 1080)),
-            aeRanges = listOf(Range(15, 30), Range(30, 30)),
+            aeRanges = listOf(FpsRange(15, 30), FpsRange(30, 30)),
             cameraId = "1",
         )
         val autoA = resolved(fps30Only(), CaptureModes.CapturePreference())

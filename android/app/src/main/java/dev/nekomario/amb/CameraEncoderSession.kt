@@ -8,7 +8,6 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.os.Handler
 import android.os.HandlerThread
-import android.util.Range
 import android.util.Size
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -26,7 +25,7 @@ class CameraEncoderSession(
         val cameraId: String,
         val size: Size,
         val fps: Int,
-        val aeFpsRange: Range<Int>?,
+        val aeFpsRange: CaptureModes.FpsRange?,
         val bitrate: Int,
     )
 
@@ -131,7 +130,10 @@ class CameraEncoderSession(
                             set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                             set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                             activeConfig?.aeFpsRange?.let {
-                                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it)
+                                set(
+                                    CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                                    android.util.Range(it.lower, it.upper),
+                                )
                             }
                             if (continuousVideoAf) {
                                 set(

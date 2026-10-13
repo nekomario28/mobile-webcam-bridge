@@ -7,8 +7,6 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
-import android.util.Range
-import android.util.Size
 
 /**
  * Supported capture modes and the resolution that owns the fixed 720p/30 rule.
@@ -36,9 +34,17 @@ object CaptureModes {
         val width: Int,
         val height: Int,
         val targetFps: Int,
-        val aeRange: Range<Int>,
+        val aeRange: FpsRange,
         val bitrate: Int,
     )
+
+    /**
+     * An AE target fps range. Plain data on purpose: the resolver core stays
+     * free of Android types so capability fixtures test it without a device
+     * (android.util.Range throws in JVM unit tests). Converted at the Camera2
+     * boundary.
+     */
+    data class FpsRange(val lower: Int, val upper: Int)
 
     /** A MediaCodec output size with the camera-side minimum frame duration. */
     data class SizeFps(
@@ -53,10 +59,10 @@ object CaptureModes {
         val cameraId: String,
         val codecName: String,
         val sizes: List<SizeFps>,
-        val aeRanges: List<Range<Int>>,
+        val aeRanges: List<FpsRange>,
         val widthAlignment: Int = 1,
         val heightAlignment: Int = 1,
-        val bitrateRange: Range<Int> = Range(1, 100_000_000),
+        val bitrateRange: IntRange = 1..100_000_000,
     )
 
     /** The PC-side saved preference; any null field is resolved automatically. */
@@ -109,10 +115,10 @@ object CaptureModes {
      * the candidate (a 15–30 range cannot promise 24), fixed ranges first,
      * then the narrowest.
      */
-    fun chooseAeRange(ranges: List<Range<Int>>, fps: Int): Range<Int>? =
+    fun chooseAeRange(ranges: List<FpsRange>, fps: Int): FpsRange? =
         ranges.filter { it.upper == fps }
             .minWithOrNull(
-                compareBy<Range<Int>>(
+                compareBy<FpsRange>(
                     { if (it.lower == fps) 0 else 1 },
                     { it.upper - it.lower },
                 ),
@@ -122,10 +128,10 @@ object CaptureModes {
      * Bitrate scaled from the 6 Mbps 720p/30 baseline by pixels × target fps,
      * clamped to the selected encoder's range. Integer math lives only here.
      */
-    fun autoBitrate(width: Int, height: Int, fps: Int, range: Range<Int>): Int {
+    fun autoBitrate(width: Int, height: Int, fps: Int, range: IntRange): Int {
         val scaled = AUTO_BITRATE.toLong() * width.toLong() * height * fps /
             (AUTO_WIDTH.toLong() * AUTO_HEIGHT * AUTO_FPS)
-        return scaled.coerceIn(range.lower.toLong(), range.upper.toLong()).toInt()
+        return scaled.coerceIn(range.first.toLong(), range.last.toLong()).toInt()
     }
 
     /** Resolve a preference against the capabilities; exact explicit or auto. */
@@ -204,10 +210,10 @@ object CaptureModes {
             sizes = sizes,
             aeRanges = characteristics.get(
                 CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES,
-            )?.toList().orEmpty(),
+            )?.map { FpsRange(it.lower, it.upper) }.orEmpty(),
             widthAlignment = videoCapabilities.widthAlignment,
             heightAlignment = videoCapabilities.heightAlignment,
-            bitrateRange = videoCapabilities.bitrateRange,
+            bitrateRange = videoCapabilities.bitrateRange.let { it.lower..it.upper },
         )
     }
 
@@ -224,7 +230,4 @@ object CaptureModes {
                     .colorFormats
                     .contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
         }
-
-    /** Convenience for the default Size ordering used by capability lists. */
-    internal fun sizeOf(sizeFps: SizeFps): Size = Size(sizeFps.width, sizeFps.height)
 }
