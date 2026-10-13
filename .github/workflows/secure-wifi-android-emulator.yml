@@ -60,7 +60,7 @@ jobs:
               fi
               cat build/secure-wifi/instrumentation.log 2>/dev/null || true
               echo "--- TLS app/platform logcat ---"
-              adb logcat -d SecureWifiGate:I Conscrypt:V AndroidKeyStore:V '*:E' 2>/dev/null | tail -130 || true
+              adb logcat -d SecureWifiGate:I Conscrypt:V AndroidKeyStore:V '*:S' 2>/dev/null | tail -130 || true
             fi
           }
           "$ANDROID_HOME/emulator/emulator" -avd secure-wifi -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 > build/secure-wifi/emulator.log 2>&1 &
@@ -105,7 +105,7 @@ jobs:
           context.verify_mode = ssl.CERT_NONE  # TEST CLIENT ONLY: pin is checked explicitly below
           context.minimum_version = ssl.TLSVersion.TLSv1_3
           context.maximum_version = ssl.TLSVersion.TLSv1_3
-          context.options |= ssl.OP_NO_TICKET  # isolate per-connection handshake cost
+          context.options |= ssl.OP_NO_TICKET  # no session resumption: every gate connection pays a full handshake
           def receive_exact(connection, count):
               output = bytearray()
               while len(output) < count:

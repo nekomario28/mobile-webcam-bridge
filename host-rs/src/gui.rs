@@ -491,6 +491,10 @@ impl eframe::App for App {
                                 if error.contains("v4l2loopback") || error.contains("host setup is not included")
                                 {
                                     self.text("Camera driver unavailable", "カメラドライバーを利用できません")
+                                } else if error.contains("fingerprint mismatch") {
+                                    self.text("Fingerprint mismatch", "フィンガープリントが一致しません")
+                                } else if error.contains("was not authorized") {
+                                    self.text("Access key rejected", "接続キーが拒否されました")
                                 } else if self.session.usb_permission.is_some() {
                                     self.text("Allow USB access", "USBアクセスを許可してください")
                                 } else if error.contains("WinUSB") {
@@ -510,6 +514,16 @@ impl eframe::App for App {
                         if let State::Failed(error) = &self.session.state {
                             let next = if error.contains("v4l2loopback") || error.contains("host setup is not included") {
                                 self.text("Install v4l2loopback for your OS, then reconnect.", "OSにv4l2loopbackを導入して、接続し直してください。")
+                            } else if error.contains("fingerprint mismatch") {
+                                self.text(
+                                    "The certificate fingerprint does not match your phone. Re-check all 64 characters.",
+                                    "証明書のフィンガープリントがスマホと一致しません。64桁すべてを再確認してください。",
+                                )
+                            } else if error.contains("was not authorized") {
+                                self.text(
+                                    "The phone rejected the access key. Re-check all 32 characters; a rotated key revokes the old one.",
+                                    "スマホが接続キーを拒否しました。32桁を再確認してください。ローテーション後のスマホでは旧キーは無効です。",
+                                )
                             } else if error.contains("WinUSB") {
                                 self.text("The selected phone needs a compatible USB driver.", "選択したスマホ用のUSBドライバーが必要です。")
                             } else if self.session.usb_permission.is_some() {
