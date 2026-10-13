@@ -23,6 +23,7 @@ class H264Encoder(
     private val listener: Listener,
 ) : AutoCloseable {
     data class Config(
+        val codecName: String,
         val width: Int,
         val height: Int,
         val fps: Int,
@@ -60,7 +61,8 @@ class H264Encoder(
         val handler = Handler(callbackThread.looper)
 
         try {
-            codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            // Start the same encoder whose capabilities were queried.
+            codec = MediaCodec.createByCodecName(config.codecName)
             codec.setCallback(object : MediaCodec.Callback() {
                 override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
                     // Surface-input encoders do not use client input buffers.

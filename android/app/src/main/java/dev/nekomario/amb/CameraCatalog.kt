@@ -60,32 +60,4 @@ object CameraCatalog {
             )
         }
     }
-
-    fun chooseSize(info: CameraInfo, requestedWidth: Int, requestedHeight: Int): Size? {
-        if (info.encoderSizes.isEmpty()) return null
-        info.encoderSizes.firstOrNull {
-            it.width == requestedWidth && it.height == requestedHeight
-        }?.let { return it }
-
-        val targetArea = requestedWidth.toLong() * requestedHeight
-        val targetAspect = requestedWidth.toDouble() / requestedHeight
-        return info.encoderSizes.minByOrNull { size ->
-            val aspect = size.width.toDouble() / size.height
-            val aspectPenalty = kotlin.math.abs(aspect - targetAspect) * 10_000_000.0
-            val areaPenalty = kotlin.math.abs(size.width.toLong() * size.height - targetArea).toDouble()
-            aspectPenalty + areaPenalty
-        }
-    }
-
-    fun chooseFpsRange(info: CameraInfo, fps: Int): Range<Int>? {
-        return info.aeFpsRanges
-            .filter { fps in it.lower..it.upper }
-            .minWithOrNull(
-                compareBy<Range<Int>>(
-                    { if (it.lower == fps && it.upper == fps) 0 else 1 },
-                    { it.upper - it.lower },
-                    { kotlin.math.abs(it.upper - fps) },
-                ),
-            )
-    }
 }

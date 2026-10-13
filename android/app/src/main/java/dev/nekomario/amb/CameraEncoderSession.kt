@@ -12,18 +12,14 @@ import android.util.Range
 import android.util.Size
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Owns Camera2 -> MediaCodec Surface for one video session. */
+/** Owns Camera2 -> MediaCodec Surface for one resolved video session. */
 class CameraEncoderSession(
     private val context: Context,
     private val requested: Request,
     private val listener: Listener,
 ) : AutoCloseable {
     data class Request(
-        val cameraId: String,
-        val width: Int = 1280,
-        val height: Int = 720,
-        val fps: Int = 30,
-        val bitrate: Int = 6_000_000,
+        val mode: CaptureModes.CaptureMode,
     )
 
     data class ActiveConfig(
@@ -54,17 +50,15 @@ class CameraEncoderSession(
         check(!closed.get()) { "camera session already closed" }
 
         val info = CameraCatalog.enumerate(context)
-            .firstOrNull { it.id == requested.cameraId }
-            ?: error("unknown Camera2 id: ${requested.cameraId}")
-        val size = CameraCatalog.chooseSize(info, requested.width, requested.height)
-            ?: error("camera ${requested.cameraId} exposes no MediaCodec output size")
-        val fpsRange = CameraCatalog.chooseFpsRange(info, requested.fps)
+            .firstOrNull { it.id == requested.mode.cameraId }
+            ?: error("unknown Camera2 id: ${requested.mode.cameraId}")
+        val mode = requested.mode
         activeConfig = ActiveConfig(
-            cameraId = requested.cameraId,
-            size = size,
-            fps = requested.fps,
-            aeFpsRange = fpsRange,
-            bitrate = requested.bitrate,
+            cameraId = mode.cameraId,
+            size = Size(mode.width, mode.height),
+            fps = mode.targetFps,
+            aeFpsRange = mode.aeRange,
+            bitrate = mode.bitrate,
         )
 
         cameraThread.start()
@@ -72,10 +66,11 @@ class CameraEncoderSession(
 
         val newEncoder = H264Encoder(
             H264Encoder.Config(
-                width = size.width,
-                height = size.height,
-                fps = requested.fps,
-                bitrate = requested.bitrate,
+                codecName = mode.codecName,
+                width = mode.width,
+                height = mode.height,
+                fps = mode.targetFps,
+                bitrate = mode.bitrate,
             ),
             listener,
         )

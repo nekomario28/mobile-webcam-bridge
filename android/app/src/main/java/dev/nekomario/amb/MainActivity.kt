@@ -138,7 +138,7 @@ class MainActivity : Activity() {
                 } else {
                     cameraStartRequested = true
                     updateControls()
-                    startCamera720p()
+                    startCamera()
                 }
             }
         }
@@ -199,7 +199,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foreground = true
-        if (cameraStartRequested) startCamera720p()
+        if (cameraStartRequested) startCamera()
         if (::usb.isInitialized && connectionMode == ConnectionMode.USB && session == null) discoverUsb()
     }
 
@@ -264,7 +264,7 @@ class MainActivity : Activity() {
                         closeSession(clearStartRequest = false)
                         session = lanSession
                         show(ui("PC connected\nPress Start camera", "PC接続済み\n「カメラ開始」を押してください"))
-                        if (cameraStartRequested) startCamera720p()
+                        if (cameraStartRequested) startCamera()
                     }
                 }
             },
@@ -383,7 +383,7 @@ class MainActivity : Activity() {
         active.start()
         show(ui("USB connected · ${accessory.manufacturer} ${accessory.model}\nPress Start camera",
                "USB接続済み · ${accessory.manufacturer} ${accessory.model}\nカメラ開始を押してください"))
-        if (cameraStartRequested) startCamera720p()
+        if (cameraStartRequested) startCamera()
     }
 
     private fun showCameras() {
@@ -404,7 +404,7 @@ class MainActivity : Activity() {
         details.text = text.ifBlank { ui("No Camera2 device found", "Camera2 deviceがありません") }
     }
 
-    private fun startCamera720p() {
+    private fun startCamera() {
         if (!cameraStartRequested || cameraBridge != null || !foreground) return
         if (session == null) {
             cameraStartRequested = false
@@ -431,6 +431,30 @@ class MainActivity : Activity() {
             stopCamera()
             show(ui("No Camera2 camera found", "Camera2 cameraがありません"))
             return
+        }
+
+        // Slice 01: resolve the capture mode from the device capabilities.
+        // Auto only for now; the PC preference arrives with the quality UI.
+        val mode = when (
+            val resolution = runCatching {
+                CaptureModes.collectCapabilities(this, camera.id)?.let { caps ->
+                    CaptureModes.resolve(caps, CaptureModes.CapturePreference())
+                }
+            }.getOrElse {
+                CaptureModes.Resolution.Rejected(it.message ?: it.javaClass.simpleName)
+            }
+        ) {
+            is CaptureModes.Resolution.Resolved -> resolution.mode
+            is CaptureModes.Resolution.Rejected -> {
+                stopCamera()
+                show(ui("No usable camera mode: ${resolution.reason}", "利用できるカメラモードがありません: ${resolution.reason}"))
+                return
+            }
+            null -> {
+                stopCamera()
+                show(ui("No usable camera mode", "利用できるカメラモードがありません"))
+                return
+            }
         }
 
         lateinit var bridge: CameraBridgeController
@@ -460,11 +484,7 @@ class MainActivity : Activity() {
         runCatching {
             bridge.start(
                 CameraEncoderSession.Request(
-                    cameraId = camera.id,
-                    width = 1280,
-                    height = 720,
-                    fps = 30,
-                    bitrate = 6_000_000,
+                    mode = mode,
                 ),
             )
         }.onFailure {
@@ -521,7 +541,7 @@ class MainActivity : Activity() {
         cameraPermissionPending = false
         if (!cameraStartRequested) return
         val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
-        if (granted) startCamera720p()
+        if (granted) startCamera()
         else {
             stopCamera()
             showConnectionStatus(ui("Camera permission denied", "カメラ権限が必要です"))
