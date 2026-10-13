@@ -4,6 +4,8 @@ The published v0.2.0 releases used unauthenticated plaintext Wi-Fi. The
 secure-Wi-Fi source branch implements TLS 1.3 with explicit certificate pinning
 and a 128-bit access key. USB/AOA remains unchanged. This feature must not be
 declared fully validated until end-to-end device/Windows/Linux tests pass.
+The two transports are not interoperable; see
+[migrating to secure Wi-Fi](migration-tls-wifi.md) for the upgrade path.
 
 The phone generates a self-signed P-256 TLS certificate in Android Keystore.
 The user directly compares the SHA-256 DER certificate fingerprint shown on

@@ -6,7 +6,8 @@ the system language. Your PC remembers the phone address and settings.
 **Wi-Fi security:** the current source implementation is moving to TLS 1.3,
 with a pinned phone certificate and 128-bit access key. The latest published
 release may still use **unauthenticated plaintext Wi-Fi**; do not expose it to
-untrusted networks. See [security details](docs/security.md) before upgrading.
+untrusted networks. See [security details](docs/security.md) and
+[migrating to secure Wi-Fi](docs/migration-tls-wifi.md) before upgrading.
 
 [Download](https://github.com/nekomario28/mobile-webcam-bridge/releases/latest)
 the Android APK and the desktop app for your OS.
