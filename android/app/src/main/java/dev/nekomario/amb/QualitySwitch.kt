@@ -243,12 +243,12 @@ object QualitySwitch {
                 return when (words.firstOrNull()) {
                     "send-paused" -> Action.SendPaused(num(0) ?: return null, num(1) ?: return null)
                     // send-quality-result <id> <status> <reason> <w> <h> <fps>:
-                    // the status and reason are words, so the numbers sit at
-                    // indices 0..3, not 0,3,4,5.
+                    // the id occupies word 1, so the status and reason words
+                    // sit at 2 and 3, and the numbers (id, w, h, fps) at 0..3.
                     "send-quality-result" -> Action.SendQualityResult(
                         num(0) ?: return null,
-                        statusOf(words.getOrNull(1)),
-                        reasonOf(words.getOrNull(2)),
+                        statusOf(words.getOrNull(2)),
+                        reasonOf(words.getOrNull(3)),
                         num(1) ?: return null,
                         num(2) ?: return null,
                         num(3) ?: return null,
