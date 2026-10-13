@@ -15,7 +15,7 @@ private typealias FpsRange = CaptureModes.FpsRange
 class CaptureModesTest {
     private fun caps(
         sizes: List<CaptureModes.SizeFps>,
-        aeRanges: List<Range<Int>>,
+        aeRanges: List<FpsRange>,
         bitrateRange: IntRange = 100_000..100_000_000,
         widthAlignment: Int = 2,
         heightAlignment: Int = 2,
