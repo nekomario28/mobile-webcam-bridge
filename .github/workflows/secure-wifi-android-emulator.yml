@@ -92,12 +92,13 @@ jobs:
           test -n "$phone_pin"
           export PHONE_SHA256="$phone_pin"
           python3 - <<'PY_TLS'
-          import hashlib, os, socket, ssl, struct
+          import hashlib, os, socket, ssl, struct, time
           context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
           context.check_hostname = False
           context.verify_mode = ssl.CERT_NONE  # TEST CLIENT ONLY: pin is checked explicitly below
           context.minimum_version = ssl.TLSVersion.TLSv1_3
           context.maximum_version = ssl.TLSVersion.TLSv1_3
+          context.options |= ssl.OP_NO_TICKET  # isolate per-connection handshake cost
           def receive_exact(connection, count):
               output = bytearray()
               while len(output) < count:
@@ -106,32 +107,39 @@ jobs:
                       raise RuntimeError("TLS peer closed before sending authenticated ACK")
                   output.extend(chunk)
               return bytes(output)
-          def tls_hello(key_hex, expect_ack):
+          def tls_hello(label, key_hex, expect_ack):
+              started = time.monotonic()
               with socket.create_connection(("127.0.0.1", 48527), timeout=6) as raw:
+                  connected = time.monotonic()
                   with context.wrap_socket(raw, server_hostname="mobile-webcam.local") as connection:
+                      handshaked = time.monotonic()
                       connection.settimeout(6)
+                      print(f"{label}: tcp={connected-started:.2f}s handshake={handshaked-connected:.2f}s")
                       assert connection.version() == "TLSv1.3", connection.version()
                       actual = hashlib.sha256(connection.getpeercert(binary_form=True)).hexdigest().upper()
                       assert actual == os.environ["PHONE_SHA256"], "Android certificate does not match screen fingerprint"
                       header = struct.pack("<4sBBHIIQ", b"AMB1", 1, 1, 0, 1, 16, 0)
                       assert len(header) == 24
                       connection.sendall(header + bytes.fromhex(key_hex))
+                      sent = time.monotonic()
                       if expect_ack:
                           magic, version, kind, flags, sequence, length, timestamp = struct.unpack(
                               "<4sBBHIIQ", receive_exact(connection, 24))
                           assert (magic, version, kind, flags, sequence, length, timestamp) == (
                               b"AMB1", 1, 2, 0, 1, 0, 0)
+                          print(f"{label}: ack={time.monotonic()-sent:.2f}s total={time.monotonic()-started:.2f}s")
                       else:
                           # Unauthorized: the real server must close without HELLO_ACK.
                           try:
                               data = connection.recv(24)
                           except ssl.SSLError:
                               data = b""
+                          print(f"{label}: closed={time.monotonic()-sent:.2f}s total={time.monotonic()-started:.2f}s")
                           assert data == b"", f"unauthorized client received {data!r}"
           # Wrong key first: rejected before any session is created.
-          tls_hello("ffeeddccbbaa99887766554433221100", expect_ack=False)
+          tls_hello("wrong-key", "ffeeddccbbaa99887766554433221100", expect_ack=False)
           # Authorized key: completes pairing through the same real server.
-          tls_hello("00112233445566778899aabbccddeeff", expect_ack=True)
+          tls_hello("authorized", "00112233445566778899aabbccddeeff", expect_ack=True)
           print("PASS external TLS 1.3 client, wrong-key rejection, pinned Android Keystore certificate and AMB1 response")
           PY_TLS
           wait "$instrument_pid"
