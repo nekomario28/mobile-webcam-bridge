@@ -155,6 +155,8 @@ class MainActivity : Activity() {
         pairAction = Button(this).apply {
             text = ui("Show pairing key", "接続キーを表示")
             setAllCaps(false)
+            // The pairing controls belong to the Wi-Fi flow; startUsbMode hides them.
+            visibility = View.GONE
             setOnClickListener {
                 if (pairInfo.visibility == View.VISIBLE) {
                     pairInfo.visibility = View.GONE
@@ -184,6 +186,7 @@ class MainActivity : Activity() {
         rotateAction = Button(this).apply {
             text = ui("Revoke all paired PCs", "登録PCをすべて失効")
             setAllCaps(false)
+            visibility = View.GONE
             setOnClickListener {
                 AlertDialog.Builder(this@MainActivity)
                     .setTitle(ui("Revoke all Wi-Fi connections?", "すべてのWi-Fi接続を失効しますか？"))
@@ -301,6 +304,12 @@ class MainActivity : Activity() {
         lanServer?.close()
         lanServer = null
         lanIdentity = null
+        pairInfo.visibility = View.GONE
+        pairInfo.text = ""
+        pairAction.text = ui("Show pairing key", "接続キーを表示")
+        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        pairAction.visibility = View.GONE
+        rotateAction.visibility = View.GONE
         closeSession()
         connectionMode = ConnectionMode.USB
         usbPermissionDeclined = false
@@ -316,6 +325,8 @@ class MainActivity : Activity() {
         connectionMode = ConnectionMode.LAN
         clearUsbPermissionRequest()
         saveConnectionMode()
+        pairAction.visibility = View.VISIBLE
+        rotateAction.visibility = View.VISIBLE
         lanServer?.close()
         val identity = lanIdentity ?: SecureLanIdentity(this).also { lanIdentity = it }
 
