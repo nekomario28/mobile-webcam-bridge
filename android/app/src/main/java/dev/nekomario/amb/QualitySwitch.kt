@@ -194,20 +194,20 @@ object QualitySwitch {
             private fun parseEvent(text: String): Event? {
                 val words = text.split(Regex("\\s+"))
                 val numbers = words.drop(1).mapNotNull { it.toIntOrNull() }
-                fun num(index: Int) = numbers.getOrNull(index) ?: return null
+                fun num(index: Int): Int? = numbers.getOrNull(index)
                 return when (words.firstOrNull()) {
                     "prepare" -> Event.Prepare(
-                        requestId = num(0),
-                        revision = num(1),
-                        width = num(2),
-                        height = num(3),
-                        fps = num(4),
+                        requestId = num(0) ?: return null,
+                        revision = num(1) ?: return null,
+                        width = num(2) ?: return null,
+                        height = num(3) ?: return null,
+                        fps = num(4) ?: return null,
                         verdict = verdictOf(words.getOrNull(5)),
                         streaming = words.getOrNull(6) == "streaming",
                     )
 
-                    "commit" -> Event.Commit(num(0), num(1))
-                    "capture-started" -> Event.CaptureStarted(num(0), num(1))
+                    "commit" -> Event.Commit(num(0) ?: return null, num(1) ?: return null)
+                    "capture-started" -> Event.CaptureStarted(num(0) ?: return null, num(1) ?: return null)
                     "deadline-exceeded" -> Event.DeadlineExceeded(words.getOrNull(1)?.toLongOrNull() ?: PREPARED_DEADLINE_MS)
                     "user-stop" -> Event.UserStop
                     else -> null
@@ -225,19 +225,19 @@ object QualitySwitch {
             private fun parseAction(text: String): Action? {
                 val words = text.split(Regex("\\s+"))
                 val numbers = words.drop(1).mapNotNull { it.toIntOrNull() }
-                fun num(index: Int) = numbers.getOrNull(index) ?: return null
+                fun num(index: Int): Int? = numbers.getOrNull(index)
                 return when (words.firstOrNull()) {
-                    "send-paused" -> Action.SendPaused(num(0), num(1))
+                    "send-paused" -> Action.SendPaused(num(0) ?: return null, num(1) ?: return null)
                     "send-quality-result" -> Action.SendQualityResult(
-                        num(0),
+                        num(0) ?: return null,
                         statusOf(words.getOrNull(1)),
                         reasonOf(words.getOrNull(2)),
-                        num(3),
-                        num(4),
-                        num(5),
+                        num(3) ?: return null,
+                        num(4) ?: return null,
+                        num(5) ?: return null,
                     )
 
-                    "start-capture" -> Action.StartCapture(num(0), num(1), num(2))
+                    "start-capture" -> Action.StartCapture(num(0) ?: return null, num(1) ?: return null, num(2) ?: return null)
                     "stop-capture" -> Action.StopCapture
                     else -> null
                 }
