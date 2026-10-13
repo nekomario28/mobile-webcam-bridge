@@ -3,14 +3,16 @@
 設計 2026-10-06。調査基点: `f81da2c54b6adab430025e3b4b1742aa4e5e5ca0`。
 ブランチ: 設計は `design/video-quality-controls`、実装は `feature/video-quality-controls`。
 
-## 実装状態（2026-10-13、slice 01 完了・02 は wire 契約まで）
+## 実装状態（2026-10-13、slice 01 完了・02 は両状態機械まで）
 
 01 を実装: `CaptureModes.kt` が対応一覧（カメラの MediaCodec 出力サイズ × 通常セッション AE 範囲 × サイズごとの最小フレーム時間 × 選択エンコーダーの alignment/bitrate 制約）と解決（自動は 720p/30 優先→30 以下で最寄り→アスペクト比・面積、明示は完全一致のみ・失敗時は拒否）を所有。`H264Encoder` は照会と同じ codecName で起動。`CameraCatalog.chooseSize/chooseFpsRange`（無断代替）は削除。`CaptureModesTest.kt` が能力フィクスチャで一覧・解決・「1080p と 60fps があっても 1080p/60 は作らない」回帰を固定。
 
 02 の wire 契約を実装: 制御空間に 5 種別（QUALITY_CAPABILITIES 0x05・PREPARE_QUALITY 0x06・QUALITY_RESULT 0x07・PAUSED 0x08・COMMIT_QUALITY 0x09）。固定リトルエンディアン字段+件数付き一覧。`protocol/fixtures/quality-capabilities-v1.bin` を両言語が読む単一 golden fixture（各言語でデコード→値検証→再エンコードで同一バイト）。制御 payload 16 KiB・一覧 256 組上限、超過は encoder が拒否・decoder は確保前に検証（無断切り捨てなし）。`protocol/quality-control-v0.md` に契約を記録。
 
-未確認: 実機の能力一覧と採用 codec（fixture のみ）。最小時間を返さない端末の実測。
-次の着手点: 02 の切替状態機械（Android 撮影所有者・Rust worker の epoch・prepare/paused/commit 順序）。fixture で証明できない状態機械が残るため 03 には進まない。
+02 の状態機械を両側実装: PC 側 `quality.rs` とスマホ側 `QualitySwitch.kt` が同じ規律（純粋・イベント駆動・fixture 検証）で prepare/paused/commit/applied・拒否・重複・期限切れ・idle stage を所有。各側の fixture スクリプト（protocol/fixtures/quality-switch-{pc,phone}-v1.txt）が正確なアクションtraceを固定。transport への配線（LanServer/LanSession からの通知送信、Rust worker の epoch 管理・期限付き読み取り）と合成 peer テストが残る。
+
+未確認: 実機の能力一覧と採用 codec（fixture のみ）。最小時間を返さない端末の実測。USB 接続を保った切替の実機確認。
+次の着手点: 02 の transport 配線と合成 peer マトリクス。fixture で証明できない状態機械が残るため 03 には進まない。
 
 ## Next Agent Prompt
 
