@@ -102,7 +102,7 @@ fn peer(listener: TcpListener) {
         stream_epoch: 0,
     };
     stream
-        .write_all(&frame_bytes(wire::PAUSED, &paused.encode().unwrap()))
+        .write_all(&frame_bytes(wire::PAUSED, &paused.encode()))
         .unwrap();
     let (kind, payload) = read_frame(&mut stream);
     assert_eq!(kind, wire::COMMIT_QUALITY);
@@ -142,8 +142,6 @@ fn pc_worker_switches_mode_through_the_full_boundary() {
     let settings = Settings {
         transport: "lan".into(),
         lan_host: "127.0.0.1".into(),
-        lan_fingerprint: String::new(),
-        lan_key: String::new(),
         decode: "off".into(),
         ..Default::default()
     };
