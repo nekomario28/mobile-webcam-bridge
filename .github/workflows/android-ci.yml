@@ -62,15 +62,15 @@ jobs:
           python3 - <<'PY_LICENSES'
           import hashlib, json, pathlib, zipfile
           root = pathlib.Path.cwd()
-          receipts = json.loads((root / 'docs/evidence/2026-10-06-android-license-sources.json').read_text())
-          for apk in ('debug/app-debug.apk', 'release/app-release-unsigned.apk'):
-              with zipfile.ZipFile(root / 'android/app/build/outputs/apk' / apk) as package:
-                  assert package.read('assets/licenses/Apache-2.0.txt') == (root / 'LICENSE').read_bytes(), apk
-                  assert package.read('assets/licenses/NOTICE') == (root / 'android/app/src/main/assets/licenses/NOTICE').read_bytes(), apk
+          receipts = json.loads((root / "docs/evidence/2026-10-06-android-license-sources.json").read_text())
+          for apk in ("debug/app-debug.apk", "release/app-release-unsigned.apk"):
+              with zipfile.ZipFile(root / "android/app/build/outputs/apk" / apk) as package:
+                  assert package.read("assets/licenses/Apache-2.0.txt") == (root / "LICENSE").read_bytes(), apk
+                  assert package.read("assets/licenses/NOTICE") == (root / "android/app/src/main/assets/licenses/NOTICE").read_bytes(), apk
                   for item in receipts:
-                      data = package.read('assets/licenses/' + item['file'])
-                      assert hashlib.sha256(data).hexdigest() == item['sha256'], (apk, item['file'])
-          print('Verified project and Kotlin license assets in debug and release APKs')
+                      data = package.read("assets/licenses/" + item["file"])
+                      assert hashlib.sha256(data).hexdigest() == item["sha256"], (apk, item["file"])
+          print("Verified project and Kotlin license assets in debug and release APKs")
           PY_LICENSES
       - name: Capture Android UI
         if: github.event_name == 'workflow_dispatch' && inputs.capture_ui
