@@ -244,12 +244,15 @@ class MainActivity : Activity() {
             advertisedPermission = permission
             if (advertisedPermission >= 0) capabilityRevision += 1
         }
+        val modes = CaptureModes.supported(capabilities)
+        // The phone's preferred mode comes first: the PC's auto applies it.
+        val auto = CaptureModes.autoPreferred(modes)
         return Wire.Capabilities(
             extensionVersion = 1,
             permission = permission,
             catalogRevision = capabilityRevision,
             streamEpoch = 0,
-            modes = CaptureModes.supported(capabilities).map {
+            modes = (listOf(auto) + modes.filter { it != auto }).map {
                 Wire.QualityMode(it.width, it.height, it.targetFps, it.bitrate)
             },
         )

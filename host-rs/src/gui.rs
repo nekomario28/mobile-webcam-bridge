@@ -49,6 +49,8 @@ struct App {
     usb_thread: std::thread::Thread,
     usb_events: mpsc::Receiver<crate::Result<Vec<Candidate>>>,
     usb_error: Option<String>,
+    /// The quality draft; 0 fields mean auto (slice 03).
+    quality_draft: (u16, u16, u16),
     #[cfg(feature = "capture")]
     capture_requested: bool,
 }
@@ -132,6 +134,11 @@ impl App {
                 }
             }
         });
+        let quality_wish = (
+            settings.quality_width,
+            settings.quality_height,
+            settings.quality_fps,
+        );
         Self {
             settings,
             store,
@@ -147,6 +154,7 @@ impl App {
             usb_thread: inventory.thread().clone(),
             usb_events: receiver,
             usb_error: None,
+            quality_draft: quality_wish,
             #[cfg(feature = "capture")]
             capture_requested: false,
         }
@@ -504,6 +512,137 @@ impl eframe::App for App {
                                             });
                                         }
                                     });
+                                // Quality (slice 03): the saved wish, the
+                                // phone's advertised modes, one apply.
+                                let sizes: Vec<(u16, u16)> = self
+                                    .session
+                                    .capabilities
+                                    .as_ref()
+                                    .map(|modes| {
+                                        let mut sizes: Vec<_> =
+                                            modes.iter().map(|m| (m.width, m.height)).collect();
+                                        sizes.sort_unstable();
+                                        sizes.dedup();
+                                        sizes
+                                    })
+                                    .unwrap_or_default();
+                                ui.label(self.text("Resolution", "解像度"));
+                                egui::ComboBox::from_id_salt("quality-size")
+                                    .selected_text(if self.quality_draft.0 == 0 {
+                                        self.text("Auto", "自動").to_string()
+                                    } else {
+                                        format!(
+                                            "{}×{}",
+                                            self.quality_draft.0, self.quality_draft.1
+                                        )
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        if ui
+                                            .selectable_label(
+                                                self.quality_draft.0 == 0,
+                                                self.text("Auto", "自動"),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.quality_draft = (0, 0, 0);
+                                        }
+                                        for (w, h) in &sizes {
+                                            if ui
+                                                .selectable_label(
+                                                    self.quality_draft.0 == *w
+                                                        && self.quality_draft.1 == *h,
+                                                    format!("{w}×{h}"),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.quality_draft = (*w, *h, 0);
+                                            }
+                                        }
+                                    });
+                                let fps_list: Vec<u16> = self
+                                    .session
+                                    .capabilities
+                                    .as_ref()
+                                    .map(|modes| {
+                                        let mut fps: Vec<_> = modes
+                                            .iter()
+                                            .filter(|m| {
+                                                self.quality_draft.0 == 0
+                                                    || (m.width == self.quality_draft.0
+                                                        && m.height == self.quality_draft.1)
+                                            })
+                                            .map(|m| m.fps)
+                                            .collect();
+                                        fps.sort_unstable();
+                                        fps.dedup();
+                                        fps
+                                    })
+                                    .unwrap_or_default();
+                                ui.label(self.text("Frame rate", "フレームレート"));
+                                egui::ComboBox::from_id_salt("quality-fps")
+                                    .selected_text(if self.quality_draft.2 == 0 {
+                                        self.text("Auto", "自動").to_string()
+                                    } else {
+                                        format!("{} fps", self.quality_draft.2)
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        if ui
+                                            .selectable_label(
+                                                self.quality_draft.2 == 0,
+                                                self.text("Auto", "自動"),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.quality_draft.2 = 0;
+                                        }
+                                        for fps in &fps_list {
+                                            if ui
+                                                .selectable_label(
+                                                    self.quality_draft.2 == *fps,
+                                                    format!("{fps} fps"),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.quality_draft.2 = *fps;
+                                            }
+                                        }
+                                    });
+                                let wish = (
+                                    self.settings.quality_width,
+                                    self.settings.quality_height,
+                                    self.settings.quality_fps,
+                                );
+                                // The video pauses once during the apply; stop
+                                // and cancel stay available (spec slice 03).
+                                if running && self.quality_draft != wish {
+                                    if ui.button(self.text("Apply", "適用")).clicked() {
+                                        self.settings.quality_width = self.quality_draft.0;
+                                        self.settings.quality_height = self.quality_draft.1;
+                                        self.settings.quality_fps = self.quality_draft.2;
+                                        self.save();
+                                        // Auto applies the phone's preferred
+                                        // mode: the first advertised one.
+                                        let (w, h, fps) = if self.quality_draft.0 == 0 {
+                                            self.session
+                                                .capabilities
+                                                .as_ref()
+                                                .and_then(|modes| modes.first())
+                                                .map(|m| (m.width, m.height, m.fps))
+                                                .unwrap_or((0, 0, 0))
+                                        } else {
+                                            self.quality_draft
+                                        };
+                                        self.session.prepare_quality(w, h, fps);
+                                    }
+                                } else if !running {
+                                    ui.weak(self.text(
+                                        "Connect to choose from the phone's modes",
+                                        "接続するとスマホの対応モードから選べます",
+                                    ));
+                                }
+                                if let Some(error) = &self.session.quality_error {
+                                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                                }
                                 ui.horizontal(|ui| {
                                     ui.label(if self.ja { "回転" } else { "Rotation" });
                                     for rotation in [0, 90, 180, 270] {

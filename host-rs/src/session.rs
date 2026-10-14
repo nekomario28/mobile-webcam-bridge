@@ -36,6 +36,10 @@ pub struct Session {
     pub stats: Option<Event>,
     stats_at: Option<Instant>,
     pub usb_permission: Option<DeviceId>,
+    /// The phone's advertised capability list (slice 03); None before it.
+    pub capabilities: Option<Vec<control::QualityMode>>,
+    /// The last apply error, distinct from the session state (slice 03).
+    pub quality_error: Option<String>,
     #[cfg(target_os = "linux")]
     auxiliary: Option<Auxiliary>,
     #[cfg(windows)]
@@ -60,6 +64,8 @@ impl Session {
             stats: None,
             stats_at: None,
             usb_permission: None,
+            capabilities: None,
+            quality_error: None,
             #[cfg(target_os = "linux")]
             auxiliary: None,
             #[cfg(windows)]
@@ -89,6 +95,8 @@ impl Session {
         self.stats = None;
         self.stats_at = None;
         self.usb_permission = None;
+        self.capabilities = None;
+        self.quality_error = None;
         let mut command = std::process::Command::new(&self.executable);
         command
             .args(["--worker", &std::process::id().to_string()])
@@ -167,6 +175,17 @@ impl Session {
         self.state = State::Connecting;
         Ok(())
     }
+    /// Request a capture-mode switch (slice 03); the worker applies it.
+    pub fn prepare_quality(&mut self, width: u16, height: u16, fps: u16) {
+        if self.running() {
+            self.quality_error = None;
+            *self.pending.lock().unwrap() = Some(Command::PrepareQuality { width, height, fps });
+            if let Some(writer) = &self.writer {
+                writer.unpark();
+            }
+        }
+    }
+
     pub fn transform(&mut self, s: &Settings) {
         #[cfg(target_os = "linux")]
         if let Some(aux) = &mut self.auxiliary {
@@ -270,6 +289,17 @@ impl Session {
                     }
                     Event::UsbPermission { device } if !stopping => {
                         self.usb_permission = Some(device.clone())
+                    }
+                    Event::QualityCapabilities { modes, .. } if !stopping => {
+                        self.capabilities = Some(modes.clone());
+                    }
+                    Event::QualityApplied { .. } if !stopping => {
+                        self.quality_error = None;
+                    }
+                    Event::QualityFailed { reason } if !stopping => {
+                        // Distinct from the session state: the stream keeps
+                        // running, only the apply failed (spec slice 03).
+                        self.quality_error = Some(reason.clone());
                     }
                     Event::Stopped {} => finished = true,
                     _ => {}

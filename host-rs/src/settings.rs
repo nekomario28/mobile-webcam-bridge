@@ -13,6 +13,10 @@ pub struct Settings {
     pub rotation: u16,
     pub mirror: bool,
     pub vertical_flip: bool,
+    /// The saved quality wish; 0 means auto (slice 03).
+    pub quality_width: u16,
+    pub quality_height: u16,
+    pub quality_fps: u16,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -29,6 +33,9 @@ impl Default for Settings {
             rotation: 0,
             mirror: true,
             vertical_flip: false,
+            quality_width: 0,
+            quality_height: 0,
+            quality_fps: 0,
         }
     }
 }
@@ -39,6 +46,16 @@ impl Settings {
         }
         if ![0, 90, 180, 270].contains(&self.rotation) {
             return Err("invalid rotation".into());
+        }
+        // The quality wish is all-auto or a complete dimension/fps triple.
+        let quality_set = [self.quality_width, self.quality_height, self.quality_fps];
+        if quality_set.iter().any(|v| *v != 0)
+            && (quality_set.contains(&0)
+                || self.quality_width > 8192
+                || self.quality_height > 8192
+                || self.quality_fps > 240)
+        {
+            return Err("invalid quality preference".into());
         }
         if !["auto", "off", "software", "vaapi", "cuda", "d3d11va"].contains(&self.decode.as_str())
         {
@@ -61,6 +78,9 @@ impl Settings {
             ("rotation", self.rotation.to_string()),
             ("mirror", self.mirror.to_string()),
             ("verticalFlip", self.vertical_flip.to_string()),
+            ("qualityWidth", self.quality_width.to_string()),
+            ("qualityHeight", self.quality_height.to_string()),
+            ("qualityFps", self.quality_fps.to_string()),
         ]
         .into_iter()
         .map(|(k, v)| (k.into(), v))
@@ -77,6 +97,9 @@ impl Settings {
                 "rotation" => s.rotation = value.parse()?,
                 "mirror" => s.mirror = parse_bool(value)?,
                 "verticalFlip" => s.vertical_flip = parse_bool(value)?,
+                "qualityWidth" => s.quality_width = value.parse()?,
+                "qualityHeight" => s.quality_height = value.parse()?,
+                "qualityFps" => s.quality_fps = value.parse()?,
                 _ => {}
             }
         }
