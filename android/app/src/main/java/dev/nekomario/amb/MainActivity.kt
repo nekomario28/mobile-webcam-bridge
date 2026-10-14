@@ -264,7 +264,7 @@ class MainActivity : Activity() {
         qualityController = PhoneQualityController(
             session = active,
             revision = { capabilityRevision },
-            modes = { if (advertisedCapabilities?.permission == Wire.PERMISSION_READY) captureModes else emptyList() }
+            modes = { if (advertisedCapabilities?.permission == Wire.PERMISSION_READY) captureModes else emptyList() },
             permissionReady = { checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED },
             foreground = { foreground },
             streaming = { cameraBridge != null },
