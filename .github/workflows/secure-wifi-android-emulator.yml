@@ -72,7 +72,9 @@ jobs:
             kill "$emulator_pid" 2>/dev/null || true
           }
           trap on_exit EXIT
-          timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'
+          boot_completed() { [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; }
+          export -f boot_completed
+          timeout 180 bash -c 'until boot_completed; do sleep 2; done'
           adb install -r android/app/build/outputs/apk/debug/app-debug.apk
           adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
           # ADB forwards the Linux runner's TCP connection to the emulator's
