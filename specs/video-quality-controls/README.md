@@ -13,7 +13,9 @@
 
 02 の能力通知を実装: 新 APK は HELLO_ACK 後（Wi-Fi）／AccessorySession 開始後（USB）に単一 writer 経由で QUALITY_CAPABILITIES を送る。一覧は現在のカメラの対応モード（CaptureModes）+ カメラ権限状態（pending→許可後に更新・revision 前進）。MainActivity が供給元を所有（カメラ選択の所有者）、LanServer/AccessorySession が各セッションへ運ぶ。旧 PC は未知種別を無視する（前方互換の契約）。
 
-残る: PC 側の受信・能力通知前のコマンド抑止・SessionController と worker の epoch 管理・期限付き読み取り、合成 peer テストマトリクス。
+PC 側の切替を実装: worker が能力通知を制御イベントとして送出し、要求モードを全境界で適用（PREPARE_QUALITY→PAUSED で出力・復号状態を解放→COMMIT_QUALITY で epoch 前進→新世代 VIDEO_CONFIG を検証して applied）。アイドル接続は 250ms ポーリングで GUI の apply/stop を receive 待ちに閉じ込めない（spec の期限付き読み取りの第一歩）。合成 peer テスト（tests/quality_switch.rs）がスマホ・仮想カメラなしで全順序を検証。
+
+残る: 能力通知前のコマンド抑止、5 秒適用期限の強制、SessionController/GUI からの PrepareQuality 導線（slice 03 の UI と共に）、合成 peer マトリクスの拡張（旧peer/重複/遅延ACK/古いcallback/旧フレーム混入/PTS reset/Stop）。
 
 未確認: 実機の能力一覧と採用 codec（fixture のみ）。最小時間を返さない端末の実測。USB 接続を保った切替の実機確認。
 次の着手点: 02 の transport 配線と合成 peer マトリクス。fixture で証明できない状態機械が残るため 03 には進まない。
