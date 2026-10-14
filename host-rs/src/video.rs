@@ -292,7 +292,7 @@ fn receive(
                 // applied result is confirmed by the new-epoch VIDEO_CONFIG;
                 // the rejection keeps streaming and only reports.
                 let result = wire::QualityResult::decode(&incoming.payload)?;
-                let event = match result.status {
+                let switch_event = match result.status {
                     wire::RESULT_SWITCHING => crate::quality::Event::PrepareAccepted {
                         request_id: result.request_id,
                         streaming: started,
@@ -303,7 +303,7 @@ fn receive(
                     },
                     _ => continue,
                 };
-                for action in switch.step(now_ms(), event) {
+                for action in switch.step(now_ms(), switch_event) {
                     if let Action::ReportFailed { reason } = action {
                         event(Event::QualityFailed {
                             reason: reason.to_string(),
