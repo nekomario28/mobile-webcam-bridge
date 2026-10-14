@@ -15,7 +15,11 @@
 
 PC 側の切替を実装: worker が能力通知を制御イベントとして送出し、要求モードを全境界で適用（PREPARE_QUALITY→PAUSED で出力・復号状態を解放→COMMIT_QUALITY で epoch 前進→新世代 VIDEO_CONFIG を検証して applied）。アイドル接続は 250ms ポーリングで GUI の apply/stop を receive 待ちに閉じ込めない（spec の期限付き読み取りの第一歩）。合成 peer テスト（tests/quality_switch.rs）がスマホ・仮想カメラなしで全順序を検証。
 
-残る: 能力通知前のコマンド抑止、5 秒適用期限の強制、SessionController/GUI からの PrepareQuality 導線（slice 03 の UI と共に）、合成 peer マトリクスの拡張（旧peer/重複/遅延ACK/古いcallback/旧フレーム混入/PTS reset/Stop）。
+02 の残りを実装: 5 秒適用期限の強制（ポーリング/フレーム間隔で発火）、能力通知前のコマンド抑止（通知なしなら送らず失敗のみ報告）、QUALITY_RESULT の受信（拒否は配信維持で報告のみ）、PAUSED から新 config までの古フレーム破棄。合成 peer マトリクス 4 本（happy path・拒否・通知なし・期限ストール）が linux/windows で green。
+
+03 を実装: PC の「詳細」に解像度・フレームレートのセレクタと適用ボタン。希望値は自動または寸法/fps の三組で Settings に保存、phone の対応モードのみ選択可、適用は一度の映像停止、適用エラーはセッション状態と分離して表示。自動は phone の推奨モード（通知一覧の先頭）を適用。
+
+残る: 04（Linux／Windows・実機での確認）のみ——実機ゲート。
 
 未確認: 実機の能力一覧と採用 codec（fixture のみ）。最小時間を返さない端末の実測。USB 接続を保った切替の実機確認。
 次の着手点: 02 の transport 配線と合成 peer マトリクス。fixture で証明できない状態機械が残るため 03 には進まない。
@@ -29,7 +33,7 @@ Windows利用アプリ側のfpsは実機未確認。各工程の終了時に、�
 
 - [x] [01: Androidの対応モードと設定解決](slices/01-modes.md)
 - [ ] [02: 能力通知と安全な切替](slices/02-control.md)
-- [ ] [03: PCの詳細UIと保存](slices/03-ui.md)
+- [x] [03: PCの詳細UIと保存](slices/03-ui.md)
 - [ ] [04: Linux／Windows・実機での確認](slices/04-integration.md)
 
 ## 目標と操作
