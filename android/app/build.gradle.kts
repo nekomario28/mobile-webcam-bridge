@@ -60,6 +60,18 @@ kotlin {
     jvmToolchain(17)
 }
 
+// CI failure evidence: the log truncates JUnit failures to
+// "Exception at file:line", so keep the full assertion messages and the
+// test's own stdout/stderr in the build output, and let CI upload the
+// reports as an artifact (android-ci).
+tasks.withType<Test> {
+    testLogging {
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStackTraces = true
+    }
+}
+
 dependencies {
     testImplementation("junit:junit:4.13.2")
 }
