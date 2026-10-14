@@ -167,6 +167,10 @@ fn receive(
     event(Event::Waiting {})?;
     let mut switch = crate::quality::Switch::default();
     let mut catalog_revision = 0u16;
+    // A new PC sends no quality command before the advertisement; frames
+    // between PAUSED and the new config are stale by contract.
+    let mut advertised = false;
+    let mut switching = false;
     let mut config = None;
     let mut output = None;
     let mut pixels = pixels::Pixels::default();
@@ -178,8 +182,14 @@ fn receive(
     let mut submitted = 0;
     let mut report = Instant::now() - Duration::from_secs(1);
     while !stop.load(Ordering::Acquire) {
-        // The GUI's apply request; the machine owns one-at-a-time.
+        // The GUI's apply request; the machine owns one-at-a-time, and the
+        // advertisement gates it (spec slice 02).
         if let Some((width, height, fps)) = quality_request.lock().unwrap().take() {
+            if !advertised {
+                event(Event::QualityFailed {
+                    reason: "the phone has not advertised its capabilities yet".into(),
+                })?;
+            }
             for action in switch.step(
                 now_ms(),
                 crate::quality::Event::Prepare {
@@ -209,6 +219,23 @@ fn receive(
                         &wire::Frame::new(wire::PREPARE_QUALITY, 0, payload)?,
                         Duration::from_secs(2),
                     )?;
+                }
+            }
+        }
+        // The apply deadline fires on the poll/frame cadence even when the
+        // phone stalls (spec slice 02).
+        if switch.busy() {
+            for action in switch.step(now_ms(), crate::quality::Event::DeadlineExceeded) {
+                match action {
+                    Action::ReportFailed { reason } => {
+                        event(Event::QualityFailed {
+                            reason: reason.to_string(),
+                        })?;
+                    }
+                    Action::StopCapture | Action::CloseConnection => {
+                        return Err(reason_of_expiry());
+                    }
+                    _ => {}
                 }
             }
         }
@@ -242,6 +269,7 @@ fn receive(
             wire::QUALITY_CAPABILITIES => {
                 let caps = wire::Capabilities::decode(&incoming.payload)?;
                 catalog_revision = caps.catalog_revision;
+                advertised = true;
                 event(Event::QualityCapabilities {
                     permission: caps.permission,
                     revision: caps.catalog_revision,
@@ -259,6 +287,31 @@ fn receive(
                 })?;
                 continue;
             }
+            wire::QUALITY_RESULT => {
+                // The phone's answer: switching, rejected, or applied. The
+                // applied result is confirmed by the new-epoch VIDEO_CONFIG;
+                // the rejection keeps streaming and only reports.
+                let result = wire::QualityResult::decode(&incoming.payload)?;
+                let event = match result.status {
+                    wire::RESULT_SWITCHING => crate::quality::Event::PrepareAccepted {
+                        request_id: result.request_id,
+                        streaming: started,
+                    },
+                    wire::RESULT_REJECTED => crate::quality::Event::Rejected {
+                        request_id: result.request_id,
+                        reason: result.reason,
+                    },
+                    _ => continue,
+                };
+                for action in switch.step(now_ms(), event) {
+                    if let Action::ReportFailed { reason } = action {
+                        event(Event::QualityFailed {
+                            reason: reason.to_string(),
+                        })?;
+                    }
+                }
+                continue;
+            }
             wire::PAUSED => {
                 let paused = wire::Epoch::decode(&incoming.payload)?;
                 for action in switch.step(
@@ -271,10 +324,11 @@ fn receive(
                     match action {
                         Action::ReleaseOutputs => {
                             // Free the virtual-camera output and the decode
-                            // state; the new epoch's config restarts them.
+                            // state; frames until the new config are stale.
                             output = None;
                             started = false;
                             last_pts = 0;
+                            switching = true;
                         }
                         Action::SendCommitQuality { request_id, epoch } => {
                             let payload = wire::Epoch {
@@ -312,6 +366,7 @@ fn receive(
                 ) {
                     match action {
                         Action::ReportApplied { width, height, fps } => {
+                            switching = false;
                             event(Event::QualityApplied { width, height, fps })?;
                         }
                         Action::ReportFailed { reason } => {
@@ -333,6 +388,11 @@ fn receive(
             continue;
         }
         if incoming.header.kind != wire::VIDEO_AU || incoming.payload.is_empty() {
+            continue;
+        }
+        if switching {
+            // No old video after PAUSED: stale frames are dropped until the
+            // new epoch's config restarts the pipeline.
             continue;
         }
         let Some(c) = config else { continue };
@@ -399,6 +459,10 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn reason_of_expiry() -> Box<dyn std::error::Error + Send + Sync> {
+    "the apply deadline expired".into()
 }
 
 #[cfg(test)]

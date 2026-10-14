@@ -207,3 +207,257 @@ fn pc_worker_switches_mode_through_the_full_boundary() {
     );
     assert!(saw_applied, "the applied result never arrived");
 }
+
+/// A worker paired with a synthetic peer; the peer thread is joined by the
+/// test body. Returns the worker's stdin/stdout handles.
+fn spawn_paired_worker() -> (
+    std::process::Child,
+    std::process::ChildStdin,
+    std::process::ChildStdout,
+) {
+    let executable = std::env::var_os("MW_TEST_EXECUTABLE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_mobile-webcam").into());
+    let mut child = ProcessCommand::new(executable)
+        .args(["--worker", &std::process::id().to_string()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let settings = Settings {
+        transport: "lan".into(),
+        lan_host: "127.0.0.1".into(),
+        decode: "off".into(),
+        ..Default::default()
+    };
+    control::write(
+        &mut stdin,
+        &Command::Start {
+            settings,
+            device: None,
+        },
+    )
+    .unwrap();
+    // The peer side is the listener; the caller drives it.
+    (child, stdin, stdout)
+}
+
+#[test]
+fn rejection_keeps_the_stream_and_only_reports() {
+    let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
+    let peer = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let (kind, _) = read_frame(&mut stream);
+        assert_eq!(kind, wire::HELLO);
+        stream
+            .write_all(&frame_bytes(wire::HELLO_ACK, &[]))
+            .unwrap();
+        let (kind, _) = read_frame(&mut stream);
+        assert_eq!(kind, wire::IDR_REQUEST);
+        let caps = wire::Capabilities {
+            extension_version: 1,
+            permission: wire::PERMISSION_PENDING,
+            catalog_revision: 1,
+            stream_epoch: 0,
+            modes: vec![wire::QualityMode {
+                width: 1280,
+                height: 720,
+                target_fps: 30,
+                bitrate: 6_000_000,
+            }],
+        };
+        stream
+            .write_all(&frame_bytes(
+                wire::QUALITY_CAPABILITIES,
+                &caps.encode().unwrap(),
+            ))
+            .unwrap();
+        let (_, payload) = read_frame(&mut stream);
+        let prepare = wire::PrepareQuality::decode(&payload).unwrap();
+        // The rejection: permission is still pending, so the streaming mode
+        // is kept and only an answer goes out.
+        let rejected = wire::QualityResult {
+            request_id: prepare.request_id,
+            status: wire::RESULT_REJECTED,
+            reason: wire::REASON_PERMISSION,
+            applied_width: 0,
+            applied_height: 0,
+            applied_fps: 0,
+        };
+        stream
+            .write_all(&frame_bytes(wire::QUALITY_RESULT, &rejected.encode()))
+            .unwrap();
+        // The connection survives: a fresh advertisement still arrives.
+        let mut byte = [0];
+        let _ = stream.read(&mut byte);
+    });
+
+    let (mut child, mut stdin, stdout) = spawn_paired_worker();
+    let mut reader = BufReader::new(stdout);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut saw_failed = false;
+    while Instant::now() < deadline {
+        let Some(event) = control::read::<Event>(&mut reader).unwrap() else {
+            break;
+        };
+        if let Event::QualityFailed { reason } = event {
+            assert!(reason.contains("permission"), "{reason}");
+            saw_failed = true;
+            break;
+        }
+        if let Event::QualityCapabilities { .. } = event {
+            control::write(
+                &mut stdin,
+                &Command::PrepareQuality {
+                    width: 1920,
+                    height: 1080,
+                    fps: 30,
+                },
+            )
+            .unwrap();
+        }
+    }
+    let _ = control::write(&mut stdin, &Command::Stop {});
+    let _ = child.wait();
+    peer.join().unwrap();
+    assert!(saw_failed, "the rejection never reported");
+}
+
+#[test]
+fn no_quality_command_before_the_advertisement() {
+    let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
+    let peer = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let (kind, _) = read_frame(&mut stream);
+        assert_eq!(kind, wire::HELLO);
+        stream
+            .write_all(&frame_bytes(wire::HELLO_ACK, &[]))
+            .unwrap();
+        let (kind, _) = read_frame(&mut stream);
+        assert_eq!(kind, wire::IDR_REQUEST);
+        // The phone never advertises; a prepare must not reach it.
+        let mut byte = [0];
+        let read = stream.read(&mut byte);
+        assert!(
+            matches!(read, Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut),
+            "the worker sent a command before the advertisement: {read:?}"
+        );
+    });
+
+    let (mut child, mut stdin, stdout) = spawn_paired_worker();
+    let mut reader = BufReader::new(stdout);
+    control::write(
+        &mut stdin,
+        &Command::PrepareQuality {
+            width: 1920,
+            height: 1080,
+            fps: 30,
+        },
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut saw_failed = false;
+    while Instant::now() < deadline {
+        let Some(event) = control::read::<Event>(&mut reader).unwrap() else {
+            break;
+        };
+        if let Event::QualityFailed { reason } = event {
+            assert!(reason.contains("not advertised"), "{reason}");
+            saw_failed = true;
+            break;
+        }
+    }
+    let _ = control::write(&mut stdin, &Command::Stop {});
+    let _ = child.wait();
+    peer.join().unwrap();
+    assert!(
+        saw_failed,
+        "the missing advertisement never failed the apply"
+    );
+}
+
+#[test]
+fn the_apply_deadline_fails_when_the_phone_stalls() {
+    let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
+    let peer = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let (kind, _) = read_frame(&mut stream);
+        assert_eq!(kind, wire::HELLO);
+        stream
+            .write_all(&frame_bytes(wire::HELLO_ACK, &[]))
+            .unwrap();
+        let (kind, _) = read_frame(&mut stream);
+        assert_eq!(kind, wire::IDR_REQUEST);
+        let caps = wire::Capabilities {
+            extension_version: 1,
+            permission: wire::PERMISSION_READY,
+            catalog_revision: 1,
+            stream_epoch: 0,
+            modes: vec![wire::QualityMode {
+                width: 1280,
+                height: 720,
+                target_fps: 30,
+                bitrate: 6_000_000,
+            }],
+        };
+        stream
+            .write_all(&frame_bytes(
+                wire::QUALITY_CAPABILITIES,
+                &caps.encode().unwrap(),
+            ))
+            .unwrap();
+        let (_, _) = read_frame(&mut stream);
+        // The phone stalls: no QualityResult, no PAUSED. The worker's
+        // 5-second deadline must fire and close the session.
+        let mut byte = [0];
+        let _ = stream.read(&mut byte);
+    });
+
+    let (mut child, mut stdin, stdout) = spawn_paired_worker();
+    let mut reader = BufReader::new(stdout);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut saw_failed = false;
+    let mut saw_stopped = false;
+    while Instant::now() < deadline {
+        let Some(event) = control::read::<Event>(&mut reader).unwrap() else {
+            break;
+        };
+        match event {
+            Event::QualityCapabilities { .. } => {
+                control::write(
+                    &mut stdin,
+                    &Command::PrepareQuality {
+                        width: 1280,
+                        height: 720,
+                        fps: 30,
+                    },
+                )
+                .unwrap();
+            }
+            Event::QualityFailed { reason } => {
+                assert!(reason.contains("deadline"), "{reason}");
+                saw_failed = true;
+            }
+            Event::Stopped {} => {
+                saw_stopped = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    let _ = child.wait();
+    peer.join().unwrap();
+    assert!(saw_failed, "the deadline never failed the apply");
+    assert!(saw_stopped, "the worker never stopped after the deadline");
+}
