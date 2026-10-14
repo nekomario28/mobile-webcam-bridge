@@ -182,7 +182,7 @@ fn receive(
         if let Some((width, height, fps)) = quality_request.lock().unwrap().take() {
             for action in switch.step(
                 now_ms(),
-                quality::Event::Prepare {
+                crate::quality::Event::Prepare {
                     revision: catalog_revision,
                     width,
                     height,
@@ -240,7 +240,7 @@ fn receive(
                 let paused = wire::Epoch::decode(&incoming.payload)?;
                 for action in switch.step(
                     now_ms(),
-                    quality::Event::Paused {
+                    crate::quality::Event::Paused {
                         request_id: paused.request_id,
                         epoch: paused.stream_epoch,
                     },
@@ -282,7 +282,7 @@ fn receive(
                 // The switch boundary: the new config must match the request.
                 for action in switch.step(
                     now_ms(),
-                    quality::Event::VideoConfig {
+                    crate::quality::Event::VideoConfig {
                         width: next.width as u16,
                         height: next.height as u16,
                     },
