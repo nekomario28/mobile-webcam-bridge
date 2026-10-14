@@ -3,6 +3,16 @@
 設計 2026-10-06。調査基点: `f81da2c54b6adab430025e3b4b1742aa4e5e5ca0`。
 ブランチ: 設計は `design/video-quality-controls`、実装は `feature/video-quality-controls`。
 
+## 今回の到達目標
+
+実際のAndroid reader→品質制御→カメラ所有者→単一writerを接続し、
+PC側がフレーム途中や配信中ストールでも停止・5秒期限を扱える状態にする。
+明示モードの無断代替、PCからの初回撮影開始、自動再試行・ロールバックは禁止。
+各passは回帰テスト→修正→検証→commit/pushまで行い、その後も次のpassへ進む。
+
+順序: 能力交差 → Android reader/制御/writer境界 → PC受信/適用確認 → 希望値・適用状態 → 両branch統合確認。
+実機撮影・USBハードウェア・Linux/Windows消費アプリ・画面の視覚受入は別ゲートとして残す。
+
 ## 実装状態（2026-10-14、完了判定を訂正）
 
 PR #6 の `923d083` をソース監査した結果、**「残るのは04の実機ゲートだけ」という記述を撤回**。
@@ -10,7 +20,7 @@ PR #6 の `923d083` をソース監査した結果、**「残るのは04の実�
 ソフトウェア側の修正は [Issue #10](https://github.com/nekomario28/mobile-webcam-bridge/issues/10)、
 実機・ネイティブ出力の検証は [Issue #8](https://github.com/nekomario28/mobile-webcam-bridge/issues/8) で分けて追跡する。
 
-- 01: 解決器と同名codec起動は実装済み。ただしencoderのサイズ・速度対応の完全な交差が未実装。
+- 01: 同名codecのサイズ・速度制約を交差する判定と、最小フレーム時間の不明状態保持を実装。fixture回帰は旧判定で失敗→修正後成功。実機の能力と持続fpsは未確認。
 - 02: wire・純粋状態機械・能力通知・PC workerの基盤はあるが、Android readerから状態機械・カメラ所有者への配線がない。
   USB/LAN readerは8バイト上限のため14バイトのPrepareを拒否する。writerのpause/drain境界も未実装。
 - PC worker: config取得後の120秒receive、部分読み取り後のtimeout再試行、適用確認の不足を修正・回帰テストで固定する必要がある。

@@ -81,7 +81,7 @@ class CameraEncoderSession(
         }
         encoder = newEncoder
 
-        val manager = context.getSystemService(CameraManager::class.java)
+        val manager = requireNotNull(context.getSystemService(CameraManager::class.java)) { "Camera2 service unavailable" }
         manager.openCamera(
             mode.cameraId,
             object : CameraDevice.StateCallback() {

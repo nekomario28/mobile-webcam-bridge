@@ -54,6 +54,17 @@ class CaptureModesTest {
         (CaptureModes.resolve(caps, preference) as CaptureModes.Resolution.Resolved).mode
 
     @Test
+    fun encoderSizeRateLimitsExcludeCameraOnlyModes() {
+        val limited = perSizeCapped().copy(
+            encoderSizeRates = setOf(CaptureModes.SizeRate(1280, 720, 30)),
+        )
+        val modes = CaptureModes.supported(limited)
+        assertEquals(listOf(Triple(1280, 720, 30)), modes.map { Triple(it.width, it.height, it.targetFps) })
+        assertTrue(CaptureModes.resolve(limited, CaptureModes.CapturePreference(1280, 720, 60)) is CaptureModes.Resolution.Rejected)
+        assertTrue(CaptureModes.resolve(limited, CaptureModes.CapturePreference(1920, 1080, 30)) is CaptureModes.Resolution.Rejected)
+    }
+
+    @Test
     fun listsOnlyIntersectedSizeFpsModes() {
         val modes = CaptureModes.supported(fps30Only())
         // The 15–30 range's upper bound is 30, so it serves fps 30 only —
@@ -89,6 +100,18 @@ class CaptureModesTest {
         )
         val modes = CaptureModes.supported(caps)
         assertTrue(modes.any { it.width == 1280 && it.height == 720 && it.targetFps == 60 })
+        assertTrue(modes.none { it.minFrameDurationKnown })
+        assertTrue(CaptureModes.supported(perSizeCapped()).all { it.minFrameDurationKnown })
+    }
+
+    @Test
+    fun additionalNormalSessionRatesAndProductCeiling() {
+        val catalog = caps(
+            sizes = listOf(size(1280, 720), size(4096, 2160)),
+            aeRanges = listOf(FpsRange(25, 25), FpsRange(50, 50)),
+        )
+        assertEquals(setOf(Triple(1280, 720, 25), Triple(1280, 720, 50)),
+            CaptureModes.supported(catalog).map { Triple(it.width, it.height, it.targetFps) }.toSet())
     }
 
     @Test

@@ -22,7 +22,7 @@ object CameraCatalog {
     )
 
     fun enumerate(context: Context): List<CameraInfo> {
-        val manager = context.getSystemService(CameraManager::class.java)
+        val manager = requireNotNull(context.getSystemService(CameraManager::class.java)) { "Camera2 service unavailable" }
         return manager.cameraIdList.map { id ->
             val c = manager.getCameraCharacteristics(id)
             val streamMap = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)

@@ -19,7 +19,7 @@ import android.media.MediaFormat
  */
 object CaptureModes {
     /** Integer fps candidates a webcam mode can target. */
-    val FPS_CANDIDATES = listOf(15, 24, 30, 60)
+    val FPS_CANDIDATES = listOf(15, 24, 25, 30, 50, 60)
 
     /** Reference the auto preference optimizes toward: the historical mode. */
     private const val AUTO_WIDTH = 1280
@@ -36,6 +36,7 @@ object CaptureModes {
         val targetFps: Int,
         val aeRange: FpsRange,
         val bitrate: Int,
+        val minFrameDurationKnown: Boolean,
     )
 
     /**
@@ -54,6 +55,8 @@ object CaptureModes {
         val minFrameDurationNanos: Long?,
     )
 
+    data class SizeRate(val width: Int, val height: Int, val fps: Int)
+
     /** The device-side capability shape the resolver consumes. */
     data class Capabilities(
         val cameraId: String,
@@ -63,6 +66,8 @@ object CaptureModes {
         val widthAlignment: Int = 1,
         val heightAlignment: Int = 1,
         val bitrateRange: IntRange = 1..100_000_000,
+        /** Null only for fixtures without encoder constraints; collectors supply this set. */
+        val encoderSizeRates: Set<SizeRate>? = null,
     )
 
     /** The PC-side saved preference; any null field is resolved automatically. */
@@ -82,7 +87,9 @@ object CaptureModes {
     /** Every supported (size, fps) mode for these capabilities. */
     fun supported(caps: Capabilities): List<CaptureMode> {
         val modes = mutableListOf<CaptureMode>()
+        require(caps.widthAlignment > 0 && caps.heightAlignment > 0)
         for (size in caps.sizes) {
+            if (size.width !in 1..3840 || size.height !in 1..2160) continue
             if (size.width % caps.widthAlignment != 0 || size.height % caps.heightAlignment != 0) {
                 continue
             }
@@ -93,6 +100,7 @@ object CaptureModes {
                 ?.let { (1_000_000_000L / it).toInt() }
             for (fps in FPS_CANDIDATES) {
                 if (maxFps != null && fps > maxFps) continue
+                if (caps.encoderSizeRates?.contains(SizeRate(size.width, size.height, fps)) == false) continue
                 val aeRange = chooseAeRange(caps.aeRanges, fps) ?: continue
                 modes.add(
                     CaptureMode(
@@ -103,6 +111,7 @@ object CaptureModes {
                         targetFps = fps,
                         aeRange = aeRange,
                         bitrate = autoBitrate(size.width, size.height, fps, caps.bitrateRange),
+                        minFrameDurationKnown = maxFps != null,
                     ),
                 )
             }
@@ -214,6 +223,11 @@ object CaptureModes {
             widthAlignment = videoCapabilities.widthAlignment,
             heightAlignment = videoCapabilities.heightAlignment,
             bitrateRange = videoCapabilities.bitrateRange.let { it.lower..it.upper },
+            encoderSizeRates = sizes.flatMap { size ->
+                FPS_CANDIDATES.filter { fps ->
+                    videoCapabilities.areSizeAndRateSupported(size.width, size.height, fps.toDouble())
+                }.map { fps -> SizeRate(size.width, size.height, fps) }
+            }.toSet(),
         )
     }
 
