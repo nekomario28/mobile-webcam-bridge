@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference
 class LanSession(
     private val socket: Socket,
     private val onClosed: (LanSession, String?) -> Unit,
+    private val capabilities: (() -> Wire.Capabilities?)? = null,
 ) : MediaSession {
     private val running = AtomicBoolean(false)
     private val input = socket.getInputStream()
@@ -32,7 +33,15 @@ class LanSession(
     fun start() {
         if (!running.compareAndSet(false, true)) return
         outbound.start()
+        // The new APK advertises its capabilities right after pairing; an old
+        // PC ignores the unknown type (spec slice 02).
+        capabilities?.invoke()?.let { outbound.sendCapabilities(it) }
         readerThread = Thread({ readLoop() }, "mwb-lan-reader").also { it.start() }
+    }
+
+    /** Re-advertise after the capability list changes (e.g. permission granted). */
+    fun updateCapabilities() {
+        capabilities?.invoke()?.let { outbound.sendCapabilities(it) }
     }
 
     override fun attachIdrRequester(requester: (() -> Unit)?) {
@@ -135,12 +144,12 @@ class LanServer(
                         return@onSuccess
                     }
                     lateinit var session: LanSession
-                    session = LanSession(socket) { closed, error ->
+                    session = LanSession(socket, { closed, error ->
                         if (active.compareAndSet(closed, null)) {
                             onSession(closed, false)
                         }
                         if (!error.isNullOrBlank()) onError(error)
-                    }
+                    }, capabilities)
                     active.set(session)
                     session.start()
                     onSession(session, true)

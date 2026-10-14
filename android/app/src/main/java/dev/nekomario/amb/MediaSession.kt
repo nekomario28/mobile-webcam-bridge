@@ -6,4 +6,6 @@ interface MediaSession : AutoCloseable {
     fun onCameraStarted(config: CameraEncoderSession.ActiveConfig)
     fun onAccessUnit(unit: H264Encoder.AccessUnit)
     fun droppedVideoFrames(): Long
+    /** Re-advertise the quality capabilities after the list changes. */
+    fun updateCapabilities()
 }

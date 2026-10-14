@@ -10,6 +10,7 @@ class AccessorySession(
     private val pfd: ParcelFileDescriptor,
     private val onProgress: (Int) -> Unit,
     private val onError: (String) -> Unit,
+    private val capabilities: (() -> Wire.Capabilities?)? = null,
 ) : MediaSession {
     private val running = AtomicBoolean(false)
     private var readerThread: Thread? = null
@@ -26,7 +27,15 @@ class AccessorySession(
     fun start() {
         if (!running.compareAndSet(false, true)) return
         outbound.start()
+        // The new APK advertises its capabilities right after the accessory
+        // session starts; an old PC ignores the unknown type.
+        capabilities?.invoke()?.let { outbound.sendCapabilities(it) }
         readerThread = Thread({ runLoop() }, "amb-accessory-reader").also { it.start() }
+    }
+
+    /** Re-advertise after the capability list changes (e.g. permission granted). */
+    fun updateCapabilities() {
+        capabilities?.invoke()?.let { outbound.sendCapabilities(it) }
     }
 
     override fun attachIdrRequester(requester: (() -> Unit)?) {

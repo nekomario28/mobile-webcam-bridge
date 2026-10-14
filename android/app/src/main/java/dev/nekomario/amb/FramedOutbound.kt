@@ -51,6 +51,24 @@ class FramedOutbound(
         )
     }
 
+    /** The quality capability advertisement; a control frame like PONG, so it
+     *  rides the single writer in order. Old PCs ignore the unknown type. */
+    fun sendCapabilities(capabilities: Wire.Capabilities) {
+        val payload = Wire.encodeCapabilities(capabilities)
+        enqueueControl(
+            Frame(
+                Wire.Header(
+                    type = Wire.TYPE_QUALITY_CAPABILITIES,
+                    flags = 0,
+                    sequence = 0,
+                    payloadLength = payload.size,
+                    ptsUs = 0,
+                ),
+                payload,
+            ),
+        )
+    }
+
     fun setCodecConfig(config: H264Encoder.CodecConfig) {
         synchronized(videoLock) { latestCodecConfig = VideoWire.joinCodecConfig(config) }
     }

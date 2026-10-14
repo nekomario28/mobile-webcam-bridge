@@ -41,6 +41,8 @@ class MainActivity : Activity() {
     private var accessoryFd: ParcelFileDescriptor? = null
     private var session: MediaSession? = null
     private var lanServer: LanServer? = null
+    private var capabilityRevision = 0
+    private var advertisedPermission = -1
     private var cameraBridge: CameraBridgeController? = null
     private lateinit var cameraButton: Button
     private lateinit var details: TextView
@@ -221,6 +223,38 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * The quality capability advertisement for the current camera: the
+     * supported modes, the camera-permission state and a revision that
+     * advances when the list changes. Sent right after pairing (Wi-Fi) or
+     * the accessory session start (USB); old PCs ignore the unknown type.
+     */
+    private fun qualityCapabilities(): Wire.Capabilities? {
+        val cameras = runCatching { CameraCatalog.enumerate(this) }.getOrNull() ?: return null
+        val camera = cameras.firstOrNull { it.lensFacing == CameraCharacteristics.LENS_FACING_BACK }
+            ?: cameras.firstOrNull()
+            ?: return null
+        val capabilities = CaptureModes.collectCapabilities(this, camera.id) ?: return null
+        val permission = if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            Wire.PERMISSION_READY
+        } else {
+            Wire.PERMISSION_PENDING
+        }
+        if (permission != advertisedPermission) {
+            advertisedPermission = permission
+            if (advertisedPermission >= 0) capabilityRevision += 1
+        }
+        return Wire.Capabilities(
+            extensionVersion = 1,
+            permission = permission,
+            catalogRevision = capabilityRevision,
+            streamEpoch = 0,
+            modes = CaptureModes.supported(capabilities).map {
+                Wire.QualityMode(it.width, it.height, it.targetFps, it.bitrate)
+            },
+        )
+    }
+
     private fun startUsbMode() {
         if (connectionMode == ConnectionMode.USB && (session != null || usbPermissionRequest != null || cameraStartRequested)) return
         handler.removeCallbacks(rediscoverRunnable)
@@ -274,6 +308,7 @@ class MainActivity : Activity() {
             onError = { error ->
                 runOnUiThread { if (lanServer === server && session == null) showLanWaiting(error) }
             },
+            capabilities = { qualityCapabilities() },
         )
         lanServer = server
         runCatching { server.start() }
@@ -361,6 +396,7 @@ class MainActivity : Activity() {
         lateinit var active: AccessorySession
         active = AccessorySession(
             pfd = pfd,
+            capabilities = { qualityCapabilities() },
             onProgress = { count ->
                 runOnUiThread {
                     if (session === active) {
@@ -541,7 +577,11 @@ class MainActivity : Activity() {
         cameraPermissionPending = false
         if (!cameraStartRequested) return
         val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
-        if (granted) startCamera()
+        if (granted) {
+            // The capability list changed from permission-pending to ready.
+            session?.updateCapabilities()
+            startCamera()
+        }
         else {
             stopCamera()
             showConnectionStatus(ui("Camera permission denied", "カメラ権限が必要です"))
