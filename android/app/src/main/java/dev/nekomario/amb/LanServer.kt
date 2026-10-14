@@ -105,6 +105,7 @@ class LanServer(
     private val onSession: (LanSession, Boolean) -> Unit,
     private val onStatus: (String) -> Unit,
     private val onError: (String) -> Unit,
+    private val capabilities: (() -> Wire.Capabilities?)? = null,
 ) : AutoCloseable {
     private val running = AtomicBoolean(false)
     private val active = AtomicReference<LanSession?>(null)
