@@ -8,7 +8,7 @@ use mobile_webcam::{
     wire::{self, Header},
 };
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     process::{Command as ProcessCommand, Stdio},
     thread,
