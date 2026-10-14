@@ -27,7 +27,8 @@ on earlier supported Android releases.
 ## Implemented protections
 
 - The Android reader validates control frame payload length **before**
-  allocation: HELLO and IDR_REQUEST carry zero bytes; PING carries eight bytes.
+  allocation: secure Wi-Fi HELLO carries the 16-byte credential; USB HELLO
+  and IDR_REQUEST carry zero bytes; PING carries eight bytes.
 - The Android outbound writer caps the control queue at 32 frames (the video
   queue already has an independent two-frame bound). On control overflow, the
   active LAN session reports an error and closes.
@@ -38,6 +39,12 @@ on earlier supported Android releases.
   PING rates. TLS negotiation has both a per-operation socket timeout and an
   absolute 5-second whole-handshake deadline that closes the unauthenticated
   socket, with at most four concurrent untrusted handshakes in flight.
+- The Rust client propagates one monotonic deadline beneath TLS record
+  buffering. Socket connection attempts, TLS negotiation and AMB1 pairing
+  share a budget; frame header, payload and flush do not renew it. A timeout
+  is terminal, since an AMB1 frame may already be partially consumed.
+  Synchronous DNS resolution is not interruptible by this I/O deadline; use
+  a literal phone address when that distinction matters.
 
 ## Outstanding security requirements
 
@@ -63,6 +70,8 @@ compromise and traffic metadata remain out of scope of TLS guarantees.
 devices, Linux and Windows end-to-end consumer frames, incorrect pin, incorrect
 key, MITM substitution, revocation during streaming, stalled TLS handshake,
 and USB regression. No security claim is established by build-only CI.
+The [one-pass independent static review](reviews/secure-wifi-static-review.md)
+records its narrower coverage and the reproduced client-deadline finding.
 
 
 ### External Rust security controls

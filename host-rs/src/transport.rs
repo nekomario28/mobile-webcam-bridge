@@ -28,24 +28,38 @@ pub trait SocketTransport {
     /// The byte stream AMB1 sees: raw TCP, or TLS over the same socket.
     fn stream(&mut self) -> &mut dyn ByteStream;
 
+    /// Install one operation deadline, including security-layer internal I/O.
+    /// TLS transports override this to propagate it beneath record buffering.
+    fn set_deadline(&mut self, deadline: Instant) -> io::Result<()> {
+        let left = remaining(deadline)?;
+        self.socket().set_read_timeout(Some(left))?;
+        self.socket().set_write_timeout(Some(left))
+    }
+
     fn receive(&mut self, timeout: Duration) -> crate::Result<Frame> {
+        self.receive_until(Instant::now() + timeout)
+    }
+
+    fn receive_until(&mut self, deadline: Instant) -> crate::Result<Frame> {
         let mut header = [0; wire::HEADER_SIZE];
-        self.read_exact(&mut header, timeout)?;
+        self.read_exact_until(&mut header, deadline)?;
         let header = Header::decode(&header)?;
         let mut payload = vec![0; header.payload_len as usize];
-        self.read_exact(&mut payload, timeout)?;
+        self.read_exact_until(&mut payload, deadline)?;
         Ok(Frame { header, payload })
     }
 
     fn send(&mut self, frame: &Frame, timeout: Duration) -> crate::Result<()> {
+        self.send_until(frame, Instant::now() + timeout)
+    }
+
+    fn send_until(&mut self, frame: &Frame, deadline: Instant) -> crate::Result<()> {
         frame.validate()?;
-        let deadline = Instant::now() + timeout;
         let header = frame.header.encode()?;
         for bytes in [header.as_slice(), frame.payload.as_slice()] {
             let mut offset = 0;
             while offset < bytes.len() {
-                self.socket()
-                    .set_write_timeout(Some(remaining(deadline)?))?;
+                self.set_deadline(deadline)?;
                 match self.stream().write(&bytes[offset..]) {
                     Ok(0) => return Err("transport made no write progress".into()),
                     Ok(count) => offset += count,
@@ -54,17 +68,19 @@ pub trait SocketTransport {
                 }
             }
         }
+        self.set_deadline(deadline)?;
         self.stream().flush()?;
+        remaining(deadline)?;
         Ok(())
     }
 
-    /// Read exactly `bytes.len()` bytes; partial reads never extend the
-    /// deadline. A closed peer is an error, not a short read.
-    fn read_exact(&mut self, bytes: &mut [u8], timeout: Duration) -> io::Result<()> {
-        let deadline = Instant::now() + timeout;
+    /// Read exactly `bytes.len()` bytes within the caller's operation deadline.
+    /// A closed peer is an error, not a short read. Timeout is terminal: callers
+    /// must close, not retry a partially consumed AMB1 frame.
+    fn read_exact_until(&mut self, bytes: &mut [u8], deadline: Instant) -> io::Result<()> {
         let mut offset = 0;
         while offset < bytes.len() {
-            self.socket().set_read_timeout(Some(remaining(deadline)?))?;
+            self.set_deadline(deadline)?;
             match self.stream().read(&mut bytes[offset..]) {
                 Ok(0) => {
                     return Err(io::Error::new(
@@ -77,6 +93,7 @@ pub trait SocketTransport {
                 Err(error) => return Err(error),
             }
         }
+        remaining(deadline)?;
         Ok(())
     }
 
@@ -84,16 +101,16 @@ pub trait SocketTransport {
     /// an empty HELLO_ACK with sequence 1. A server that closes the connection
     /// instead of answering has rejected the credential — the same signal the
     /// real phone produces for a wrong access key.
-    fn pair(&mut self, credential: Vec<u8>, timeout: Duration) -> crate::Result<()> {
-        self.send(&Frame::new(wire::HELLO, 1, credential)?, timeout)?;
-        let ack =
-            self.receive(timeout)
-                .map_err(|error| match error.downcast_ref::<io::Error>() {
-                    Some(closed) if closed.kind() == io::ErrorKind::UnexpectedEof => {
-                        "Wi-Fi pairing was not authorized".into()
-                    }
-                    _ => error,
-                })?;
+    fn pair_until(&mut self, credential: Vec<u8>, deadline: Instant) -> crate::Result<()> {
+        self.send_until(&Frame::new(wire::HELLO, 1, credential)?, deadline)?;
+        let ack = self.receive_until(deadline).map_err(|error| {
+            match error.downcast_ref::<io::Error>() {
+                Some(closed) if closed.kind() == io::ErrorKind::UnexpectedEof => {
+                    "Wi-Fi pairing was not authorized".into()
+                }
+                _ => error,
+            }
+        })?;
         if ack.header.kind != wire::HELLO_ACK || ack.header.sequence != 1 || !ack.payload.is_empty()
         {
             return Err("Wi-Fi pairing was not authorized".into());
@@ -178,10 +195,10 @@ impl SocketTransport for Tcp {
 
 impl Tcp {
     pub fn connect(host: &str, port: u16, timeout: Duration) -> crate::Result<Self> {
-        dial(host, port, timeout, |socket, _| {
+        dial(host, port, timeout, |socket, deadline| {
             socket.set_nodelay(true)?;
             let mut tcp = Self(socket);
-            tcp.pair(Vec::new(), timeout)?;
+            tcp.pair_until(Vec::new(), deadline)?;
             Ok(tcp)
         })
     }
@@ -246,6 +263,33 @@ mod tests {
         );
         peer.join().unwrap();
     }
+    #[test]
+    fn header_and_payload_share_one_receive_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = Tcp(TcpStream::connect(listener.local_addr().unwrap()).unwrap());
+        let peer = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let frame = Frame::new(wire::VIDEO_AU, 1, vec![42]).unwrap();
+            thread::sleep(Duration::from_millis(120));
+            socket.write_all(&frame.header.encode().unwrap()).unwrap();
+            thread::sleep(Duration::from_millis(140));
+            let _ = socket.write_all(&frame.payload);
+        });
+        let started = Instant::now();
+        let outcome = Transport::receive(&mut client, Duration::from_millis(200));
+        let elapsed = started.elapsed();
+        drop(client);
+        peer.join().unwrap();
+        assert!(
+            outcome.is_err(),
+            "payload must not get a fresh 200ms budget"
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "receive took {elapsed:?}"
+        );
+    }
+
     #[test]
     fn partial_reads_do_not_extend_deadline() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

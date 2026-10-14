@@ -11,7 +11,7 @@ use rustls::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    io,
+    io::{self, Read, Write},
     net::TcpStream,
     sync::Arc,
     time::{Duration, Instant},
@@ -95,14 +95,54 @@ pub fn parse_hex(value: &str, bytes: usize) -> crate::Result<Vec<u8>> {
         .collect()
 }
 
-pub struct SecureTcp(StreamOwned<ClientConnection, TcpStream>);
+/// rustls can perform many socket operations inside one `complete_io` or
+/// stream read. Enforce the shared deadline at each underlying I/O boundary,
+/// not only at the outer TLS call; trickled records must not renew the budget.
+struct DeadlineSocket {
+    socket: TcpStream,
+    deadline: Instant,
+}
+
+impl Read for DeadlineSocket {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.socket
+            .set_read_timeout(Some(transport::remaining(self.deadline)?))?;
+        let count = self.socket.read(bytes)?;
+        transport::remaining(self.deadline)?;
+        Ok(count)
+    }
+}
+
+impl Write for DeadlineSocket {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.socket
+            .set_write_timeout(Some(transport::remaining(self.deadline)?))?;
+        let count = self.socket.write(bytes)?;
+        transport::remaining(self.deadline)?;
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        transport::remaining(self.deadline)?;
+        self.socket.flush()?;
+        transport::remaining(self.deadline)?;
+        Ok(())
+    }
+}
+
+pub struct SecureTcp(StreamOwned<ClientConnection, DeadlineSocket>);
 
 impl SocketTransport for SecureTcp {
     fn socket(&mut self) -> &mut TcpStream {
-        &mut self.0.sock
+        &mut self.0.sock.socket
     }
     fn stream(&mut self) -> &mut dyn ByteStream {
         &mut self.0
+    }
+    fn set_deadline(&mut self, deadline: Instant) -> io::Result<()> {
+        transport::remaining(deadline)?;
+        self.0.sock.deadline = deadline;
+        Ok(())
     }
 }
 
@@ -133,26 +173,15 @@ impl SecureTcp {
         transport::dial(host, port, timeout, |socket, deadline| {
             socket.set_nodelay(true)?;
             let client = ClientConnection::new(Arc::new(config.clone()), server_name.clone())?;
-            let mut secure = Self(StreamOwned::new(client, socket));
+            let mut secure = Self(StreamOwned::new(
+                client,
+                DeadlineSocket { socket, deadline },
+            ));
             while secure.0.conn.is_handshaking() {
-                // The socket timeout bounds each I/O, not the handshake: a
-                // peer that drips bytes just under the timeout would keep
-                // every remaining-time check positive and hold the
-                // connection open past the deadline. Check the wall clock
-                // every iteration so the deadline is absolute.
-                if Instant::now() >= deadline {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "TLS handshake deadline exceeded",
-                    )
-                    .into());
-                }
-                let left = transport::remaining(deadline)?;
-                secure.0.sock.set_read_timeout(Some(left))?;
-                secure.0.sock.set_write_timeout(Some(left))?;
                 secure.0.conn.complete_io(&mut secure.0.sock)?;
+                transport::remaining(deadline)?;
             }
-            secure.pair(credential.clone(), transport::remaining(deadline)?)?;
+            secure.pair_until(credential.clone(), deadline)?;
             Ok(secure)
         })
     }
