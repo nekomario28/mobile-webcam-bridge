@@ -10,7 +10,12 @@ use rustls::{
     pki_types::{CertificateDer, ServerName, UnixTime},
 };
 use sha2::{Digest, Sha256};
-use std::{net::TcpStream, sync::Arc, time::Duration};
+use std::{
+    io,
+    net::TcpStream,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug)]
 struct PinnedCertificate {
@@ -130,6 +135,18 @@ impl SecureTcp {
             let client = ClientConnection::new(Arc::new(config.clone()), server_name.clone())?;
             let mut secure = Self(StreamOwned::new(client, socket));
             while secure.0.conn.is_handshaking() {
+                // The socket timeout bounds each I/O, not the handshake: a
+                // peer that drips bytes just under the timeout would keep
+                // every remaining-time check positive and hold the
+                // connection open past the deadline. Check the wall clock
+                // every iteration so the deadline is absolute.
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "TLS handshake deadline exceeded",
+                    )
+                    .into());
+                }
                 let left = transport::remaining(deadline)?;
                 secure.0.sock.set_read_timeout(Some(left))?;
                 secure.0.sock.set_write_timeout(Some(left))?;
