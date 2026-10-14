@@ -11,9 +11,19 @@ use std::{
     io::{BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     process::{Command as ProcessCommand, Stdio},
+    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
+
+/// The worker dials the fixed Wi-Fi port, so the peer tests serialize on it.
+static PORT_LOCK: Mutex<()> = Mutex::new(());
+
+fn port_guard() -> std::sync::MutexGuard<'static, ()> {
+    PORT_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn frame_bytes(kind: u8, payload: &[u8]) -> Vec<u8> {
     let header = Header {
@@ -133,6 +143,7 @@ fn peer(listener: TcpListener) {
 
 #[test]
 fn pc_worker_switches_mode_through_the_full_boundary() {
+    let _port = port_guard();
     // The worker always dials port 48527 (the Wi-Fi default).
     let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
     let server = thread::spawn(move || peer(listener));
@@ -246,6 +257,7 @@ fn spawn_paired_worker() -> (
 
 #[test]
 fn rejection_keeps_the_stream_and_only_reports() {
+    let _port = port_guard();
     let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
     let peer = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
@@ -330,6 +342,7 @@ fn rejection_keeps_the_stream_and_only_reports() {
 
 #[test]
 fn no_quality_command_before_the_advertisement() {
+    let _port = port_guard();
     let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
     let peer = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
@@ -386,6 +399,7 @@ fn no_quality_command_before_the_advertisement() {
 
 #[test]
 fn the_apply_deadline_fails_when_the_phone_stalls() {
+    let _port = port_guard();
     let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
     let peer = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
