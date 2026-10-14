@@ -85,6 +85,8 @@ jobs:
           mkdir -p build/android-ui
           "$ANDROID_HOME/emulator/emulator" -avd mobile-webcam-ui -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 >build/android-ui/emulator.log 2>&1 &
           emulator_pid=$!
+          # The trap must defer $emulator_pid until it fires.
+          # shellcheck disable=SC2016
           trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
           timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'
           adb shell wm size 720x1280
