@@ -139,10 +139,9 @@ fn receive(
     stop: &AtomicBool,
     changes: &Mutex<Option<Transform>>,
     quality_request: &Mutex<Option<(u16, u16, u16)>>,
-    mut event: impl FnMut(Event) -> crate::Result<()>,
+    event: impl FnMut(Event) -> crate::Result<()>,
 ) -> crate::Result<()> {
-    let mut decoder = decoder::Decoder::open(&settings.decode)?;
-    let mut transport: Box<dyn Transport> = if settings.transport == "lan" {
+    let transport: Box<dyn Transport> = if settings.transport == "lan" {
         Box::new(Tcp::connect(
             &settings.lan_host,
             48527,
@@ -151,6 +150,27 @@ fn receive(
     } else {
         Box::new(Usb::connect(&device.ok_or("select a USB device")?)?)
     };
+    let output_path = settings.output.trim().to_string();
+    receive_stream(
+        settings,
+        transport,
+        stop,
+        changes,
+        quality_request,
+        event,
+        |c| crate::output::Camera::open(&output_path, c.width, c.height, c.fps),
+    )
+}
+fn receive_stream<S: crate::output::Sink>(
+    settings: Settings,
+    mut transport: Box<dyn Transport>,
+    stop: &AtomicBool,
+    changes: &Mutex<Option<Transform>>,
+    quality_request: &Mutex<Option<(u16, u16, u16)>>,
+    mut event: impl FnMut(Event) -> crate::Result<()>,
+    mut create_output: impl FnMut(Config) -> crate::Result<S>,
+) -> crate::Result<()> {
+    let mut decoder = Some(decoder::Decoder::open(&settings.decode)?);
     let idr = transport.send(
         &wire::Frame::new(wire::IDR_REQUEST, 2, Vec::new())?,
         Duration::from_secs(2),
@@ -166,11 +186,14 @@ fn receive(
     }
     event(Event::Waiting {})?;
     let mut switch = crate::quality::Switch::default();
+    let clock = Instant::now();
+    let now_ms = || clock.elapsed().as_millis() as u64;
+    let mut modes = Vec::new();
     let mut catalog_revision = 0u16;
     // A new PC sends no quality command before the advertisement; frames
     // between PAUSED and the new config are stale by contract.
     let mut advertised = false;
-    let mut switching = false;
+    let mut permission = wire::PERMISSION_UNAVAILABLE;
     let mut config = None;
     let mut output = None;
     let mut pixels = pixels::Pixels::default();
@@ -185,11 +208,21 @@ fn receive(
         // The GUI's apply request; the machine owns one-at-a-time, and the
         // advertisement gates it (spec slice 02).
         if let Some((width, height, fps)) = quality_request.lock().unwrap().take() {
-            if !advertised {
+            let rejection = if !advertised {
+                Some("the phone has not advertised its capabilities yet")
+            } else if permission != wire::PERMISSION_READY {
+                Some("camera permission or camera availability is not ready")
+            } else if !modes.iter().any(|mode: &wire::QualityMode| {
+                (mode.width, mode.height, mode.target_fps) == (width, height, fps)
+            }) {
+                Some("the requested quality is not in the advertised camera modes")
+            } else {
+                None
+            };
+            if let Some(reason) = rejection {
                 event(Event::QualityFailed {
-                    reason: "the phone has not advertised its capabilities yet".into(),
+                    reason: reason.into(),
                 })?;
-                // Never send the command itself before the advertisement.
                 continue;
             }
             for action in switch.step(
@@ -241,37 +274,27 @@ fn receive(
                 }
             }
         }
-        // An idle connection polls so the GUI's apply and stop are never
-        // trapped inside the receive wait (spec slice 02); a streaming
-        // connection waits for frames, which arrive fast enough to pick up
-        // a pending request on the next one.
-        let idle = config.is_none();
-        let incoming = match transport.receive(if idle {
-            Duration::from_millis(250)
-        } else {
-            Duration::from_secs(120)
-        }) {
-            Ok(frame) => frame,
-            Err(error)
-                if idle
-                    && error.downcast_ref::<io::Error>().is_some_and(|e| {
-                        matches!(
-                            e.kind(),
-                            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
-                        )
-                    }) =>
-            {
-                continue;
-            }
-            Err(error) => return Err(error),
+        // Poll every stream state, retaining partial frames in the transport.
+        // No long receive can hide Apply, Stop or the monotonic apply deadline.
+        let Some(incoming) = transport.poll_receive(Duration::from_millis(100))? else {
+            continue;
         };
         // The quality control plane (slice 02); unknown types keep being
         // ignored by the VIDEO_AU guard below.
         match incoming.header.kind {
             wire::QUALITY_CAPABILITIES => {
+                if incoming.payload.first() != Some(&1) {
+                    continue;
+                }
                 let caps = wire::Capabilities::decode(&incoming.payload)?;
+                switch.step(
+                    now_ms(),
+                    crate::quality::Event::EpochObserved(caps.stream_epoch),
+                );
                 catalog_revision = caps.catalog_revision;
                 advertised = true;
+                permission = caps.permission;
+                modes = caps.modes.clone();
                 event(Event::QualityCapabilities {
                     permission: caps.permission,
                     revision: caps.catalog_revision,
@@ -297,21 +320,21 @@ fn receive(
                 let switch_event = match result.status {
                     wire::RESULT_SWITCHING => crate::quality::Event::PrepareAccepted {
                         request_id: result.request_id,
-                        streaming: started,
+                        streaming: config.is_some(),
                     },
                     wire::RESULT_REJECTED => crate::quality::Event::Rejected {
                         request_id: result.request_id,
                         reason: result.reason,
                     },
+                    wire::RESULT_APPLIED => crate::quality::Event::CaptureStarted {
+                        request_id: result.request_id,
+                        width: result.applied_width,
+                        height: result.applied_height,
+                        fps: result.applied_fps,
+                    },
                     _ => continue,
                 };
-                for action in switch.step(now_ms(), switch_event) {
-                    if let Action::ReportFailed { reason } = action {
-                        event(Event::QualityFailed {
-                            reason: reason.to_string(),
-                        })?;
-                    }
-                }
+                report_quality(switch.step(now_ms(), switch_event), &mut event)?;
                 continue;
             }
             wire::PAUSED => {
@@ -328,9 +351,14 @@ fn receive(
                             // Free the virtual-camera output and the decode
                             // state; frames until the new config are stale.
                             output = None;
+                            decoder = None;
+                            pixels = pixels::Pixels::default();
+                            frame = ffmpeg::Frame::empty()?;
+                            config = None;
                             started = false;
+                            decoded = 0;
+                            submitted = 0;
                             last_pts = 0;
-                            switching = true;
                         }
                         Action::SendCommitQuality { request_id, epoch } => {
                             let payload = wire::Epoch {
@@ -348,7 +376,7 @@ fn receive(
                                 reason: reason.to_string(),
                             })?;
                         }
-                        _ => {}
+                        other => report_quality(vec![other], &mut event)?,
                     }
                 }
                 continue;
@@ -357,32 +385,18 @@ fn receive(
         }
         if incoming.header.kind == wire::VIDEO_CONFIG {
             let next = Config::parse(&incoming.payload)?;
-            if switch.busy() {
-                // The switch boundary: the new config must match the request.
-                for action in switch.step(
-                    now_ms(),
-                    crate::quality::Event::VideoConfig {
-                        width: next.width as u16,
-                        height: next.height as u16,
-                    },
-                ) {
-                    match action {
-                        Action::ReportApplied { width, height, fps } => {
-                            switching = false;
-                            event(Event::QualityApplied { width, height, fps })?;
-                        }
-                        Action::ReportFailed { reason } => {
-                            event(Event::QualityFailed {
-                                reason: reason.to_string(),
-                            })?;
-                            return Err(reason.into());
-                        }
-                        Action::StopCapture | Action::CloseConnection => {
-                            return Err("quality apply failed".into());
-                        }
-                        _ => {}
-                    }
-                }
+            if switch.awaiting_video() {
+                report_quality(
+                    switch.step(
+                        now_ms(),
+                        crate::quality::Event::VideoConfig {
+                            width: next.width as u16,
+                            height: next.height as u16,
+                            fps: next.fps as u16,
+                        },
+                    ),
+                    &mut event,
+                )?;
             } else if config.is_some_and(|c| c != next) {
                 return Err("VIDEO_CONFIG changed during active output".into());
             }
@@ -390,11 +404,6 @@ fn receive(
             continue;
         }
         if incoming.header.kind != wire::VIDEO_AU || incoming.payload.is_empty() {
-            continue;
-        }
-        if switching {
-            // No old video after PAUSED: stale frames are dropped until the
-            // new epoch's config restarts the pipeline.
             continue;
         }
         let Some(c) = config else { continue };
@@ -405,6 +414,10 @@ fn receive(
         if started && incoming.header.pts_us <= last_pts {
             return Err("non-monotonic VIDEO_AU PTS".into());
         }
+        if decoder.is_none() {
+            decoder = Some(decoder::Decoder::open(&settings.decode)?);
+        }
+        let decoder = decoder.as_mut().unwrap();
         if incoming.header.flags & wire::DISCONTINUITY != 0 {
             decoder.flush();
         }
@@ -426,19 +439,19 @@ fn receive(
             decoded += 1;
             started = true;
             if output.is_none() {
-                output = Some(crate::output::Camera::open(
-                    settings.output.trim(),
-                    c.width,
-                    c.height,
-                    c.fps,
-                )?);
+                output = Some(create_output(c)?);
             }
             let camera = output.as_mut().unwrap();
             let active = camera.ready()?;
             if active {
-                let bytes = pixels.convert(&frame, c, camera.stride, camera.size, transform)?;
+                let (stride, size) = camera.layout();
+                let bytes = pixels.convert(&frame, c, stride, size, transform)?;
                 camera.submit(bytes, c.width, c.height)?;
                 submitted += 1;
+                report_quality(
+                    switch.step(now_ms(), crate::quality::Event::OutputReady),
+                    &mut event,
+                )?;
             }
             if report.elapsed() >= Duration::from_secs(1) {
                 event(Event::Stats {
@@ -453,20 +466,41 @@ fn receive(
             }
         }
     }
+    for action in switch.step(now_ms(), crate::quality::Event::UserStop) {
+        if let Action::ReportFailed { reason } = action {
+            event(Event::QualityFailed {
+                reason: reason.into(),
+            })?;
+        }
+    }
     Ok(())
 }
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
+fn report_quality(
+    actions: Vec<Action>,
+    event: &mut impl FnMut(Event) -> crate::Result<()>,
+) -> crate::Result<()> {
+    for action in actions {
+        match action {
+            Action::ReportApplied { width, height, fps } => {
+                event(Event::QualityApplied { width, height, fps })?
+            }
+            Action::ReportFailed { reason } => event(Event::QualityFailed {
+                reason: reason.into(),
+            })?,
+            Action::StopCapture | Action::CloseConnection => {
+                return Err("quality apply failed".into());
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
-
 fn reason_of_expiry() -> Box<dyn std::error::Error + Send + Sync> {
     "the apply deadline expired".into()
 }
 
+#[cfg(test)]
+mod quality_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

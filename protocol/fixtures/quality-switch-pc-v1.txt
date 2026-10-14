@@ -5,10 +5,12 @@
 # (deadline-exceeded <now_ms>), so every other step stays inside the
 # 5-second apply budget.
 
+epoch-observed 41 -> -
 prepare 7 1280 720 30 -> send-prepare-quality 1 7 1280 720 30
 prepare-accepted 1 1 -> -
 paused 1 41 -> release-outputs ; send-commit-quality 1 42
-video-config 1280 720 -> report-applied 1280 720 30
+video-config 1280 720 30 -> -
+output-ready -> report-applied 1280 720 30
 prepare 7 1920 1080 30 -> send-prepare-quality 2 7 1920 1080 30
 rejected 2 3 -> report-failed unsupported-mode
 prepare 7 1920 1080 30 -> send-prepare-quality 3 7 1920 1080 30

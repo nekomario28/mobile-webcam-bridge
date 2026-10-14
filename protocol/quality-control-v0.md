@@ -1,9 +1,9 @@
 # Quality control wire contract (AMB1 v0)
 
 Status: wire, Android command delivery/capture ownership/writer boundary and
-both-language fixtures implemented. PC receive/control responsiveness and
-output-confirmed application remain under verification; native-device acceptance
-is separate from these fixtures.
+both-language fixtures implemented. PC polling and config/keyframe/output-API
+confirmation have synthetic-peer and real-FFmpeg/output-sink regressions.
+Secure-transport integration and native-device acceptance remain separate gates.
 
 Both languages read the same golden fixture:
 `protocol/fixtures/quality-capabilities-v1.bin` — a `QUALITY_CAPABILITIES`
@@ -60,3 +60,20 @@ The phone's single outbound writer fences capture callbacks by generation.
 Old queued video/config is dropped at pause; an already-writing old frame
 finishes before PAUSED. After PAUSED, late old callbacks cannot populate the
 new generation, including codec metadata used for keyframe recovery.
+
+## PC application boundary
+
+Receive polls retain partial AMB1 headers/payloads across TCP/USB timeouts.
+A partial frame has one five-second budget, not a renewed timeout per fragment;
+expiry or invalid framing is terminal. Idle and configured streams both poll so
+Apply, Stop and the monotonic apply deadline remain observable during a stall.
+
+PAUSED must match the request and advertised ending epoch. Before Commit, the
+PC releases its output, decoder, conversion buffers and timestamp state. A
+matching width/height/target-fps config only begins output confirmation: Applied
+requires a CONFIG_INCLUDED keyframe to decode and a converted frame to be
+successfully submitted to the output API. A staged idle mode still waits for the
+phone user's camera start; its output deadline starts when capture starts or the
+new config arrives. No output acceptance means no Applied and no automatic
+retry or rollback. Output-API submission is not proof of a consumer application's
+resolution or measured frame rate; those remain native-output acceptance gates.

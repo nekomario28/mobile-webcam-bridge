@@ -1,6 +1,6 @@
 use crate::{
-    transport::Transport,
-    wire::{Frame, HEADER_SIZE, Header},
+    transport::{FrameReader, Transport},
+    wire::Frame,
 };
 use rusb::{Context, Device, DeviceHandle, UsbContext};
 use serde::{Deserialize, Serialize};
@@ -218,6 +218,7 @@ pub struct Usb {
     input: u8,
     output: u8,
     packet_size: usize,
+    reader: FrameReader,
 }
 impl Usb {
     pub fn connect(id: &DeviceId) -> crate::Result<Self> {
@@ -284,6 +285,7 @@ impl Usb {
             input,
             output,
             packet_size,
+            reader: FrameReader::default(),
         })
     }
 }
@@ -301,33 +303,29 @@ fn remaining(deadline: Instant) -> crate::Result<Duration> {
 }
 impl Transport for Usb {
     fn receive(&mut self, timeout: Duration) -> crate::Result<Frame> {
-        let mut bytes = [0; 1024];
-        let deadline = Instant::now() + timeout;
-        let header = loop {
-            let size = self.handle.read_bulk(
-                self.input,
-                &mut bytes[..self.packet_size.clamp(HEADER_SIZE, 1024)],
-                remaining(deadline)?,
-            )?;
-            if size == HEADER_SIZE
-                && let Ok(header) = Header::decode(&bytes[..size])
-            {
-                break header;
+        self.poll_receive(timeout)?.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "receive poll expired").into()
+        })
+    }
+    fn poll_receive(&mut self, timeout: Duration) -> crate::Result<Option<Frame>> {
+        let handle = &self.handle;
+        let input = self.input;
+        let chunk_size = self.packet_size * 128;
+        self.reader.poll(timeout, |bytes, left| {
+            let length = bytes.len().min(chunk_size);
+            // rusb preserves partial transferred bytes even on libusb timeout.
+            // A zero-length USB packet is not a disconnected byte stream.
+            match handle.read_bulk(input, &mut bytes[..length], left) {
+                Ok(0) | Err(rusb::Error::Interrupted) => {
+                    Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into())
+                }
+                Ok(count) => Ok(count),
+                Err(rusb::Error::Timeout) => {
+                    Err(std::io::Error::from(std::io::ErrorKind::TimedOut).into())
+                }
+                Err(error) => Err(error.into()),
             }
-        };
-        let mut payload = vec![0; header.payload_len as usize];
-        let mut offset = 0;
-        let mut deadline = Instant::now() + timeout;
-        while offset < payload.len() {
-            let count =
-                self.handle
-                    .read_bulk(self.input, &mut payload[offset..], remaining(deadline)?)?;
-            if count > 0 {
-                offset += count;
-                deadline = Instant::now() + timeout;
-            }
-        }
-        Ok(Frame { header, payload })
+        })
     }
     fn send(&mut self, frame: &Frame, timeout: Duration) -> crate::Result<()> {
         frame.validate()?;

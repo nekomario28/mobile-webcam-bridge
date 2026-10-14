@@ -39,6 +39,8 @@ pub const REASON_PERMISSION: u8 = 1;
 pub const REASON_FOREGROUND: u8 = 2;
 pub const REASON_UNSUPPORTED_MODE: u8 = 3;
 pub const REASON_STALE_REVISION: u8 = 4;
+pub const REASON_BUSY: u8 = 5;
+pub const REASON_DEADLINE: u8 = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QualityMode {
@@ -161,7 +163,7 @@ impl PrepareQuality {
     pub const BYTES: usize = 14;
     pub fn decode(payload: &[u8]) -> io::Result<Self> {
         if payload.len() != Self::BYTES {
-            return Err(invalid("prepare quality payload must be 16 bytes"));
+            return Err(invalid("prepare quality payload must be 14 bytes"));
         }
         Ok(Self {
             request_id: u32::from_le_bytes(payload[0..4].try_into().unwrap()),
@@ -187,7 +189,7 @@ impl QualityResult {
     pub const BYTES: usize = 14;
     pub fn decode(payload: &[u8]) -> io::Result<Self> {
         if payload.len() != Self::BYTES {
-            return Err(invalid("quality result payload must be 16 bytes"));
+            return Err(invalid("quality result payload must be 14 bytes"));
         }
         Ok(Self {
             request_id: u32::from_le_bytes(payload[0..4].try_into().unwrap()),
@@ -260,7 +262,25 @@ impl Header {
                 "AMB1 payload exceeds 16 MiB",
             ));
         }
+        header.validate_payload_size()?;
         Ok(header)
+    }
+
+    fn validate_payload_size(self) -> io::Result<()> {
+        let length = self.payload_len as usize;
+        let valid = match self.kind {
+            QUALITY_CAPABILITIES => (1..=MAX_CONTROL_PAYLOAD).contains(&length),
+            PREPARE_QUALITY | QUALITY_RESULT => length == 14,
+            PAUSED | COMMIT_QUALITY | PING | PONG => length == 8,
+            VIDEO_CONFIG => length == 16,
+            IDR_REQUEST | HELLO_ACK => length == 0,
+            HELLO => length == 0 || length == 16,
+            _ => true,
+        };
+        if !valid {
+            return Err(invalid("invalid type-specific AMB1 payload length"));
+        }
+        Ok(())
     }
 
     pub fn encode(self) -> io::Result<[u8; HEADER_SIZE]> {
@@ -270,6 +290,7 @@ impl Header {
                 "AMB1 payload exceeds 16 MiB",
             ));
         }
+        self.validate_payload_size()?;
         let mut bytes = [0; HEADER_SIZE];
         bytes[..4].copy_from_slice(b"AMB1");
         bytes[4] = 1;

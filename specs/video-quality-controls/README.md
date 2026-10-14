@@ -23,20 +23,22 @@ PR #6 の `923d083` をソース監査した結果、**「残るのは04の実�
 - 01: 同名codecのサイズ・速度制約を交差する判定と、最小フレーム時間の不明状態保持を実装。fixture回帰は旧判定で失敗→修正後成功。実機の能力と持続fpsは未確認。
 - 02 Android: USB/LANの共通reader→UI所有者→状態機械→capture→writer境界を配線。重複応答・busy・epoch検証・未Commit期限・idle stageを実装。
   LANの実reader/controller/writerテストと、ブロック中writer/古い世代callbackの回帰をローカルで確認。Camera2の実機動作は未確認。
-- PC worker: config取得後の120秒receive、部分読み取り後のtimeout再試行、適用確認の不足を修正・回帰テストで固定する必要がある。
+- PC worker: 全状態を100msでpollし、TCP/USB共通のreaderが部分header/payloadを保持する。部分フレーム自体は5秒で終端失敗。
+  配信中ストールでもApply/Stop/期限を処理し、適用確認は寸法・目標fps・設定付きkeyframe・デコード・出力APIへのsubmit成功を要求する。
+  subprocess peerと実FFmpeg＋出力sink seamで回帰を確認。sinkの成功はネイティブデバイスや利用アプリの受入ではない。
 - 03: 選択UIとSettings字段はあるが、自動/明示の組合せ、希望値/適用済み/処理中の分離、失敗後の再適用・再接続が未完了。
 - 04: 実機の能力一覧、USB/Wi-Fi切替、Linux/Windows利用アプリ、持続配信は未確認。
 
 ## Next Agent Prompt
 
-次はPC workerの受信待ちを、部分フレームを保持できる受信経路へ変更する。
-fragment/trickleと配信中ストールで停止・5秒期限を確認し、config/FPS/設定付きキーフレーム/出力再開を適用判定に含める。
+次は03の希望値・適用状態を分離し、Autoを対応tupleへ解決してから送信する。失敗後の再Apply・再接続時の再検証も回帰で確認する。
+その後、secure-Wi-Fi branchとの統合を別の確認点として扱う。TLSの内部部分読み取りもpollで保持できることを実TLS peerで確認し、既存の接続期限を弱めない。
 ローカルKotlin検証はKotlin 2.0.21・JDK21（target17）・Android APIクラスを使ったJUnitで、Activity/resourcesは含めない。APK全体はCIで確認する。
 02の境界が通るまで03は基盤扱いとし、実機待ちを理由にソフトウェア側の未実装を隠さない。
 secure-Wi-Fi PR #5 は別ブランチであり、両機能の統合も未検証。
 
-- [ ] [01: Androidの対応モードと設定解決（基盤あり・能力交差が残る）](slices/01-modes.md)
-- [ ] [02: 能力通知と安全な切替（実セッション配線・writer境界が残る）](slices/02-control.md)
+- [ ] [01: Androidの対応モードと設定解決（能力交差実装、実機能力未確認）](slices/01-modes.md)
+- [ ] [02: 能力通知と安全な切替（実セッション配線・writer境界・PC pipelineのソフトウェア回帰あり、統合と実機は別ゲート）](slices/02-control.md)
 - [ ] [03: PCの詳細UIと保存（基盤あり・適用状態と保存契約が残る）](slices/03-ui.md)
 - [ ] [04: Linux／Windows・実機での確認](slices/04-integration.md)
 

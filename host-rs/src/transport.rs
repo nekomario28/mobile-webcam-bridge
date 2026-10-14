@@ -1,4 +1,6 @@
-use crate::wire::{self, Frame, Header};
+mod framing;
+use crate::wire::{self, Frame};
+pub(crate) use framing::FrameReader;
 use std::{
     io::{self, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
@@ -8,9 +10,13 @@ use std::{
 pub trait Transport {
     fn receive(&mut self, timeout: Duration) -> crate::Result<Frame>;
     fn send(&mut self, frame: &Frame, timeout: Duration) -> crate::Result<()>;
+    /// A poll timeout is not a frame boundary; implementations retain fragments.
+    fn poll_receive(&mut self, timeout: Duration) -> crate::Result<Option<Frame>> {
+        self.receive(timeout).map(Some)
+    }
 }
 
-pub struct Tcp(pub TcpStream);
+pub struct Tcp(pub TcpStream, FrameReader);
 
 fn remaining(deadline: Instant) -> io::Result<Duration> {
     deadline
@@ -20,6 +26,9 @@ fn remaining(deadline: Instant) -> io::Result<Duration> {
 }
 
 impl Tcp {
+    pub fn new(socket: TcpStream) -> Self {
+        Self(socket, FrameReader::default())
+    }
     pub fn connect(host: &str, port: u16, timeout: Duration) -> crate::Result<Self> {
         if host.trim().is_empty() {
             return Err("enter an IP address".into());
@@ -34,9 +43,12 @@ impl Tcp {
             match TcpStream::connect_timeout(&address, remaining(deadline)?) {
                 Ok(stream) => {
                     stream.set_nodelay(true)?;
-                    let mut tcp = Self(stream);
-                    tcp.send(&Frame::new(wire::HELLO, 1, Vec::new())?, timeout)?;
-                    let ack = tcp.receive(timeout)?;
+                    let mut tcp = Self::new(stream);
+                    tcp.send(
+                        &Frame::new(wire::HELLO, 1, Vec::new())?,
+                        remaining(deadline)?,
+                    )?;
+                    let ack = tcp.receive(remaining(deadline)?)?;
                     if ack.header.kind != wire::HELLO_ACK
                         || ack.header.sequence != 1
                         || !ack.payload.is_empty()
@@ -50,36 +62,19 @@ impl Tcp {
         }
         Err(last.into())
     }
-
-    fn read_exact_deadline(&mut self, bytes: &mut [u8], timeout: Duration) -> io::Result<()> {
-        let deadline = Instant::now() + timeout;
-        let mut offset = 0;
-        while offset < bytes.len() {
-            self.0.set_read_timeout(Some(remaining(deadline)?))?;
-            match self.0.read(&mut bytes[offset..]) {
-                Ok(0) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "TCP peer disconnected",
-                    ));
-                }
-                Ok(n) => offset += n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Transport for Tcp {
     fn receive(&mut self, timeout: Duration) -> crate::Result<Frame> {
-        let mut bytes = [0; wire::HEADER_SIZE];
-        self.read_exact_deadline(&mut bytes, timeout)?;
-        let header = Header::decode(&bytes)?;
-        let mut payload = vec![0; header.payload_len as usize];
-        self.read_exact_deadline(&mut payload, timeout)?;
-        Ok(Frame { header, payload })
+        self.poll_receive(timeout)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "receive poll expired").into())
+    }
+    fn poll_receive(&mut self, timeout: Duration) -> crate::Result<Option<Frame>> {
+        let socket = &mut self.0;
+        self.1.poll(timeout, |bytes, left| {
+            socket.set_read_timeout(Some(left))?;
+            Ok(socket.read(bytes)?)
+        })
     }
     fn send(&mut self, frame: &Frame, timeout: Duration) -> crate::Result<()> {
         frame.validate()?;
@@ -110,7 +105,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let peer = thread::spawn(move || {
             let (socket, _) = listener.accept().unwrap();
-            let mut tcp = Tcp(socket);
+            let mut tcp = Tcp::new(socket);
             let hello = tcp.receive(Duration::from_secs(2)).unwrap();
             assert_eq!(hello.header.kind, wire::HELLO);
             tcp.send(
@@ -159,9 +154,43 @@ mod tests {
         peer.join().unwrap();
     }
     #[test]
+    fn partial_header_and_payload_survive_poll_timeouts() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = Tcp::new(TcpStream::connect(listener.local_addr().unwrap()).unwrap());
+        let peer = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let frame = Frame::new(wire::PONG, 9, vec![1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+            let bytes = [frame.header.encode().unwrap().as_slice(), &frame.payload].concat();
+            for chunk in bytes.chunks(8) {
+                socket.write_all(chunk).unwrap();
+                thread::sleep(Duration::from_millis(60));
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let result = loop {
+            assert!(Instant::now() < deadline);
+            match client.receive(Duration::from_millis(25)) {
+                Ok(frame) => break frame,
+                Err(error)
+                    if error.downcast_ref::<io::Error>().is_some_and(|error| {
+                        matches!(
+                            error.kind(),
+                            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                        )
+                    }) => {}
+                Err(error) => panic!("poll lost frame boundary: {error}"),
+            }
+        };
+        peer.join().unwrap();
+        assert_eq!(result.header.kind, wire::PONG);
+        assert_eq!(result.header.sequence, 9);
+        assert_eq!(result.payload, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
     fn partial_reads_do_not_extend_deadline() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut client = Tcp(TcpStream::connect(listener.local_addr().unwrap()).unwrap());
+        let mut client = Tcp::new(TcpStream::connect(listener.local_addr().unwrap()).unwrap());
         let peer = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             for _ in 0..4 {
