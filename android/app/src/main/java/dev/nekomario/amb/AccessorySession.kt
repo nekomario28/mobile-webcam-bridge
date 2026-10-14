@@ -34,7 +34,7 @@ class AccessorySession(
     }
 
     /** Re-advertise after the capability list changes (e.g. permission granted). */
-    fun updateCapabilities() {
+    override fun updateCapabilities() {
         capabilities?.invoke()?.let { outbound.sendCapabilities(it) }
     }
 
