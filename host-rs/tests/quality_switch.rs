@@ -224,7 +224,7 @@ fn spawn_paired_worker() -> (
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let stdin = child.stdin.take().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let settings = Settings {
         transport: "lan".into(),
@@ -347,7 +347,7 @@ fn no_quality_command_before_the_advertisement() {
         let mut byte = [0];
         let read = stream.read(&mut byte);
         assert!(
-            matches!(read, Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut),
+            matches!(&read, Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
             "the worker sent a command before the advertisement: {read:?}"
         );
     });
