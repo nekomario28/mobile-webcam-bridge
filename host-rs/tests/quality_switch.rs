@@ -56,7 +56,18 @@ fn peer(listener: TcpListener) {
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
-    // The worker opens with a best-effort IDR request before any receive.
+    // The plaintext transport pairs first: answer the HELLO, then the
+    // worker opens with a best-effort IDR request before any receive.
+    let (kind, _) = read_frame(&mut stream);
+    assert_eq!(kind, wire::HELLO);
+    let ack = Header {
+        kind: wire::HELLO_ACK,
+        flags: 0,
+        sequence: 1,
+        payload_len: 0,
+        pts_us: 0,
+    };
+    stream.write_all(&ack.encode().unwrap()).unwrap();
     let (kind, _) = read_frame(&mut stream);
     assert_eq!(kind, wire::IDR_REQUEST);
     let modes = vec![
