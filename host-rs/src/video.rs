@@ -212,7 +212,30 @@ fn receive(
                 }
             }
         }
-        let incoming = transport.receive(Duration::from_secs(120))?;
+        // An idle connection polls so the GUI's apply and stop are never
+        // trapped inside the receive wait (spec slice 02); a streaming
+        // connection waits for frames, which arrive fast enough to pick up
+        // a pending request on the next one.
+        let idle = config.is_none();
+        let incoming = match transport.receive(if idle {
+            Duration::from_millis(250)
+        } else {
+            Duration::from_secs(120)
+        }) {
+            Ok(frame) => frame,
+            Err(error)
+                if idle
+                    && error.downcast_ref::<io::Error>().is_some_and(|e| {
+                        matches!(
+                            e.kind(),
+                            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                        )
+                    }) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         // The quality control plane (slice 02); unknown types keep being
         // ignored by the VIDEO_AU guard below.
         match incoming.header.kind {
