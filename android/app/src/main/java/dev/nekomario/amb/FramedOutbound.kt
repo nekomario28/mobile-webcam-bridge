@@ -29,6 +29,7 @@ class FramedOutbound(
     private var latestCodecConfig = ByteArray(0)
     private var latestVideoConfig = ByteArray(0)
     private var recovering = false
+    private var lastFence: Pair<Byte, Long>? = null
     val droppedVideoFrames = AtomicLong(0)
 
     init { require(videoCapacity >= 1) }
@@ -69,14 +70,24 @@ class FramedOutbound(
         Wire.TYPE_QUALITY_CAPABILITIES, Wire.encodeCapabilities(capabilities),
     )
 
-    fun sendQualityResult(result: Wire.QualityResult) = sendControl(
-        Wire.TYPE_QUALITY_RESULT, Wire.encodeQualityResult(result),
-    )
+    fun sendQualityResult(result: Wire.QualityResult) {
+        if (result.status == Wire.RESULT_STAGED) fenceOnce(Wire.TYPE_QUALITY_RESULT, result.requestId)
+        sendControl(Wire.TYPE_QUALITY_RESULT, Wire.encodeQualityResult(result))
+    }
+
+    // Replaying a reply after Commit/phone Start must not stop the new producer.
+    private fun fenceOnce(type: Byte, requestId: Long) = synchronized(lock) {
+        val key = type to requestId
+        if (lastFence != key) {
+            stopVideo()
+            lastFence = key
+        }
+    }
 
     /** The in-flight old frame may finish, but the same writer sends it BEFORE
      * PAUSED. Queued/config/late old-generation video cannot follow PAUSED. */
     fun pauseQuality(epoch: Wire.Epoch) {
-        stopVideo()
+        fenceOnce(Wire.TYPE_PAUSED, epoch.requestId)
         sendControl(Wire.TYPE_PAUSED, Wire.encodeEpoch(epoch))
     }
 

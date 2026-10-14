@@ -39,8 +39,9 @@ the extension keeps serving legacy video; no connection error.
 - `PREPARE_QUALITY`: `u32 requestId`, `u16 catalogRevision`, `u16 width`,
   `u16 height`, `u16 targetFps`, `u16 reserved` (14 bytes).
 - `QUALITY_RESULT`: `u32 requestId`, `u8 status` (0 switching, 1 rejected,
-  2 applied), `u8 reason` (0 none, 1 permission, 2 foreground,
-  3 unsupported-mode, 4 stale-revision, 5 busy, 6 deadline), `u16 appliedWidth`,
+  2 capture-started, 3 staged-waiting-for-phone-user), `u8 reason`
+  (0 none, 1 permission, 2 foreground, 3 unsupported-mode, 4 stale-revision,
+  5 busy, 6 deadline, 7 capture-failed), `u16 appliedWidth`,
   `u16 appliedHeight`, `u16 appliedFps`, `u16 reserved` (14 bytes).
 - `PAUSED` / `COMMIT_QUALITY`: `u32 requestId`, `u32 streamEpoch` (8 bytes).
 
@@ -60,6 +61,10 @@ The phone's single outbound writer fences capture callbacks by generation.
 Old queued video/config is dropped at pause; an already-writing old frame
 finishes before PAUSED. After PAUSED, late old callbacks cannot populate the
 new generation, including codec metadata used for keyframe recovery.
+A staged reply is also a media fence: the PC may discard a retained old
+configuration even if the phone has already stopped its camera. Replaying a
+PAUSED/staged reply after a new generation starts replays only the frame; it
+must not repeat the fence and disable that generation.
 
 ## PC application boundary
 
@@ -73,7 +78,12 @@ PC releases its output, decoder, conversion buffers and timestamp state. A
 matching width/height/target-fps config only begins output confirmation: Applied
 requires a CONFIG_INCLUDED keyframe to decode and a converted frame to be
 successfully submitted to the output API. A staged idle mode still waits for the
-phone user's camera start; its output deadline starts when capture starts or the
-new config arrives. No output acceptance means no Applied and no automatic
+phone user's camera start. Status 3, not the presence of an old PC config,
+identifies that wait. The phone emits status 0 when the user starts the staged
+camera, arming both the phone start timer and PC output timer before Camera2
+setup; status 2 confirms only the capture target, not PC output acceptance.
+The desktop parent also supervises pending operations so a stuck native worker
+cannot indefinitely retain the UI's apply state. Deadlines are enforced at the
+controller's polling cadence, not as a hard real-time OS/hardware guarantee. No output acceptance means no Applied and no automatic
 retry or rollback. Output-API submission is not proof of a consumer application's
 resolution or measured frame rate; those remain native-output acceptance gates.

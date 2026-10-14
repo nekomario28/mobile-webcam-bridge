@@ -26,20 +26,23 @@ PR #6 の `923d083` をソース監査した結果、**「残るのは04の実�
 - PC worker: 全状態を100msでpollし、TCP/USB共通のreaderが部分header/payloadを保持する。部分フレーム自体は5秒で終端失敗。
   配信中ストールでもApply/Stop/期限を処理し、適用確認は寸法・目標fps・設定付きkeyframe・デコード・出力APIへのsubmit成功を要求する。
   subprocess peerと実FFmpeg＋出力sink seamで回帰を確認。sinkの成功はネイティブデバイスや利用アプリの受入ではない。
-- 03: 選択UIとSettings字段はあるが、自動/明示の組合せ、希望値/適用済み/処理中の分離、失敗後の再適用・再接続が未完了。
+- 03: 希望値・下書き・処理中・出力確認済み値を分離。サイズとfpsの独立Auto、対応tupleへの解決、明示不対応の保持、同値再試行、接続ごとの再検証を実装。
+  品質キーだけの破損回復、表示変換とのコマンド競合防止、親の期限監視も回帰で確認。UIの視覚・操作受入は未実施。
+- idle: 保持した旧VIDEO_CONFIGから撮影状態を推測せず、phoneのstaged通知で旧出力を破棄。ユーザーが開始した時点から期限を起動する。
+  重複PAUSEDが新しい撮影を再停止する不具合をwriterの回帰で検出・修正。失敗時は撮影開始意図も解除する。
 - 04: 実機の能力一覧、USB/Wi-Fi切替、Linux/Windows利用アプリ、持続配信は未確認。
 
 ## Next Agent Prompt
 
-次は03の希望値・適用状態を分離し、Autoを対応tupleへ解決してから送信する。失敗後の再Apply・再接続時の再検証も回帰で確認する。
-その後、secure-Wi-Fi branchとの統合を別の確認点として扱う。TLSの内部部分読み取りもpollで保持できることを実TLS peerで確認し、既存の接続期限を弱めない。
+次はこのheadのAndroid APK全体・Windows/Linux CIを確認し、UIの操作・視覚受入を別ゲートとして残したままsecure-Wi-Fi branchとの統合へ進む。
+TLS内部の部分読み取りもpollで保持できることを実TLS peerで確認し、既存の接続・フレーム期限を弱めない。
 ローカルKotlin検証はKotlin 2.0.21・JDK21（target17）・Android APIクラスを使ったJUnitで、Activity/resourcesは含めない。APK全体はCIで確認する。
-02の境界が通るまで03は基盤扱いとし、実機待ちを理由にソフトウェア側の未実装を隠さない。
+ローカルの単体・TCP peer・FFmpeg/sinkテストを実機や画面受入へ拡大解釈しない。実機待ちを理由にソフトウェア側の未検証を隠さない。
 secure-Wi-Fi PR #5 は別ブランチであり、両機能の統合も未検証。
 
 - [ ] [01: Androidの対応モードと設定解決（能力交差実装、実機能力未確認）](slices/01-modes.md)
 - [ ] [02: 能力通知と安全な切替（実セッション配線・writer境界・PC pipelineのソフトウェア回帰あり、統合と実機は別ゲート）](slices/02-control.md)
-- [ ] [03: PCの詳細UIと保存（基盤あり・適用状態と保存契約が残る）](slices/03-ui.md)
+- [ ] [03: PCの詳細UIと保存（保存・状態回帰あり、画面受入未実施）](slices/03-ui.md)
 - [ ] [04: Linux／Windows・実機での確認](slices/04-integration.md)
 
 ## 目標と操作
@@ -64,17 +67,6 @@ Androidは対応モードの提供・撮影設定の適用を担当し、設定�
 - 初回のカメラ開始・権限許可はスマホで行う。PC操作で撮影権限を迂回しない。
 - 適用中は映像が一度止まる。停止・キャンセルは常に使え、勝手に再試行しない。
 - 保存した希望値と適用済み値を分ける。再起動後も希望値を復元し、別のスマホで再検証する。
-
-## 現状から必要になる変更
-
-| 現状の根拠 | 必要な変更 | 工程 |
-| --- | --- | --- |
-| [MainActivity.kt](../../android/app/src/main/java/dev/nekomario/amb/MainActivity.kt) の `startCamera720p` が1280×720・30 fps・6 Mbpsを指定 | 固定値を対応モードから解決 | 01 |
-| [CameraCatalog.kt](../../android/app/src/main/java/dev/nekomario/amb/CameraCatalog.kt) はサイズとAE範囲を別々に列挙。`chooseSize` は近いサイズへ代替 | サイズ・fps・同じエンコーダーの交差を求め、明示指定を無断で代替しない | 01 |
-| [AccessorySession.kt](../../android/app/src/main/java/dev/nekomario/amb/AccessorySession.kt)／[LanServer.kt](../../android/app/src/main/java/dev/nekomario/amb/LanServer.kt) は未知のPCメッセージで失敗 | 新APKから先に対応通知。通知前はPCから新コマンドを送らない | 02 |
-| [video.rs](../../host-rs/src/video.rs) は途中のVIDEO_CONFIG変更で失敗 | 切替を明示した境界でのみデコーダー・出力を閉じ直す | 02 |
-| [gui.rs](../../host-rs/src/gui.rs)／[settings.rs](../../host-rs/src/settings.rs) に品質設定がない | 詳細に2項目を追加、既存の保存先を利用 | 03 |
-| [Linux出力](../../host-rs/src/output/linux.rs) はS_PARMの戻り値を再検証せず、[Windows出力](../../host-rs/src/output/windows.rs) はfps引数を使わない | 撮影目標fps・受信fps・利用アプリの出力fpsを区別して確認 | 04 |
 
 ## 所有と契約
 

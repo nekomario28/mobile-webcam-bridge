@@ -12,6 +12,7 @@ object QualityFixture {
         "stale-revision" -> 4
         "busy" -> 5
         "deadline" -> 6
+        "camera-capture-failed" -> 7
         else -> error("unknown reason: $word")
     }
     fun run(script: String): List<List<QualitySwitch.Action>> {
@@ -31,6 +32,7 @@ object QualityFixture {
                 "commit" -> QualitySwitch.Event.Commit(words[1].toLong(), words[2].toLong())
                 "capture-started" -> QualitySwitch.Event.CaptureStarted(n(1), n(2), n(3))
                 "deadline-exceeded" -> QualitySwitch.Event.DeadlineExceeded(words[1].toLong()).also { now = it.nowMs }
+                "capture-starting" -> QualitySwitch.Event.BeginStagedCapture
                 "user-stop" -> QualitySwitch.Event.UserStop
                 else -> error("unknown event: $raw")
             }
@@ -43,7 +45,7 @@ object QualityFixture {
                     "start-capture" -> QualitySwitch.Action.StartCapture(i(1), i(2), i(3))
                     "stop-capture" -> QualitySwitch.Action.StopCapture
                     "send-quality-result" -> QualitySwitch.Action.SendQualityResult(a[1].toLong(),
-                        when (a[2]) { "switching" -> 0; "rejected" -> 1; "applied" -> 2; else -> error("unknown status: $raw") },
+                        when (a[2]) { "switching" -> 0; "staged" -> 3; "rejected" -> 1; "applied" -> 2; else -> error("unknown status: $raw") },
                         reason(a[3]), i(4), i(5), i(6))
                     else -> error("unknown action: $raw")
                 }

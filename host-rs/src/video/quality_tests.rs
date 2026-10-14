@@ -62,6 +62,7 @@ impl Sink for TestSink {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Case {
     Applied,
+    IdleStage,
     WrongFps,
     OutputUnavailable,
 }
@@ -108,22 +109,55 @@ fn pipeline(case: Case) {
         let prepare = read(&mut stream);
         assert_eq!(prepare.header.kind, wire::PREPARE_QUALITY);
         let request = wire::PrepareQuality::decode(&prepare.payload).unwrap();
-        let paused = wire::Epoch {
-            request_id: request.request_id,
-            stream_epoch: 0,
-        };
-        send(&mut stream, wire::PAUSED, paused.encode(), 0, 0);
-        let commit = read(&mut stream);
-        assert_eq!(commit.header.kind, wire::COMMIT_QUALITY);
-        assert_eq!(
-            wire::Epoch::decode(&commit.payload).unwrap().stream_epoch,
-            1
-        );
-        assert_eq!(
-            peer_dropped.load(Ordering::SeqCst),
-            1,
-            "old output was not released before commit"
-        );
+        if case == Case::IdleStage {
+            let reply = |status| {
+                wire::QualityResult {
+                    request_id: request.request_id,
+                    status,
+                    reason: 0,
+                    applied_width: 0,
+                    applied_height: 0,
+                    applied_fps: 0,
+                }
+                .encode()
+            };
+            // A stopped phone stages even though the PC retained its old config.
+            send(
+                &mut stream,
+                wire::QUALITY_RESULT,
+                reply(wire::RESULT_STAGED),
+                0,
+                0,
+            );
+            marker_received
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap();
+            assert_eq!(peer_dropped.load(Ordering::SeqCst), 1);
+            send(
+                &mut stream,
+                wire::QUALITY_RESULT,
+                reply(wire::RESULT_SWITCHING),
+                0,
+                0,
+            );
+        } else {
+            let paused = wire::Epoch {
+                request_id: request.request_id,
+                stream_epoch: 0,
+            };
+            send(&mut stream, wire::PAUSED, paused.encode(), 0, 0);
+            let commit = read(&mut stream);
+            assert_eq!(commit.header.kind, wire::COMMIT_QUALITY);
+            assert_eq!(
+                wire::Epoch::decode(&commit.payload).unwrap().stream_epoch,
+                1
+            );
+            assert_eq!(
+                peer_dropped.load(Ordering::SeqCst),
+                1,
+                "old output was not released before commit"
+            );
+        }
         // Old video after PAUSED is ignored until the new config arrives.
         send(
             &mut stream,
@@ -193,7 +227,15 @@ fn pipeline(case: Case) {
         &request,
         |event| {
             match event {
-                Event::QualityCapabilities { epoch: 1, .. } => {
+                Event::QualityProgress { staged: true } if case == Case::IdleStage => {
+                    assert_eq!(
+                        dropped.load(Ordering::SeqCst),
+                        1,
+                        "staged wait hid a still-live old output"
+                    );
+                    marker_sent.send(()).unwrap();
+                }
+                Event::QualityCapabilities { .. } if requested => {
                     assert!(!applied, "metadata alone reported Applied");
                     assert_eq!(
                         submitted.load(Ordering::SeqCst),
@@ -223,7 +265,7 @@ fn pipeline(case: Case) {
                     applied = true;
                     stop.store(true, Ordering::Release);
                 }
-                Event::QualityFailed { reason } => failure = Some(reason),
+                Event::QualityFailed { reason, .. } => failure = Some(reason),
                 _ => {}
             }
             Ok(())
@@ -238,7 +280,7 @@ fn pipeline(case: Case) {
         },
     );
     server.join().unwrap();
-    if case == Case::Applied {
+    if matches!(case, Case::Applied | Case::IdleStage) {
         assert!(result.is_ok());
         assert!(applied);
         assert!(failure.is_none());
@@ -264,6 +306,10 @@ fn pipeline(case: Case) {
 #[test]
 fn applied_requires_new_config_keyframe_and_output_acceptance_with_pts_reset() {
     pipeline(Case::Applied);
+}
+#[test]
+fn stopped_phone_staging_releases_old_config_and_accepts_reset_pts() {
+    pipeline(Case::IdleStage);
 }
 #[test]
 fn advertised_fps_mismatch_is_not_applied() {

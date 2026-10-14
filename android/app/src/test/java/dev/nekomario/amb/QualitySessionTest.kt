@@ -90,12 +90,14 @@ class QualitySessionTest {
                     assertEquals(0, starts.get())
                     allowed = true
                     send(client, Wire.TYPE_PREPARE_QUALITY, Wire.encodePrepareQuality(Wire.PrepareQuality(2, 7, 1280, 720, 30)))
-                    assertEquals(Wire.RESULT_SWITCHING, Wire.decodeQualityResult(Wire.readFrame(client.getInputStream()).second).status)
+                    assertEquals(Wire.RESULT_STAGED, Wire.decodeQualityResult(Wire.readFrame(client.getInputStream()).second).status)
                     now = 600000
                     controller.tick()
                     assertEquals(mode, controller.stagedMode)
                     assertEquals(0, starts.get())
                     // Only the phone user's start completes an idle stage.
+                    controller.captureRequested()
+                    assertEquals(Wire.RESULT_SWITCHING, Wire.decodeQualityResult(Wire.readFrame(client.getInputStream()).second).status)
                     controller.captureStarted(1280, 720, 30)
                     assertEquals(Wire.RESULT_APPLIED, Wire.decodeQualityResult(Wire.readFrame(client.getInputStream()).second).status)
                 } finally { session.close() }
@@ -107,7 +109,7 @@ class QualitySessionTest {
     fun pausedBarrierDropsQueuedAndLateOldGenerationVideo() {
         val blocked = CountDownLatch(1)
         val release = CountDownLatch(1)
-        val flushed = CountDownLatch(6)
+        val flushed = CountDownLatch(7)
         val buffer = ByteArrayOutputStream()
         val output = object : OutputStream() {
             var first = true
@@ -132,6 +134,9 @@ class QualitySessionTest {
             writer.pauseQuality(Wire.Epoch(1, 0))
             val fresh = writer.beginCapture()
             writer.sendVideoConfig(64, 32, 30, 100000, fresh)
+            // A duplicate Prepare may replay PAUSED after Commit. It must
+            // replay only the reply, not disable the new generation.
+            writer.pauseQuality(Wire.Epoch(1, 0))
             writer.sendAccessUnit(unit(3), old)
             writer.sendAccessUnit(unit(4), fresh)
             writer.sendPong(Wire.Header(Wire.TYPE_PING, 0, 1, 8, 0), ByteArray(8))
@@ -143,6 +148,35 @@ class QualitySessionTest {
             assertEquals(Wire.TYPE_PAUSED, frames[2].first.type)
             assertTrue(frames.drop(3).none { it.first.type == Wire.TYPE_VIDEO_AU && it.second.single() != 4.toByte() })
         } finally { release.countDown(); writer.close() }
+    }
+
+    @Test
+    fun stagedStartDeadlineClearsThePhoneStartIntentThroughTheRealWriter() {
+        ServerSocket(0).use { listener ->
+            Socket("127.0.0.1", listener.localPort).use { client ->
+                client.soTimeout = 2000
+                var now = 0L
+                var cleared = false
+                val mode = CaptureModes.supported(CaptureModes.Capabilities("0", "fixture",
+                    listOf(CaptureModes.SizeFps(1280, 720, null)), listOf(CaptureModes.FpsRange(30, 30)))).single()
+                lateinit var controller: PhoneQualityController
+                val session = LanSession(listener.accept(), { _, _ -> }, onQuality = { _, command -> controller.handle(command) })
+                controller = PhoneQualityController(session, { 7 }, { listOf(mode) }, { true }, { true }, { false },
+                    stopCapture = { clear -> cleared = clear }, startCapture = { error("PC started idle camera") }, nowMillis = { now })
+                try {
+                    session.start()
+                    send(client, Wire.TYPE_PREPARE_QUALITY, Wire.encodePrepareQuality(Wire.PrepareQuality(1, 7, 1280, 720, 30)))
+                    assertEquals(Wire.RESULT_STAGED, Wire.decodeQualityResult(Wire.readFrame(client.getInputStream()).second).status)
+                    now = 600000; controller.tick(); assertEquals(mode, controller.stagedMode)
+                    controller.captureRequested()
+                    assertEquals(Wire.RESULT_SWITCHING, Wire.decodeQualityResult(Wire.readFrame(client.getInputStream()).second).status)
+                    now += 5000; controller.tick()
+                    assertEquals(QualitySwitch.REASON_DEADLINE, Wire.decodeQualityResult(Wire.readFrame(client.getInputStream()).second).reason)
+                    assertTrue(cleared)
+                    assertEquals(null, controller.stagedMode)
+                } finally { session.close() }
+            }
+        }
     }
 
     @Test

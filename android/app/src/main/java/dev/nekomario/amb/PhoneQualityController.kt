@@ -9,7 +9,7 @@ class PhoneQualityController(
     private val permissionReady: () -> Boolean,
     private val foreground: () -> Boolean,
     private val streaming: () -> Boolean,
-    private val stopCapture: () -> Unit,
+    private val stopCapture: (clearStartRequest: Boolean) -> Unit,
     private val startCapture: (CaptureModes.CaptureMode) -> Unit,
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000L },
     startingEpoch: Long = 0,
@@ -39,7 +39,7 @@ class PhoneQualityController(
                     if (reason == 0) QualitySwitch.Verdict.Accept else QualitySwitch.Verdict.Reject(reason), streaming(),
                 ))
                 if (request.requestId != preparedId && mode != null && actions.any {
-                    it is QualitySwitch.Action.SendPaused || (it is QualitySwitch.Action.SendQualityResult && it.status == Wire.RESULT_SWITCHING)
+                    it is QualitySwitch.Action.SendPaused || (it is QualitySwitch.Action.SendQualityResult && it.status == Wire.RESULT_STAGED)
                 }) {
                     preparedId = request.requestId
                     preparedMode = mode
@@ -54,6 +54,9 @@ class PhoneQualityController(
         execute(actions)
     }
 
+    fun captureRequested() = execute(machine.step(nowMillis(), QualitySwitch.Event.BeginStagedCapture))
+    fun captureFailed() = execute(machine.step(nowMillis(), QualitySwitch.Event.CaptureFailed))
+
     fun captureStarted(width: Int, height: Int, fps: Int) = execute(machine.step(
         nowMillis(), QualitySwitch.Event.CaptureStarted(width, height, fps),
     ))
@@ -66,7 +69,7 @@ class PhoneQualityController(
 
     private fun execute(actions: List<QualitySwitch.Action>) {
         for (action in actions) when (action) {
-            QualitySwitch.Action.StopCapture -> stopCapture()
+            QualitySwitch.Action.StopCapture -> stopCapture(machine.phase == QualitySwitch.Phase.Failed)
             is QualitySwitch.Action.SendPaused -> session.pauseQuality(Wire.Epoch(action.requestId, action.epoch))
             is QualitySwitch.Action.StartCapture -> {
                 val mode = requireNotNull(preparedMode) { "no prepared capture mode" }

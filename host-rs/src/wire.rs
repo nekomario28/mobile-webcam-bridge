@@ -34,6 +34,7 @@ pub const PERMISSION_UNAVAILABLE: u8 = 2;
 pub const RESULT_SWITCHING: u8 = 0;
 pub const RESULT_REJECTED: u8 = 1;
 pub const RESULT_APPLIED: u8 = 2;
+pub const RESULT_STAGED: u8 = 3;
 pub const REASON_NONE: u8 = 0;
 pub const REASON_PERMISSION: u8 = 1;
 pub const REASON_FOREGROUND: u8 = 2;
@@ -41,6 +42,7 @@ pub const REASON_UNSUPPORTED_MODE: u8 = 3;
 pub const REASON_STALE_REVISION: u8 = 4;
 pub const REASON_BUSY: u8 = 5;
 pub const REASON_DEADLINE: u8 = 6;
+pub const REASON_CAPTURE_FAILED: u8 = 7;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QualityMode {

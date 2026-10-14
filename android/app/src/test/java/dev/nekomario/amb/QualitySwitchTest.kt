@@ -12,6 +12,18 @@ import java.io.File
  * uncommitted-state deadline.
  */
 class QualitySwitchTest {
+    @Test
+    fun humanStagedWaitHasNoTimerButCameraStartAndFailureAreBounded() {
+        val machine = QualitySwitch.Machine(0)
+        machine.step(0, QualitySwitch.Event.Prepare(1, 7, 1280, 720, 30, QualitySwitch.Verdict.Accept, false))
+        assertEquals(emptyList<QualitySwitch.Action>(), machine.step(600000, QualitySwitch.Event.DeadlineExceeded(600000)))
+        assertEquals(listOf(QualitySwitch.Action.SendQualityResult(1, Wire.RESULT_SWITCHING, 0, 0, 0, 0)),
+            machine.step(600000, QualitySwitch.Event.BeginStagedCapture))
+        assertEquals(emptyList<QualitySwitch.Action>(), machine.step(604999, QualitySwitch.Event.DeadlineExceeded(604999)))
+        assertEquals(listOf(QualitySwitch.Action.StopCapture, QualitySwitch.Action.SendQualityResult(1, Wire.RESULT_REJECTED, QualitySwitch.REASON_DEADLINE, 0, 0, 0)),
+            machine.step(605000, QualitySwitch.Event.DeadlineExceeded(605000)))
+    }
+
     private fun locateFixture(relative: String): File {
         var dir: File? = File("").absoluteFile
         repeat(5) {
@@ -122,7 +134,7 @@ class QualitySwitchTest {
         val machine = QualitySwitch.Machine()
         val staged = machine.step(0, prepare(1, 1920, 1080, 30, streaming = false))
         assertEquals(
-            listOf(QualitySwitch.Action.SendQualityResult(1, Wire.RESULT_SWITCHING, 0, 0, 0, 0)),
+            listOf(QualitySwitch.Action.SendQualityResult(1, Wire.RESULT_STAGED, 0, 0, 0, 0)),
             staged,
         )
         assertEquals(1920, machine.stagedWidth)

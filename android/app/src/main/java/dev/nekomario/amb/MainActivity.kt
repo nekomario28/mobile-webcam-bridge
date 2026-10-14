@@ -268,7 +268,7 @@ class MainActivity : Activity() {
             permissionReady = { checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED },
             foreground = { foreground },
             streaming = { cameraBridge != null },
-            stopCapture = { stopCamera(clearStartRequest = false, cancelQuality = false) },
+            stopCapture = { clearStartRequest -> stopCamera(clearStartRequest = clearStartRequest, cancelQuality = false) },
             startCapture = { mode -> cameraStartRequested = true; startCamera(mode) },
             startingEpoch = advertisedCapabilities?.streamEpoch ?: 0,
         )
@@ -489,6 +489,9 @@ class MainActivity : Activity() {
             return
         }
         val activeSession = session ?: return
+        qualityController?.captureRequested()
+        handler.removeCallbacks(qualityDeadlineRunnable)
+        if (qualityController?.pending == true) handler.postDelayed(qualityDeadlineRunnable, 250)
 
         val cameras = runCatching { CameraCatalog.enumerate(this) }.getOrElse {
             stopCamera()
@@ -550,6 +553,7 @@ class MainActivity : Activity() {
             onError = { message ->
                 runOnUiThread {
                     if (cameraBridge === bridge) {
+                        qualityController?.captureFailed()
                         stopCamera()
                         showConnectionStatus(ui("Camera error: $message", "カメラエラー: $message"))
                     }
@@ -566,6 +570,7 @@ class MainActivity : Activity() {
                 ),
             )
         }.onFailure {
+            qualityController?.captureFailed()
             stopCamera()
             showConnectionStatus(ui("Camera start failed: ${it.message}", "カメラ開始に失敗しました: ${it.message}"))
         }

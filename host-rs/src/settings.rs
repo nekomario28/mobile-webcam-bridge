@@ -17,6 +17,8 @@ pub struct Settings {
     pub quality_width: u16,
     pub quality_height: u16,
     pub quality_fps: u16,
+    #[serde(skip)]
+    pub quality_warning: Option<String>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -36,10 +38,18 @@ impl Default for Settings {
             quality_width: 0,
             quality_height: 0,
             quality_fps: 0,
+            quality_warning: None,
         }
     }
 }
 impl Settings {
+    pub fn quality_wish(&self) -> crate::quality::Wish {
+        (self.quality_width, self.quality_height, self.quality_fps).into()
+    }
+    pub fn set_quality_wish(&mut self, wish: crate::quality::Wish) {
+        (self.quality_width, self.quality_height, self.quality_fps) = wish.tuple();
+        self.quality_warning = None;
+    }
     pub fn validate(&self) -> crate::Result<()> {
         if !["usb", "lan"].contains(&self.transport.as_str()) {
             return Err("invalid transport".into());
@@ -47,14 +57,7 @@ impl Settings {
         if ![0, 90, 180, 270].contains(&self.rotation) {
             return Err("invalid rotation".into());
         }
-        // The quality wish is all-auto or a complete dimension/fps triple.
-        let quality_set = [self.quality_width, self.quality_height, self.quality_fps];
-        if quality_set.iter().any(|v| *v != 0)
-            && (quality_set.contains(&0)
-                || self.quality_width > 8192
-                || self.quality_height > 8192
-                || self.quality_fps > 240)
-        {
+        if !self.quality_wish().valid() {
             return Err("invalid quality preference".into());
         }
         if !["auto", "off", "software", "vaapi", "cuda", "d3d11va"].contains(&self.decode.as_str())
@@ -88,6 +91,7 @@ impl Settings {
     }
     fn from_values(values: &BTreeMap<String, String>) -> crate::Result<Self> {
         let mut s = Self::default();
+        let mut quality_invalid = false;
         for (key, value) in values {
             match key.as_str() {
                 "transport" => s.transport = value.clone(),
@@ -97,15 +101,25 @@ impl Settings {
                 "rotation" => s.rotation = value.parse()?,
                 "mirror" => s.mirror = parse_bool(value)?,
                 "verticalFlip" => s.vertical_flip = parse_bool(value)?,
-                "qualityWidth" => s.quality_width = value.parse()?,
-                "qualityHeight" => s.quality_height = value.parse()?,
-                "qualityFps" => s.quality_fps = value.parse()?,
+                "qualityWidth" => s.quality_width = parse_quality(value, &mut quality_invalid),
+                "qualityHeight" => s.quality_height = parse_quality(value, &mut quality_invalid),
+                "qualityFps" => s.quality_fps = parse_quality(value, &mut quality_invalid),
                 _ => {}
             }
+        }
+        if quality_invalid || !s.quality_wish().valid() {
+            s.set_quality_wish(crate::quality::Wish::default());
+            s.quality_warning = Some("invalid saved quality preference; using Auto".into());
         }
         s.validate()?;
         Ok(s)
     }
+}
+fn parse_quality(value: &str, invalid: &mut bool) -> u16 {
+    value.parse().unwrap_or_else(|_| {
+        *invalid = true;
+        0
+    })
 }
 fn parse_bool(value: &str) -> crate::Result<bool> {
     match value {
@@ -352,9 +366,48 @@ fn encode_ini(value: &str) -> String {
 #[cfg(windows)]
 mod registry;
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn independent_auto_dimensions_and_fps_are_valid_preferences() {
+        for (width, height, fps) in [(1280, 720, 0), (0, 0, 60)] {
+            let settings = Settings {
+                quality_width: width,
+                quality_height: height,
+                quality_fps: fps,
+                ..Default::default()
+            };
+            assert!(
+                settings.validate().is_ok(),
+                "valid independent Auto preference rejected: {settings:?}"
+            );
+        }
+    }
+    #[test]
+    fn malformed_quality_keys_reset_only_quality_not_saved_connection() {
+        for bad in ["broken", "-1", "999999"] {
+            let values = [
+                ("lanHost".into(), "192.168.4.7:48527".into()),
+                ("rotation".into(), "90".into()),
+                ("qualityWidth".into(), bad.into()),
+            ]
+            .into_iter()
+            .collect();
+            let settings = Settings::from_values(&values)
+                .expect("quality corruption discarded the saved connection");
+            assert_eq!(settings.lan_host, "192.168.4.7:48527");
+            assert_eq!(settings.rotation, 90);
+            assert_eq!(settings.quality_wish(), crate::quality::Wish::default());
+            assert!(
+                settings
+                    .quality_warning
+                    .as_ref()
+                    .unwrap()
+                    .contains("using Auto")
+            );
+        }
+    }
     #[cfg(unix)]
     #[test]
     fn qt_fixture_unknown_keys_and_failed_save() {

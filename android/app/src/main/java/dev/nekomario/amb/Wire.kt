@@ -43,6 +43,7 @@ object Wire {
     const val PERMISSION_UNAVAILABLE = 2
 
     /** PrepareQuality outcome states. */
+    const val RESULT_STAGED = 3
     const val RESULT_SWITCHING = 0
     const val RESULT_REJECTED = 1
     const val RESULT_APPLIED = 2

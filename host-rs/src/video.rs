@@ -188,7 +188,7 @@ fn receive_stream<S: crate::output::Sink>(
     let mut switch = crate::quality::Switch::default();
     let clock = Instant::now();
     let now_ms = || clock.elapsed().as_millis() as u64;
-    let mut modes = Vec::new();
+    let mut modes: Vec<crate::quality::Mode> = Vec::new();
     let mut catalog_revision = 0u16;
     // A new PC sends no quality command before the advertisement; frames
     // between PAUSED and the new config are stale by contract.
@@ -212,9 +212,10 @@ fn receive_stream<S: crate::output::Sink>(
                 Some("the phone has not advertised its capabilities yet")
             } else if permission != wire::PERMISSION_READY {
                 Some("camera permission or camera availability is not ready")
-            } else if !modes.iter().any(|mode: &wire::QualityMode| {
-                (mode.width, mode.height, mode.target_fps) == (width, height, fps)
-            }) {
+            } else if !modes
+                .iter()
+                .any(|mode| mode.tuple() == (width, height, fps))
+            {
                 Some("the requested quality is not in the advertised camera modes")
             } else {
                 None
@@ -222,6 +223,7 @@ fn receive_stream<S: crate::output::Sink>(
             if let Some(reason) = rejection {
                 event(Event::QualityFailed {
                     reason: reason.into(),
+                    terminal: false,
                 })?;
                 continue;
             }
@@ -265,6 +267,7 @@ fn receive_stream<S: crate::output::Sink>(
                     Action::ReportFailed { reason } => {
                         event(Event::QualityFailed {
                             reason: reason.to_string(),
+                            terminal: true,
                         })?;
                     }
                     Action::StopCapture | Action::CloseConnection => {
@@ -281,7 +284,7 @@ fn receive_stream<S: crate::output::Sink>(
         };
         // The quality control plane (slice 02); unknown types keep being
         // ignored by the VIDEO_AU guard below.
-        match incoming.header.kind {
+        let quality_event = match incoming.header.kind {
             wire::QUALITY_CAPABILITIES => {
                 if incoming.payload.first() != Some(&1) {
                     continue;
@@ -294,34 +297,31 @@ fn receive_stream<S: crate::output::Sink>(
                 catalog_revision = caps.catalog_revision;
                 advertised = true;
                 permission = caps.permission;
-                modes = caps.modes.clone();
+                modes = caps
+                    .modes
+                    .into_iter()
+                    .map(crate::quality::Mode::from)
+                    .filter(|mode| mode.usable())
+                    .collect();
                 event(Event::QualityCapabilities {
                     permission: caps.permission,
                     revision: caps.catalog_revision,
                     epoch: caps.stream_epoch,
-                    modes: caps
-                        .modes
-                        .iter()
-                        .map(|m| control::QualityMode {
-                            width: m.width,
-                            height: m.height,
-                            fps: m.target_fps,
-                            bitrate: m.bitrate,
-                        })
-                        .collect(),
+                    modes: modes.clone(),
                 })?;
                 continue;
             }
             wire::QUALITY_RESULT => {
-                // The phone's answer: switching, rejected, or applied. The
-                // applied result is confirmed by the new-epoch VIDEO_CONFIG;
-                // the rejection keeps streaming and only reports.
                 let result = wire::QualityResult::decode(&incoming.payload)?;
-                let switch_event = match result.status {
-                    wire::RESULT_SWITCHING => crate::quality::Event::PrepareAccepted {
-                        request_id: result.request_id,
-                        streaming: config.is_some(),
-                    },
+                Some(match result.status {
+                    wire::RESULT_SWITCHING | wire::RESULT_STAGED => {
+                        crate::quality::Event::PrepareAccepted {
+                            request_id: result.request_id,
+                            // Only the phone knows whether it is waiting for its
+                            // user. A retained VIDEO_CONFIG cannot answer this.
+                            streaming: result.status == wire::RESULT_SWITCHING,
+                        }
+                    }
                     wire::RESULT_REJECTED => crate::quality::Event::Rejected {
                         request_id: result.request_id,
                         reason: result.reason,
@@ -333,59 +333,63 @@ fn receive_stream<S: crate::output::Sink>(
                         fps: result.applied_fps,
                     },
                     _ => continue,
-                };
-                report_quality(switch.step(now_ms(), switch_event), &mut event)?;
-                continue;
+                })
             }
             wire::PAUSED => {
                 let paused = wire::Epoch::decode(&incoming.payload)?;
-                for action in switch.step(
-                    now_ms(),
-                    crate::quality::Event::Paused {
-                        request_id: paused.request_id,
-                        epoch: paused.stream_epoch,
-                    },
-                ) {
-                    match action {
-                        Action::ReleaseOutputs => {
-                            // Free the virtual-camera output and the decode
-                            // state; frames until the new config are stale.
-                            output = None;
-                            decoder = None;
-                            pixels = pixels::Pixels::default();
-                            frame = ffmpeg::Frame::empty()?;
-                            config = None;
-                            started = false;
-                            decoded = 0;
-                            submitted = 0;
-                            last_pts = 0;
-                        }
-                        Action::SendCommitQuality { request_id, epoch } => {
-                            let payload = wire::Epoch {
-                                request_id,
-                                stream_epoch: epoch,
-                            }
-                            .encode();
-                            transport.send(
-                                &wire::Frame::new(wire::COMMIT_QUALITY, 0, payload)?,
-                                Duration::from_secs(2),
-                            )?;
-                        }
-                        Action::ReportFailed { reason } => {
-                            event(Event::QualityFailed {
-                                reason: reason.to_string(),
-                            })?;
-                        }
-                        other => report_quality(vec![other], &mut event)?,
-                    }
-                }
-                continue;
+                Some(crate::quality::Event::Paused {
+                    request_id: paused.request_id,
+                    epoch: paused.stream_epoch,
+                })
             }
-            _ => {}
+            _ => None,
+        };
+        if let Some(quality_event) = quality_event {
+            let was_staged = switch.staged();
+            let actions = switch.step(now_ms(), quality_event);
+            report_quality(actions.clone(), &mut event)?;
+            let boundary = actions.contains(&Action::ReleaseOutputs);
+            for action in actions {
+                match action {
+                    Action::ReleaseOutputs => {
+                        // The phone writer fenced old media before its reply.
+                        // Drop all old resources before Commit or staged wait.
+                        output = None;
+                        event(Event::Waiting {})?;
+                        decoder = None;
+                        pixels = pixels::Pixels::default();
+                        frame = ffmpeg::Frame::empty()?;
+                        config = None;
+                        started = false;
+                        decoded = 0;
+                        submitted = 0;
+                        last_pts = 0;
+                    }
+                    Action::SendCommitQuality { request_id, epoch } => {
+                        let payload = wire::Epoch {
+                            request_id,
+                            stream_epoch: epoch,
+                        }
+                        .encode();
+                        transport.send(
+                            &wire::Frame::new(wire::COMMIT_QUALITY, 0, payload)?,
+                            Duration::from_secs(2),
+                        )?;
+                    }
+                    _ => {}
+                }
+            }
+            if boundary || switch.staged() != was_staged {
+                event(Event::QualityProgress {
+                    staged: switch.staged(),
+                })?;
+            }
+            continue;
         }
         if incoming.header.kind == wire::VIDEO_CONFIG {
             let next = Config::parse(&incoming.payload)?;
             if switch.awaiting_video() {
+                let was_staged = switch.staged();
                 report_quality(
                     switch.step(
                         now_ms(),
@@ -397,6 +401,9 @@ fn receive_stream<S: crate::output::Sink>(
                     ),
                     &mut event,
                 )?;
+                if was_staged {
+                    event(Event::QualityProgress { staged: false })?;
+                }
             } else if config.is_some_and(|c| c != next) {
                 return Err("VIDEO_CONFIG changed during active output".into());
             }
@@ -460,6 +467,7 @@ fn receive_stream<S: crate::output::Sink>(
                     active,
                     width: c.width,
                     height: c.height,
+                    target_fps: c.fps,
                     decoder: decoder.active().into(),
                 })?;
                 report = Instant::now();
@@ -470,6 +478,7 @@ fn receive_stream<S: crate::output::Sink>(
         if let Action::ReportFailed { reason } = action {
             event(Event::QualityFailed {
                 reason: reason.into(),
+                terminal: false,
             })?;
         }
     }
@@ -479,6 +488,7 @@ fn report_quality(
     actions: Vec<Action>,
     event: &mut impl FnMut(Event) -> crate::Result<()>,
 ) -> crate::Result<()> {
+    let terminal = actions.contains(&Action::CloseConnection);
     for action in actions {
         match action {
             Action::ReportApplied { width, height, fps } => {
@@ -486,6 +496,7 @@ fn report_quality(
             }
             Action::ReportFailed { reason } => event(Event::QualityFailed {
                 reason: reason.into(),
+                terminal,
             })?,
             Action::StopCapture | Action::CloseConnection => {
                 return Err("quality apply failed".into());

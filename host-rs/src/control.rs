@@ -1,4 +1,4 @@
-use crate::{settings::Settings, usb::DeviceId};
+use crate::{quality::Mode, settings::Settings, usb::DeviceId};
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, Write};
 
@@ -25,15 +25,6 @@ pub enum Command {
     Stop {},
 }
 
-/// One advertised capture mode from the phone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QualityMode {
-    pub width: u16,
-    pub height: u16,
-    pub fps: u16,
-    pub bitrate: u32,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Event {
@@ -48,6 +39,8 @@ pub enum Event {
         active: bool,
         width: u32,
         height: u32,
+        /// Configured capture target, not consumer or measured frame rate.
+        target_fps: u32,
         decoder: String,
     },
     /// The phone advertised its supported modes and permission state.
@@ -55,7 +48,10 @@ pub enum Event {
         permission: u8,
         revision: u16,
         epoch: u32,
-        modes: Vec<QualityMode>,
+        modes: Vec<Mode>,
+    },
+    QualityProgress {
+        staged: bool,
     },
     QualityApplied {
         width: u16,
@@ -64,6 +60,8 @@ pub enum Event {
     },
     QualityFailed {
         reason: String,
+        /// Failure crossed a destructive boundary; close rather than retry.
+        terminal: bool,
     },
     Error {
         message: String,

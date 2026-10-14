@@ -1,6 +1,30 @@
 //! PC quality-switch state. Metadata is necessary, not sufficient: Applied
 //! follows a matching size/rate config and a decoded, submitted keyframe.
 //! Human-staged requests have no timer until capture actually starts.
+use serde::{Deserialize, Serialize};
+/// One advertised capture mode from the phone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mode {
+    pub width: u16,
+    pub height: u16,
+    pub fps: u16,
+    pub bitrate: u32,
+}
+
+impl From<crate::wire::QualityMode> for Mode {
+    fn from(mode: crate::wire::QualityMode) -> Self {
+        Self {
+            width: mode.width,
+            height: mode.height,
+            fps: mode.target_fps,
+            bitrate: mode.bitrate,
+        }
+    }
+}
+mod preference;
+pub use preference::Wish;
+mod client;
+pub use client::Client;
 pub const APPLY_DEADLINE_MS: u64 = 5_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,7 +149,6 @@ impl Switch {
         fps: u16,
     ) -> Option<Action> {
         if !matches!(self.phase, Phase::Idle | Phase::Applied | Phase::Failed)
-            || self.applied == Some((width, height, fps))
             || width == 0
             || height == 0
             || fps == 0
@@ -176,9 +199,17 @@ impl Switch {
                 request_id,
                 streaming,
             } => {
-                if request_id == self.request_id && self.phase == Phase::Preparing && !streaming {
+                if request_id != self.request_id {
+                    return Vec::new();
+                }
+                if self.phase == Phase::Preparing && !streaming {
                     self.phase = Phase::Staged;
                     self.deadline_ms = None;
+                    return vec![Action::ReleaseOutputs];
+                }
+                if self.phase == Phase::Staged && streaming {
+                    self.phase = Phase::Switching;
+                    self.deadline_ms = Some(now_ms + APPLY_DEADLINE_MS);
                 }
                 Vec::new()
             }
@@ -295,6 +326,7 @@ fn rejection_reason(reason: u8) -> &'static str {
         4 => "the capability list changed; refresh the quality list",
         5 => "another quality apply is already in flight",
         6 => "the apply deadline expired",
+        7 => "camera capture could not start",
         _ => "the phone rejected the apply",
     }
 }
@@ -358,7 +390,14 @@ mod tests {
                 fps: 30
             }]
         );
-        assert!(machine.prepare(15, 7, 1280, 720, 30).is_none());
+        // An explicit parent request can reapply the current mode (e.g. Use
+        // auto after a failed different wish). It must receive a transaction,
+        // not disappear and leave the parent's pending state to time out.
+        assert!(matches!(
+            machine.prepare(15, 7, 1280, 720, 30),
+            Some(Action::SendPrepareQuality { request_id: 2, .. })
+        ));
+        assert!(machine.prepare(16, 7, 1280, 720, 30).is_none());
     }
     #[test]
     fn fps_mismatch_fails_even_with_matching_dimensions() {

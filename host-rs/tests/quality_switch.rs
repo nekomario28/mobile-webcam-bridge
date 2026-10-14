@@ -81,6 +81,8 @@ fn peer(case: Case) -> (String, Peer) {
                 Err(error) => panic!("accept: {error}"),
             }
         };
+        // Accepted sockets inherit the listener's nonblocking mode on Windows.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
@@ -231,7 +233,7 @@ impl Worker {
             let event = self
                 .events
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                .expect("worker event deadline");
+                .unwrap_or_else(|error| panic!("worker event deadline ({error}): {observed:?}"));
             let done = predicate(&event);
             observed.push(event);
             if done {
@@ -266,7 +268,7 @@ fn fails_without_applied(case: Case, expected_reason: &str) {
     worker.advertised();
     worker.apply(1920);
     let events = worker.until(|event| matches!(event, Event::Stopped {}));
-    assert!(events.iter().any(|event| matches!(event, Event::QualityFailed { reason } if reason.contains(expected_reason))), "{events:?}");
+    assert!(events.iter().any(|event| matches!(event, Event::QualityFailed { reason, .. } if reason.contains(expected_reason))), "{events:?}");
     assert!(
         !events
             .iter()
@@ -318,7 +320,7 @@ fn no_command_before_advertisement() {
     let mut worker = Worker::new(address);
     worker.until(|event| matches!(event, Event::Waiting {}));
     worker.apply(1920);
-    worker.until(|event| matches!(event, Event::QualityFailed { reason } if reason.contains("not advertised")));
+    worker.until(|event| matches!(event, Event::QualityFailed { reason, .. } if reason.contains("not advertised")));
     worker.stop();
     drop(worker);
     peer.finish();
@@ -330,7 +332,7 @@ fn pending_permission_never_sends_prepare() {
     worker.advertised();
     worker.apply(1920);
     worker.until(
-        |event| matches!(event, Event::QualityFailed { reason } if reason.contains("permission")),
+        |event| matches!(event, Event::QualityFailed { reason, .. } if reason.contains("permission")),
     );
     worker.stop();
     drop(worker);
@@ -342,7 +344,7 @@ fn unsupported_explicit_mode_is_not_silently_replaced() {
     let mut worker = Worker::new(address);
     worker.advertised();
     worker.apply(1280);
-    worker.until(|event| matches!(event, Event::QualityFailed { reason } if reason.contains("not in the advertised")));
+    worker.until(|event| matches!(event, Event::QualityFailed { reason, .. } if reason.contains("not in the advertised")));
     worker.stop();
     drop(worker);
     peer.finish();

@@ -37,6 +37,27 @@ class QualityWireTest {
     )
 
     @Test
+    fun sharedAndroidPcPreferenceFixture() {
+        val caps = CaptureModes.Capabilities("fixture", "fixture",
+            listOf(CaptureModes.SizeFps(1280, 720, 1_000_000_000L / 60), CaptureModes.SizeFps(1920, 1080, 1_000_000_000L / 30)),
+            listOf(CaptureModes.FpsRange(15, 30), CaptureModes.FpsRange(30, 30), CaptureModes.FpsRange(60, 60)))
+        val declared = CaptureModes.supported(caps).map { Triple(it.width, it.height, it.targetFps) }.toSet()
+        assertEquals(fixtureCapabilities().modes.map { Triple(it.width, it.height, it.targetFps) }.toSet(), declared)
+        locateFixture("protocol/fixtures/quality-preferences-v1.txt").readLines()
+            .filter { !it.startsWith("#") && it.isNotBlank() }.forEach { line ->
+                val halves = line.split(" -> "); require(halves.size == 2)
+                fun tuple(text: String) = text.split(Regex("\\s+")).map(String::toInt).also { require(it.size == 3) }
+                val wish = tuple(halves[0])
+                val result = CaptureModes.resolve(caps, CaptureModes.CapturePreference(wish[0].takeIf { it != 0 }, wish[1].takeIf { it != 0 }, wish[2].takeIf { it != 0 }))
+                if (halves[1] == "rejected") org.junit.Assert.assertTrue(result is CaptureModes.Resolution.Rejected)
+                else {
+                    val mode = (result as CaptureModes.Resolution.Resolved).mode
+                    assertEquals(line, tuple(halves[1]), listOf(mode.width, mode.height, mode.targetFps))
+                }
+            }
+    }
+
+    @Test
     fun qualityCapabilitiesMatchTheGoldenFixture() {
         val fixture = locateFixture("protocol/fixtures/quality-capabilities-v1.bin").readBytes()
         val (header, payload) = Wire.readFrame(ByteArrayInputStream(fixture))

@@ -10,6 +10,7 @@ object QualitySwitch {
     const val REASON_STALE_REVISION = 4
     const val REASON_BUSY = 5
     const val REASON_DEADLINE = 6
+    const val REASON_CAPTURE_FAILED = 7
     enum class Phase { Idle, Prepared, Staged, Starting, Applied, Failed }
     sealed interface Verdict {
         object Accept : Verdict
@@ -21,6 +22,8 @@ object QualitySwitch {
         data class Commit(val requestId: Long, val epoch: Long) : Event
         data class CaptureStarted(val width: Int, val height: Int, val fps: Int) : Event
         data class DeadlineExceeded(val nowMs: Long) : Event
+        object BeginStagedCapture : Event
+        object CaptureFailed : Event
         object UserStop : Event
     }
     sealed interface Action {
@@ -69,6 +72,17 @@ object QualitySwitch {
                 if (deadlineMs?.let { nowMs >= it } == true && (phase == Phase.Prepared || phase == Phase.Starting)) fail(REASON_DEADLINE)
                 else emptyList()
             }
+            Event.BeginStagedCapture -> {
+                if (phase != Phase.Staged) emptyList()
+                else {
+                    phase = Phase.Starting
+                    deadlineMs = nowMs + PREPARED_DEADLINE_MS
+                    reply(Action.SendQualityResult(lastRequestId, Wire.RESULT_SWITCHING, 0, 0, 0, 0))
+                }
+            }
+            Event.CaptureFailed -> {
+                if (phase in listOf(Phase.Prepared, Phase.Staged, Phase.Starting)) fail(REASON_CAPTURE_FAILED) else emptyList()
+            }
             Event.UserStop -> {
                 if (phase == Phase.Prepared || phase == Phase.Staged || phase == Phase.Starting) fail(REASON_FOREGROUND)
                 else emptyList()
@@ -96,7 +110,7 @@ object QualitySwitch {
             }
             phase = Phase.Staged
             deadlineMs = null
-            return reply(Action.SendQualityResult(event.requestId, Wire.RESULT_SWITCHING, 0, 0, 0, 0))
+            return reply(Action.SendQualityResult(event.requestId, Wire.RESULT_STAGED, 0, 0, 0, 0))
         }
 
         private fun reply(action: Action): List<Action> = listOf(action).also { lastReply = it }

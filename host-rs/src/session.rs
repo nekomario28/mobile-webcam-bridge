@@ -24,22 +24,30 @@ pub enum State {
     Stopping,
     Failed(String),
 }
+#[derive(Default)]
+struct Pending {
+    quality: Option<Command>,
+    transform: Option<Command>,
+}
+impl Pending {
+    fn take(&mut self) -> Option<Command> {
+        self.quality.take().or_else(|| self.transform.take())
+    }
+}
 pub struct Session {
     executable: std::path::PathBuf,
     child: Option<Child>,
     events: Option<mpsc::Receiver<Event>>,
     stop: Arc<AtomicBool>,
-    pending: Arc<Mutex<Option<Command>>>,
+    pending: Arc<Mutex<Pending>>,
     deadline: Option<Instant>,
+    quality_deadline: Option<Instant>,
     writer: Option<std::thread::Thread>,
     pub state: State,
     pub stats: Option<Event>,
     stats_at: Option<Instant>,
     pub usb_permission: Option<DeviceId>,
-    /// The phone's advertised capability list (slice 03); None before it.
-    pub capabilities: Option<Vec<control::QualityMode>>,
-    /// The last apply error, distinct from the session state (slice 03).
-    pub quality_error: Option<String>,
+    pub quality: crate::quality::Client,
     #[cfg(target_os = "linux")]
     auxiliary: Option<Auxiliary>,
     #[cfg(windows)]
@@ -57,15 +65,15 @@ impl Session {
             child: None,
             events: None,
             stop: Arc::new(AtomicBool::new(false)),
-            pending: Arc::new(Mutex::new(None)),
+            pending: Arc::new(Mutex::new(Pending::default())),
             deadline: None,
+            quality_deadline: None,
             writer: None,
             state: State::Idle,
             stats: None,
             stats_at: None,
             usb_permission: None,
-            capabilities: None,
-            quality_error: None,
+            quality: crate::quality::Client::default(),
             #[cfg(target_os = "linux")]
             auxiliary: None,
             #[cfg(windows)]
@@ -91,12 +99,12 @@ impl Session {
             return Err("session is already running".into());
         }
         self.stop = Arc::new(AtomicBool::new(false));
-        self.pending = Arc::new(Mutex::new(None));
+        self.pending = Arc::new(Mutex::new(Pending::default()));
         self.stats = None;
         self.stats_at = None;
         self.usb_permission = None;
-        self.capabilities = None;
-        self.quality_error = None;
+        self.quality = crate::quality::Client::new(settings.quality_wish());
+        self.quality_deadline = None;
         let mut command = std::process::Command::new(&self.executable);
         command
             .args(["--worker", &std::process::id().to_string()])
@@ -131,10 +139,11 @@ impl Session {
             }
             while !stop.load(Ordering::Acquire) {
                 let message = pending.lock().unwrap().take();
-                if let Some(message) = message
-                    && control::write(&mut stdin, &message).is_err()
-                {
-                    return;
+                if let Some(message) = message {
+                    if control::write(&mut stdin, &message).is_err() {
+                        return;
+                    }
+                    continue;
                 }
                 std::thread::park();
             }
@@ -175,15 +184,33 @@ impl Session {
         self.state = State::Connecting;
         Ok(())
     }
-    /// Request a capture-mode switch (slice 03); the worker applies it.
-    pub fn prepare_quality(&mut self, width: u16, height: u16, fps: u16) {
-        if self.running() {
-            self.quality_error = None;
-            *self.pending.lock().unwrap() = Some(Command::PrepareQuality { width, height, fps });
-            if let Some(writer) = &self.writer {
-                writer.unpark();
-            }
+    fn queue_quality(&self, mode: crate::quality::Mode) {
+        self.pending.lock().unwrap().quality = Some(Command::PrepareQuality {
+            width: mode.width,
+            height: mode.height,
+            fps: mode.fps,
+        });
+        if let Some(writer) = &self.writer {
+            writer.unpark();
         }
+    }
+    /// Resolve Auto against this connection; only concrete tuples cross IPC.
+    /// Accept the wish, including an already-confirmed target with no new RPC.
+    pub fn prepare_quality(&mut self, width: u16, height: u16, fps: u16) -> bool {
+        let wish = crate::quality::Wish::from((width, height, fps));
+        if !self.running()
+            || matches!(self.state, State::Stopping | State::Failed(_))
+            || self.quality.pending.is_some()
+            || !self.quality.ready()
+            || self.quality.resolve(wish).is_none()
+        {
+            return false;
+        }
+        if let Some(mode) = self.quality.begin(wish) {
+            self.quality_deadline = Some(apply_expiry());
+            self.queue_quality(mode);
+        }
+        true
     }
 
     pub fn transform(&mut self, s: &Settings) {
@@ -197,7 +224,7 @@ impl Session {
             return;
         }
         if self.running() {
-            *self.pending.lock().unwrap() = Some(Command::Transform {
+            self.pending.lock().unwrap().transform = Some(Command::Transform {
                 rotation: s.rotation,
                 mirror: s.mirror,
                 vertical_flip: s.vertical_flip,
@@ -208,6 +235,9 @@ impl Session {
         }
     }
     pub fn stop(&mut self, ctx: &egui::Context) {
+        self.quality_deadline = None;
+        self.quality.pending = None;
+        self.quality.staged = false;
         #[cfg(target_os = "linux")]
         if let Some(aux) = &mut self.auxiliary {
             aux.restart = None;
@@ -268,13 +298,24 @@ impl Session {
         let mut finished = false;
         if let Some(receiver) = &self.events {
             while let Ok(event) = receiver.try_recv() {
-                let stopping = matches!(self.state, State::Stopping);
+                let stopping = matches!(self.state, State::Stopping) || finished;
                 match &event {
                     Event::Connecting {} if !stopping => self.state = State::Connecting,
                     Event::Waiting {} if !stopping => self.state = State::Waiting,
                     Event::Stats {
-                        active, submitted, ..
+                        active,
+                        submitted,
+                        width,
+                        height,
+                        target_fps,
+                        ..
                     } if !stopping => {
+                        // Old-epoch output can share the requested tuple.
+                        // Stats must not complete or label a pending apply.
+                        if *active && *submitted > 0 && self.quality.pending.is_none() {
+                            self.quality.applied =
+                                Some((*width as u16, *height as u16, *target_fps as u16));
+                        }
                         self.state = if *active && *submitted > 0 {
                             State::Streaming
                         } else {
@@ -290,16 +331,38 @@ impl Session {
                     Event::UsbPermission { device } if !stopping => {
                         self.usb_permission = Some(device.clone())
                     }
-                    Event::QualityCapabilities { modes, .. } if !stopping => {
-                        self.capabilities = Some(modes.clone());
+                    Event::QualityCapabilities {
+                        permission, modes, ..
+                    } if !stopping => {
+                        if let Some(mode) = self.quality.advertise(*permission, modes.clone()) {
+                            self.quality_deadline = Some(apply_expiry());
+                            self.queue_quality(mode);
+                        }
                     }
-                    Event::QualityApplied { .. } if !stopping => {
-                        self.quality_error = None;
+                    Event::QualityProgress { staged } if !stopping => {
+                        let was_staged = self.quality.staged;
+                        self.quality.progress(*staged);
+                        if *staged {
+                            self.quality_deadline = None;
+                        } else if was_staged && self.quality.pending.is_some() {
+                            self.quality_deadline = Some(apply_expiry());
+                        }
                     }
-                    Event::QualityFailed { reason } if !stopping => {
-                        // Distinct from the session state: the stream keeps
-                        // running, only the apply failed (spec slice 03).
-                        self.quality_error = Some(reason.clone());
+                    Event::QualityApplied { width, height, fps } if !stopping => {
+                        self.quality_deadline = None;
+                        if !self.quality.confirmed(*width, *height, *fps) {
+                            self.state =
+                                State::Failed("receiver confirmed an unexpected quality".into());
+                            finished = true;
+                        }
+                    }
+                    Event::QualityFailed { reason, terminal } if !stopping => {
+                        self.quality_deadline = None;
+                        self.quality.failed(reason.clone());
+                        if *terminal {
+                            self.state = State::Failed(reason.clone());
+                            finished = true;
+                        }
                     }
                     Event::Stopped {} => finished = true,
                     _ => {}
@@ -312,6 +375,18 @@ impl Session {
                 .is_some_and(|time| time.elapsed() >= Duration::from_secs(3))
         {
             self.state = State::Waiting;
+        }
+        // The parent can enforce the UI transaction deadline even when native
+        // decoder/output work traps the worker before its next protocol poll.
+        if self
+            .quality_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.quality_deadline = None;
+            self.quality
+                .failed("the quality apply deadline expired".into());
+            self.state = State::Failed("the quality apply deadline expired".into());
+            finished = true;
         }
         if self.deadline.is_some_and(|d| Instant::now() >= d) {
             if let Some(child) = &mut self.child {
@@ -339,6 +414,8 @@ impl Session {
             }
         }
         if finished {
+            self.quality_deadline = None;
+            self.quality.disconnected();
             self.stop.store(true, Ordering::Release);
             if let Some(writer) = self.writer.take() {
                 writer.unpark();
@@ -367,7 +444,13 @@ impl Session {
         } else if let Some(deadline) = self.deadline {
             ctx.request_repaint_after(deadline.saturating_duration_since(Instant::now()));
         }
+        if let Some(deadline) = self.quality_deadline {
+            ctx.request_repaint_after(deadline.saturating_duration_since(Instant::now()));
+        }
     }
+}
+fn apply_expiry() -> Instant {
+    Instant::now() + Duration::from_millis(crate::quality::APPLY_DEADLINE_MS)
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -541,6 +624,205 @@ impl Session {
 mod tests {
     use super::*;
     #[test]
+    fn transform_coalescing_cannot_overwrite_a_quality_command() {
+        let mut pending = Pending {
+            quality: Some(Command::PrepareQuality {
+                width: 1920,
+                height: 1080,
+                fps: 30,
+            }),
+            ..Default::default()
+        };
+        for rotation in [90, 180] {
+            pending.transform = Some(Command::Transform {
+                rotation,
+                mirror: false,
+                vertical_flip: false,
+            });
+        }
+        assert!(matches!(
+            pending.take(),
+            Some(Command::PrepareQuality {
+                width: 1920,
+                height: 1080,
+                fps: 30
+            })
+        ));
+        assert!(matches!(
+            pending.take(),
+            Some(Command::Transform {
+                rotation: 180,
+                mirror: false,
+                vertical_flip: false
+            })
+        ));
+        assert!(pending.take().is_none());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn parent_watchdog_terminates_a_live_receiver_that_stops_reporting() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("receiver");
+        let event = Event::QualityCapabilities {
+            permission: crate::wire::PERMISSION_READY,
+            revision: 7,
+            epoch: 0,
+            modes: vec![crate::quality::Mode {
+                width: 1280,
+                height: 720,
+                fps: 30,
+                bitrate: 1,
+            }],
+        };
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' '{}'\nexec sleep 30\n",
+                serde_json::to_string(&event).unwrap()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut session = Session::new(path);
+        let ctx = egui::Context::default();
+        session
+            .start(Settings::default(), None, ctx.clone())
+            .unwrap();
+        let pid = session.child.as_ref().unwrap().id();
+        let startup = Instant::now() + Duration::from_secs(2);
+        while session.quality.pending.is_none() {
+            session.poll(&ctx);
+            assert!(Instant::now() < startup);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        session.quality_deadline = Some(Instant::now());
+        let closed = Instant::now() + Duration::from_secs(2);
+        while session.running() {
+            session.poll(&ctx);
+            assert!(Instant::now() < closed);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(matches!(&session.state, State::Failed(reason) if reason.contains("deadline")));
+        // The state transition is not sufficient: the owned process must exit.
+        assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    #[test]
+    fn parent_watchdog_clears_pending_when_the_receiver_cannot_report() {
+        let mut session = Session::new("unused".into());
+        session.quality.advertise(
+            crate::wire::PERMISSION_READY,
+            vec![crate::quality::Mode {
+                width: 1280,
+                height: 720,
+                fps: 30,
+                bitrate: 1,
+            }],
+        );
+        session.quality_deadline = Some(Instant::now());
+        session.poll(&egui::Context::default());
+        assert!(session.quality.pending.is_none());
+        assert!(session.quality.modes.is_none());
+        assert!(matches!(&session.state, State::Failed(reason) if reason.contains("deadline")));
+    }
+    #[test]
+    fn active_boundary_progress_does_not_renew_the_apply_budget() {
+        let mut session = Session::new("unused".into());
+        session.quality.advertise(
+            crate::wire::PERMISSION_READY,
+            vec![crate::quality::Mode {
+                width: 1280,
+                height: 720,
+                fps: 30,
+                bitrate: 1,
+            }],
+        );
+        let deadline = Instant::now() + Duration::from_secs(60);
+        session.quality_deadline = Some(deadline);
+        let (sender, receiver) = mpsc::channel();
+        session.events = Some(receiver);
+        sender
+            .send(Event::QualityProgress { staged: false })
+            .unwrap();
+        session.poll(&egui::Context::default());
+        assert_eq!(session.quality_deadline, Some(deadline));
+    }
+    #[test]
+    fn staged_human_wait_disarms_watchdog_but_start_progress_rearms_it() {
+        let mut session = Session::new("unused".into());
+        session.quality.advertise(
+            crate::wire::PERMISSION_READY,
+            vec![crate::quality::Mode {
+                width: 1280,
+                height: 720,
+                fps: 30,
+                bitrate: 1,
+            }],
+        );
+        let (sender, receiver) = mpsc::channel();
+        session.events = Some(receiver);
+        session.quality_deadline = Some(Instant::now());
+        sender
+            .send(Event::QualityProgress { staged: true })
+            .unwrap();
+        let ctx = egui::Context::default();
+        session.poll(&ctx);
+        assert!(session.quality.staged);
+        assert!(session.quality.pending.is_some());
+        assert!(session.quality_deadline.is_none());
+        sender
+            .send(Event::QualityProgress { staged: false })
+            .unwrap();
+        session.poll(&ctx);
+        assert!(!session.quality.staged);
+        assert!(session.quality_deadline.is_some());
+    }
+    #[test]
+    fn matching_old_stream_stats_do_not_label_the_pending_request_applied() {
+        let mut session = Session::new("unused".into());
+        session.quality.advertise(
+            crate::wire::PERMISSION_READY,
+            vec![crate::quality::Mode {
+                width: 1280,
+                height: 720,
+                fps: 30,
+                bitrate: 1,
+            }],
+        );
+        let (sender, receiver) = mpsc::channel();
+        session.events = Some(receiver);
+        sender
+            .send(Event::Stats {
+                decoded: 1,
+                submitted: 1,
+                fps: 30.,
+                active: true,
+                width: 1280,
+                height: 720,
+                target_fps: 30,
+                decoder: "software".into(),
+            })
+            .unwrap();
+        let ctx = egui::Context::default();
+        session.poll(&ctx);
+        assert!(session.quality.pending.is_some());
+        assert!(session.quality.applied.is_none());
+        sender
+            .send(Event::QualityApplied {
+                width: 1280,
+                height: 720,
+                fps: 30,
+            })
+            .unwrap();
+        session.poll(&ctx);
+        assert!(session.quality.pending.is_none());
+        assert_eq!(session.quality.applied, Some((1280, 720, 30)));
+    }
+    #[test]
     fn video_pause_waits_and_fresh_frames_resume() {
         let ctx = egui::Context::default();
         let mut session = Session::new("unused".into());
@@ -552,6 +834,7 @@ mod tests {
             active: true,
             width: 64,
             height: 32,
+            target_fps: 30,
             decoder: "software".into(),
         };
         sender.send(stats.clone()).unwrap();
