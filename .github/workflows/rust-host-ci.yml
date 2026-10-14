@@ -37,6 +37,8 @@ jobs:
           cargo fmt --manifest-path host-rs/Cargo.toml --check
           cargo clippy --manifest-path host-rs/Cargo.toml --all-targets --locked -- -D warnings
           sh host-rs/tools/build_linux.sh
+          # pkg-config output must word-split into separate flags.
+          # shellcheck disable=SC2046
           c++ -fPIC host-rs/tests/qt_settings.cpp $(pkg-config --cflags --libs Qt6Core) -o host-rs/target/qt-settings
           host-rs/target/qt-settings write host-rs/target/qt-fixture.conf
           cargo run --manifest-path host-rs/Cargo.toml --locked --example settings_fixture -- host-rs/target/qt-fixture.conf

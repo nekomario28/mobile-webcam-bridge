@@ -1,0 +1,5 @@
+# actionlint configuration for this repository.
+self-hosted-runner:
+  # The release and hardware-gates lanes pin a dedicated self-hosted runner.
+  labels:
+    - mobile-webcam
