@@ -3,37 +3,31 @@
 設計 2026-10-06。調査基点: `f81da2c54b6adab430025e3b4b1742aa4e5e5ca0`。
 ブランチ: 設計は `design/video-quality-controls`、実装は `feature/video-quality-controls`。
 
-## 実装状態（2026-10-13、slice 01 完了・02 は両状態機械まで）
+## 実装状態（2026-10-14、完了判定を訂正）
 
-01 を実装: `CaptureModes.kt` が対応一覧（カメラの MediaCodec 出力サイズ × 通常セッション AE 範囲 × サイズごとの最小フレーム時間 × 選択エンコーダーの alignment/bitrate 制約）と解決（自動は 720p/30 優先→30 以下で最寄り→アスペクト比・面積、明示は完全一致のみ・失敗時は拒否）を所有。`H264Encoder` は照会と同じ codecName で起動。`CameraCatalog.chooseSize/chooseFpsRange`（無断代替）は削除。`CaptureModesTest.kt` が能力フィクスチャで一覧・解決・「1080p と 60fps があっても 1080p/60 は作らない」回帰を固定。
+PR #6 の `923d083` をソース監査した結果、**「残るのは04の実機ゲートだけ」という記述を撤回**。
+既存のフィクスチャ・合成PC peer テストは、実際のAndroidセッションでの切替を証明しない。
+ソフトウェア側の修正は [Issue #10](https://github.com/nekomario28/mobile-webcam-bridge/issues/10)、
+実機・ネイティブ出力の検証は [Issue #8](https://github.com/nekomario28/mobile-webcam-bridge/issues/8) で分けて追跡する。
 
-02 の wire 契約を実装: 制御空間に 5 種別（QUALITY_CAPABILITIES 0x05・PREPARE_QUALITY 0x06・QUALITY_RESULT 0x07・PAUSED 0x08・COMMIT_QUALITY 0x09）。固定リトルエンディアン字段+件数付き一覧。`protocol/fixtures/quality-capabilities-v1.bin` を両言語が読む単一 golden fixture（各言語でデコード→値検証→再エンコードで同一バイト）。制御 payload 16 KiB・一覧 256 組上限、超過は encoder が拒否・decoder は確保前に検証（無断切り捨てなし）。`protocol/quality-control-v0.md` に契約を記録。
-
-02 の状態機械を両側実装: PC 側 `quality.rs` とスマホ側 `QualitySwitch.kt` が同じ規律（純粋・イベント駆動・fixture 検証）で prepare/paused/commit/applied・拒否・重複・期限切れ・idle stage を所有。各側の fixture スクリプト（protocol/fixtures/quality-switch-{pc,phone}-v1.txt）が正確なアクションtraceを固定。
-
-02 の能力通知を実装: 新 APK は HELLO_ACK 後（Wi-Fi）／AccessorySession 開始後（USB）に単一 writer 経由で QUALITY_CAPABILITIES を送る。一覧は現在のカメラの対応モード（CaptureModes）+ カメラ権限状態（pending→許可後に更新・revision 前進）。MainActivity が供給元を所有（カメラ選択の所有者）、LanServer/AccessorySession が各セッションへ運ぶ。旧 PC は未知種別を無視する（前方互換の契約）。
-
-PC 側の切替を実装: worker が能力通知を制御イベントとして送出し、要求モードを全境界で適用（PREPARE_QUALITY→PAUSED で出力・復号状態を解放→COMMIT_QUALITY で epoch 前進→新世代 VIDEO_CONFIG を検証して applied）。アイドル接続は 250ms ポーリングで GUI の apply/stop を receive 待ちに閉じ込めない（spec の期限付き読み取りの第一歩）。合成 peer テスト（tests/quality_switch.rs）がスマホ・仮想カメラなしで全順序を検証。
-
-02 の残りを実装: 5 秒適用期限の強制（ポーリング/フレーム間隔で発火）、能力通知前のコマンド抑止（通知なしなら送らず失敗のみ報告）、QUALITY_RESULT の受信（拒否は配信維持で報告のみ）、PAUSED から新 config までの古フレーム破棄。合成 peer マトリクス 4 本（happy path・拒否・通知なし・期限ストール）が linux/windows で green。
-
-03 を実装: PC の「詳細」に解像度・フレームレートのセレクタと適用ボタン。希望値は自動または寸法/fps の三組で Settings に保存、phone の対応モードのみ選択可、適用は一度の映像停止、適用エラーはセッション状態と分離して表示。自動は phone の推奨モード（通知一覧の先頭）を適用。
-
-残る: 04（Linux／Windows・実機での確認）のみ——実機ゲート。
-
-未確認: 実機の能力一覧と採用 codec（fixture のみ）。最小時間を返さない端末の実測。USB 接続を保った切替の実機確認。
-次の着手点: 02 の transport 配線と合成 peer マトリクス。fixture で証明できない状態機械が残るため 03 には進まない。
+- 01: 解決器と同名codec起動は実装済み。ただしencoderのサイズ・速度対応の完全な交差が未実装。
+- 02: wire・純粋状態機械・能力通知・PC workerの基盤はあるが、Android readerから状態機械・カメラ所有者への配線がない。
+  USB/LAN readerは8バイト上限のため14バイトのPrepareを拒否する。writerのpause/drain境界も未実装。
+- PC worker: config取得後の120秒receive、部分読み取り後のtimeout再試行、適用確認の不足を修正・回帰テストで固定する必要がある。
+- 03: 選択UIとSettings字段はあるが、自動/明示の組合せ、希望値/適用済み/処理中の分離、失敗後の再適用・再接続が未完了。
+- 04: 実機の能力一覧、USB/Wi-Fi切替、Linux/Windows利用アプリ、持続配信は未確認。
 
 ## Next Agent Prompt
 
-実装は 01 から順に進める。02 開始時は Android 側の未知 PC メッセージ処理
-（AccessorySession/LanServer は未知メッセージで失敗する）と、新 APK から先に
-対応通知を出す順序を確認すること。端末の対応モード、USBでの切替境界、
-Windows利用アプリ側のfpsは実機未確認。各工程の終了時に、この状態と次の着手点を更新すること。
+次は01の能力交差を完成させ、02の実際のreader→制御→capture→writer境界を証明する。
+合成Rust peerだけでAndroid側の完了にしない。workerの待機を短くする前に、部分受信を保持するか
+安全に接続を閉じる契約を決め、fragment/trickleと配信中ストールで回帰を確認する。
+02の境界が通るまで03は基盤扱いとし、実機待ちを理由にソフトウェア側の未実装を隠さない。
+secure-Wi-Fi PR #5 は別ブランチであり、両機能の統合も未検証。
 
-- [x] [01: Androidの対応モードと設定解決](slices/01-modes.md)
-- [ ] [02: 能力通知と安全な切替](slices/02-control.md)
-- [x] [03: PCの詳細UIと保存](slices/03-ui.md)
+- [ ] [01: Androidの対応モードと設定解決（基盤あり・能力交差が残る）](slices/01-modes.md)
+- [ ] [02: 能力通知と安全な切替（実セッション配線・writer境界が残る）](slices/02-control.md)
+- [ ] [03: PCの詳細UIと保存（基盤あり・適用状態と保存契約が残る）](slices/03-ui.md)
 - [ ] [04: Linux／Windows・実機での確認](slices/04-integration.md)
 
 ## 目標と操作
@@ -117,6 +111,7 @@ APIが対応を返しても、実際の持続速度の保証にはならない�
 KEY_FRAME_RATEはエンコーダーへの目標値なので、実測fpsと分ける。
 [MediaFormat](https://developer.android.com/reference/android/media/MediaFormat#KEY_FRAME_RATE)。
 
-今回の証拠はソース調査と設計だけ。設定変更・実機・UI・CIはすべて **NOT RUN**。
+wire・純粋状態機械・合成PC peerのテストはあるが、実Android切替の証拠とは別。
+実機・ネイティブ利用アプリ・品質UIの視覚検証は未実施。CI成功だけで各sliceを完了にしない。
 将来の画面確認では既存UIとのcompare-screenshots、最後に未誘導のscreenshot-critiqueを行う。
 合成映像・Wine・単体テストを、実機撮影やWindows利用アプリの成功と取り違えない。
