@@ -799,7 +799,6 @@ mod tests {
             .send(Event::Stats {
                 decoded: 1,
                 submitted: 1,
-                fps: 30.,
                 active: true,
                 width: 1280,
                 height: 720,
