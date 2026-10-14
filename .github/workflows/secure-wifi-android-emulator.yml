@@ -67,7 +67,11 @@ jobs:
           emulator_pid=$!
           # A second EXIT trap previously replaced dump_android_failure,
           # hiding the Android-side exception behind OpenSSL EOF.
-          trap 'dump_android_failure; kill "$emulator_pid" 2>/dev/null || true' EXIT
+          on_exit() {
+            dump_android_failure
+            kill "$emulator_pid" 2>/dev/null || true
+          }
+          trap on_exit EXIT
           timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'
           adb install -r android/app/build/outputs/apk/debug/app-debug.apk
           adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
@@ -80,11 +84,12 @@ jobs:
           instrument_pid=$!
           phone_pin=""
           phone_key=""
-          for i in $(seq 1 45); do
+          for _ in $(seq 1 45); do
             ready_line="$(adb logcat -d -s SecureWifiGate:I 2>/dev/null | grep -oE 'READY SHA256=[A-F0-9]{64} KEY=[0-9a-fA-F]{32}' | tail -1 || true)"
             if [ -n "$ready_line" ]; then
-              phone_pin="$(echo "$ready_line" | sed 's/.*SHA256=//;s/ KEY=.*//')"
-              phone_key="$(echo "$ready_line" | sed 's/.*KEY=//')"
+              phone_pin="${ready_line##*SHA256=}"
+              phone_pin="${phone_pin%% KEY=*}"
+              phone_key="${ready_line##*KEY=}"
               break
             fi
             if ! kill -0 "$instrument_pid" 2>/dev/null; then
