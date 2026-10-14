@@ -16,7 +16,22 @@ pub enum Command {
         mirror: bool,
         vertical_flip: bool,
     },
+    /// Request a capture-mode switch (slice 02); the worker drives the apply.
+    PrepareQuality {
+        width: u16,
+        height: u16,
+        fps: u16,
+    },
     Stop {},
+}
+
+/// One advertised capture mode from the phone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QualityMode {
+    pub width: u16,
+    pub height: u16,
+    pub fps: u16,
+    pub bitrate: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -34,6 +49,21 @@ pub enum Event {
         width: u32,
         height: u32,
         decoder: String,
+    },
+    /// The phone advertised its supported modes and permission state.
+    QualityCapabilities {
+        permission: u8,
+        revision: u16,
+        epoch: u32,
+        modes: Vec<QualityMode>,
+    },
+    QualityApplied {
+        width: u16,
+        height: u16,
+        fps: u16,
+    },
+    QualityFailed {
+        reason: String,
     },
     Error {
         message: String,

@@ -4,6 +4,7 @@ mod pixels;
 pub mod transform;
 use crate::{
     control::{self, Command, Event},
+    quality::Action,
     settings::Settings,
     transport::{Tcp, Transport},
     usb::{DeviceId, Usb},
@@ -72,8 +73,10 @@ pub fn worker(parent: u32) -> crate::Result<()> {
     settings.validate()?;
     let stop = Arc::new(AtomicBool::new(false));
     let changes = Arc::new(Mutex::new(None));
+    let quality_request = Arc::new(Mutex::new(None));
     let thread_stop = stop.clone();
     let thread_changes = changes.clone();
+    let thread_quality = quality_request.clone();
     std::thread::spawn(move || {
         let mut reader = io::stdin().lock();
         loop {
@@ -89,6 +92,9 @@ pub fn worker(parent: u32) -> crate::Result<()> {
                         vertical: vertical_flip,
                     });
                 }
+                Ok(Some(Command::PrepareQuality { width, height, fps })) => {
+                    *thread_quality.lock().unwrap() = Some((width, height, fps));
+                }
                 _ => {
                     thread_stop.store(true, Ordering::Release);
                     break;
@@ -98,9 +104,14 @@ pub fn worker(parent: u32) -> crate::Result<()> {
     });
     let mut stdout = io::stdout().lock();
     control::write(&mut stdout, &Event::Connecting {})?;
-    let result = receive(settings, device, &stop, &changes, |event| {
-        control::write(&mut stdout, &event).map_err(Into::into)
-    });
+    let result = receive(
+        settings,
+        device,
+        &stop,
+        &changes,
+        &quality_request,
+        |event| control::write(&mut stdout, &event).map_err(Into::into),
+    );
     if let Err(error) = &result {
         #[cfg(target_os = "linux")]
         if let Some(denied) = error.downcast_ref::<crate::usb::PermissionDenied>() {
@@ -127,6 +138,7 @@ fn receive(
     device: Option<DeviceId>,
     stop: &AtomicBool,
     changes: &Mutex<Option<Transform>>,
+    quality_request: &Mutex<Option<(u16, u16, u16)>>,
     mut event: impl FnMut(Event) -> crate::Result<()>,
 ) -> crate::Result<()> {
     let mut decoder = decoder::Decoder::open(&settings.decode)?;
@@ -153,6 +165,8 @@ fn receive(
         }
     }
     event(Event::Waiting {})?;
+    let mut switch = crate::quality::Switch::default();
+    let mut catalog_revision = 0u16;
     let mut config = None;
     let mut output = None;
     let mut pixels = pixels::Pixels::default();
@@ -164,13 +178,132 @@ fn receive(
     let mut submitted = 0;
     let mut report = Instant::now() - Duration::from_secs(1);
     while !stop.load(Ordering::Acquire) {
+        // The GUI's apply request; the machine owns one-at-a-time.
+        if let Some((width, height, fps)) = quality_request.lock().unwrap().take() {
+            for action in switch.step(
+                now_ms(),
+                quality::Event::Prepare {
+                    revision: catalog_revision,
+                    width,
+                    height,
+                    fps,
+                },
+            ) {
+                if let Action::SendPrepareQuality {
+                    request_id,
+                    revision,
+                    width,
+                    height,
+                    fps,
+                } = action
+                {
+                    let payload = wire::PrepareQuality {
+                        request_id,
+                        catalog_revision: revision,
+                        width,
+                        height,
+                        target_fps: fps,
+                    }
+                    .encode();
+                    transport.send(
+                        &wire::Frame::new(wire::PREPARE_QUALITY, 0, payload)?,
+                        Duration::from_secs(2),
+                    )?;
+                }
+            }
+        }
         let incoming = transport.receive(Duration::from_secs(120))?;
-        if let Some(next) = changes.lock().unwrap().take() {
-            transform = next;
+        // The quality control plane (slice 02); unknown types keep being
+        // ignored by the VIDEO_AU guard below.
+        match incoming.header.kind {
+            wire::QUALITY_CAPABILITIES => {
+                let caps = wire::Capabilities::decode(&incoming.payload)?;
+                catalog_revision = caps.catalog_revision;
+                event(Event::QualityCapabilities {
+                    permission: caps.permission,
+                    revision: caps.catalog_revision,
+                    epoch: caps.stream_epoch,
+                    modes: caps
+                        .modes
+                        .iter()
+                        .map(|m| control::QualityMode {
+                            width: m.width,
+                            height: m.height,
+                            fps: m.target_fps,
+                            bitrate: m.bitrate,
+                        })
+                        .collect(),
+                })?;
+                continue;
+            }
+            wire::PAUSED => {
+                let paused = wire::Epoch::decode(&incoming.payload)?;
+                for action in switch.step(
+                    now_ms(),
+                    quality::Event::Paused {
+                        request_id: paused.request_id,
+                        epoch: paused.stream_epoch,
+                    },
+                ) {
+                    match action {
+                        Action::ReleaseOutputs => {
+                            // Free the virtual-camera output and the decode
+                            // state; the new epoch's config restarts them.
+                            output = None;
+                            started = false;
+                            last_pts = 0;
+                        }
+                        Action::SendCommitQuality { request_id, epoch } => {
+                            let payload = wire::Epoch {
+                                request_id,
+                                stream_epoch: epoch,
+                            }
+                            .encode();
+                            transport.send(
+                                &wire::Frame::new(wire::COMMIT_QUALITY, 0, payload)?,
+                                Duration::from_secs(2),
+                            )?;
+                        }
+                        Action::ReportFailed { reason } => {
+                            event(Event::QualityFailed {
+                                reason: reason.to_string(),
+                            })?;
+                        }
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+            _ => {}
         }
         if incoming.header.kind == wire::VIDEO_CONFIG {
             let next = Config::parse(&incoming.payload)?;
-            if config.is_some_and(|c| c != next) {
+            if switch.busy() {
+                // The switch boundary: the new config must match the request.
+                for action in switch.step(
+                    now_ms(),
+                    quality::Event::VideoConfig {
+                        width: next.width as u16,
+                        height: next.height as u16,
+                    },
+                ) {
+                    match action {
+                        Action::ReportApplied { width, height, fps } => {
+                            event(Event::QualityApplied { width, height, fps })?;
+                        }
+                        Action::ReportFailed { reason } => {
+                            event(Event::QualityFailed {
+                                reason: reason.to_string(),
+                            })?;
+                            return Err(reason.into());
+                        }
+                        Action::StopCapture | Action::CloseConnection => {
+                            return Err("quality apply failed".into());
+                        }
+                        _ => {}
+                    }
+                }
+            } else if config.is_some_and(|c| c != next) {
                 return Err("VIDEO_CONFIG changed during active output".into());
             }
             config = Some(next);
@@ -236,6 +369,13 @@ fn receive(
         }
     }
     Ok(())
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
