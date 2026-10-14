@@ -38,6 +38,21 @@ fn frame_bytes(kind: u8, payload: &[u8]) -> Vec<u8> {
     bytes
 }
 
+/// The pairing answer the plaintext transport requires: HELLO_ACK with the
+/// HELLO's sequence (1) and an empty payload.
+fn hello_ack_bytes() -> Vec<u8> {
+    Header {
+        kind: wire::HELLO_ACK,
+        flags: 0,
+        sequence: 1,
+        payload_len: 0,
+        pts_us: 0,
+    }
+    .encode()
+    .unwrap()
+    .to_vec()
+}
+
 fn read_frame(stream: &mut TcpStream) -> (u8, Vec<u8>) {
     let mut header = [0; wire::HEADER_SIZE];
     stream.read_exact(&mut header).unwrap();
@@ -266,9 +281,7 @@ fn rejection_keeps_the_stream_and_only_reports() {
             .unwrap();
         let (kind, _) = read_frame(&mut stream);
         assert_eq!(kind, wire::HELLO);
-        stream
-            .write_all(&frame_bytes(wire::HELLO_ACK, &[]))
-            .unwrap();
+        stream.write_all(&hello_ack_bytes()).unwrap();
         let (kind, _) = read_frame(&mut stream);
         assert_eq!(kind, wire::IDR_REQUEST);
         let caps = wire::Capabilities {
@@ -351,16 +364,16 @@ fn no_quality_command_before_the_advertisement() {
             .unwrap();
         let (kind, _) = read_frame(&mut stream);
         assert_eq!(kind, wire::HELLO);
-        stream
-            .write_all(&frame_bytes(wire::HELLO_ACK, &[]))
-            .unwrap();
+        stream.write_all(&hello_ack_bytes()).unwrap();
         let (kind, _) = read_frame(&mut stream);
         assert_eq!(kind, wire::IDR_REQUEST);
-        // The phone never advertises; a prepare must not reach it.
+        // The phone never advertises; a prepare must not reach it. A clean
+        // close or a timeout means nothing was sent; any byte is the leak.
         let mut byte = [0];
         let read = stream.read(&mut byte);
         assert!(
-            matches!(&read, Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
+            matches!(&read, Ok(0))
+                || matches!(&read, Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
             "the worker sent a command before the advertisement: {read:?}"
         );
     });
@@ -408,9 +421,7 @@ fn the_apply_deadline_fails_when_the_phone_stalls() {
             .unwrap();
         let (kind, _) = read_frame(&mut stream);
         assert_eq!(kind, wire::HELLO);
-        stream
-            .write_all(&frame_bytes(wire::HELLO_ACK, &[]))
-            .unwrap();
+        stream.write_all(&hello_ack_bytes()).unwrap();
         let (kind, _) = read_frame(&mut stream);
         assert_eq!(kind, wire::IDR_REQUEST);
         let caps = wire::Capabilities {

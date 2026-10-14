@@ -189,6 +189,8 @@ fn receive(
                 event(Event::QualityFailed {
                     reason: "the phone has not advertised its capabilities yet".into(),
                 })?;
+                // Never send the command itself before the advertisement.
+                continue;
             }
             for action in switch.step(
                 now_ms(),
