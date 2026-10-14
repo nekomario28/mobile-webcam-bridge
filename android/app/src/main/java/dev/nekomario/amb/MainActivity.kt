@@ -42,7 +42,15 @@ class MainActivity : Activity() {
     private var session: MediaSession? = null
     private var lanServer: LanServer? = null
     private var capabilityRevision = 0
-    private var advertisedPermission = -1
+    @Volatile private var advertisedCapabilities: Wire.Capabilities? = null
+    private var captureModes: List<CaptureModes.CaptureMode> = emptyList()
+    private var qualityController: PhoneQualityController? = null
+    private val qualityDeadlineRunnable = object : Runnable {
+        override fun run() {
+            qualityController?.tick()
+            if (qualityController?.pending == true) handler.postDelayed(this, 250)
+        }
+    }
     private var cameraBridge: CameraBridgeController? = null
     private lateinit var cameraButton: Button
     private lateinit var details: TextView
@@ -201,6 +209,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foreground = true
+        refreshQualityCapabilities()
         if (cameraStartRequested) startCamera()
         if (::usb.isInitialized && connectionMode == ConnectionMode.USB && session == null) discoverUsb()
     }
@@ -208,7 +217,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         foreground = false
         // Do not keep capturing video after the activity leaves the foreground.
-        if (cameraBridge != null) stopCamera()
+        stopCamera()
         handler.removeCallbacks(rediscoverRunnable)
         super.onPause()
     }
@@ -223,39 +232,55 @@ class MainActivity : Activity() {
         }
     }
 
-    /**
-     * The quality capability advertisement for the current camera: the
-     * supported modes, the camera-permission state and a revision that
-     * advances when the list changes. Sent right after pairing (Wi-Fi) or
-     * the accessory session start (USB); old PCs ignore the unknown type.
-     */
-    private fun qualityCapabilities(): Wire.Capabilities? {
-        val cameras = runCatching { CameraCatalog.enumerate(this) }.getOrNull() ?: return null
-        val camera = cameras.firstOrNull { it.lensFacing == CameraCharacteristics.LENS_FACING_BACK }
-            ?: cameras.firstOrNull()
-            ?: return null
-        val capabilities = CaptureModes.collectCapabilities(this, camera.id) ?: return null
-        val permission = if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            Wire.PERMISSION_READY
-        } else {
-            Wire.PERMISSION_PENDING
+    /** Only the UI owner queries/revises capabilities. Reader threads see an
+     * immutable snapshot, never camera or Activity state. */
+    private fun refreshQualityCapabilities() {
+        val previousModes = captureModes
+        captureModes = runCatching {
+            val cameras = CameraCatalog.enumerate(this)
+            val camera = cameras.firstOrNull { it.lensFacing == CameraCharacteristics.LENS_FACING_BACK } ?: cameras.firstOrNull()
+            camera?.let { CaptureModes.collectCapabilities(this, it.id) }?.let(CaptureModes::supported).orEmpty()
+        }.getOrDefault(emptyList())
+        val permission = when {
+            checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED -> Wire.PERMISSION_PENDING
+            captureModes.isEmpty() || captureModes.size > Wire.MAX_QUALITY_MODES -> Wire.PERMISSION_UNAVAILABLE
+            else -> Wire.PERMISSION_READY
         }
-        if (permission != advertisedPermission) {
-            advertisedPermission = permission
-            if (advertisedPermission >= 0) capabilityRevision += 1
+        val ordered = if (captureModes.isEmpty()) emptyList() else {
+            val preferred = CaptureModes.autoPreferred(captureModes)
+            listOf(preferred) + captureModes.filter { it != preferred }
         }
-        val modes = CaptureModes.supported(capabilities)
-        // The phone's preferred mode comes first: the PC's auto applies it.
-        val auto = CaptureModes.autoPreferred(modes)
-        return Wire.Capabilities(
-            extensionVersion = 1,
-            permission = permission,
-            catalogRevision = capabilityRevision,
-            streamEpoch = 0,
-            modes = (listOf(auto) + modes.filter { it != auto }).map {
-                Wire.QualityMode(it.width, it.height, it.targetFps, it.bitrate)
-            },
+        val modes = if (permission == Wire.PERMISSION_READY) ordered.map {
+            Wire.QualityMode(it.width, it.height, it.targetFps, it.bitrate)
+        } else emptyList()
+        if (previousModes != captureModes || advertisedCapabilities?.let { it.permission != permission || it.modes != modes } != false) {
+            capabilityRevision = capabilityRevision % 65535 + 1
+        }
+        advertisedCapabilities = Wire.Capabilities(1, permission, capabilityRevision, qualityController?.epoch ?: 0, modes)
+        session?.updateCapabilities()
+    }
+
+    private fun bindQualitySession(active: MediaSession) {
+        qualityController = PhoneQualityController(
+            session = active,
+            revision = { capabilityRevision },
+            modes = { if (advertisedCapabilities?.permission == Wire.PERMISSION_READY) captureModes else emptyList() }
+            permissionReady = { checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED },
+            foreground = { foreground },
+            streaming = { cameraBridge != null },
+            stopCapture = { stopCamera(clearStartRequest = false, cancelQuality = false) },
+            startCapture = { mode -> cameraStartRequested = true; startCamera(mode) },
+            startingEpoch = advertisedCapabilities?.streamEpoch ?: 0,
         )
+    }
+
+    private fun onQualityCommand(origin: MediaSession, command: Wire.HostCommand) {
+        runOnUiThread {
+            if (session !== origin) return@runOnUiThread
+            qualityController?.handle(command)
+            handler.removeCallbacks(qualityDeadlineRunnable)
+            if (qualityController?.pending == true) handler.postDelayed(qualityDeadlineRunnable, 250)
+        }
     }
 
     private fun startUsbMode() {
@@ -280,6 +305,7 @@ class MainActivity : Activity() {
         clearUsbPermissionRequest()
         saveConnectionMode()
         lanServer?.close()
+        refreshQualityCapabilities()
 
         lateinit var server: LanServer
         server = LanServer(
@@ -300,6 +326,7 @@ class MainActivity : Activity() {
                         // Ignore a late connect event after that client disconnected.
                         closeSession(clearStartRequest = false)
                         session = lanSession
+                        bindQualitySession(lanSession)
                         show(ui("PC connected\nPress Start camera", "PC接続済み\n「カメラ開始」を押してください"))
                         if (cameraStartRequested) startCamera()
                     }
@@ -311,7 +338,8 @@ class MainActivity : Activity() {
             onError = { error ->
                 runOnUiThread { if (lanServer === server && session == null) showLanWaiting(error) }
             },
-            capabilities = { qualityCapabilities() },
+            capabilities = { advertisedCapabilities },
+            onQuality = ::onQualityCommand,
         )
         lanServer = server
         runCatching { server.start() }
@@ -396,10 +424,12 @@ class MainActivity : Activity() {
         }
         accessoryFd = pfd
 
+        refreshQualityCapabilities()
         lateinit var active: AccessorySession
         active = AccessorySession(
             pfd = pfd,
-            capabilities = { qualityCapabilities() },
+            capabilities = { advertisedCapabilities },
+            onQuality = ::onQualityCommand,
             onProgress = { count ->
                 runOnUiThread {
                     if (session === active) {
@@ -419,6 +449,7 @@ class MainActivity : Activity() {
             },
         )
         session = active
+        bindQualitySession(active)
         active.start()
         show(ui("USB connected · ${accessory.manufacturer} ${accessory.model}\nPress Start camera",
                "USB接続済み · ${accessory.manufacturer} ${accessory.model}\nカメラ開始を押してください"))
@@ -443,7 +474,7 @@ class MainActivity : Activity() {
         details.text = text.ifBlank { ui("No Camera2 device found", "Camera2 deviceがありません") }
     }
 
-    private fun startCamera() {
+    private fun startCamera(requestedMode: CaptureModes.CaptureMode? = qualityController?.stagedMode) {
         if (!cameraStartRequested || cameraBridge != null || !foreground) return
         if (session == null) {
             cameraStartRequested = false
@@ -473,11 +504,11 @@ class MainActivity : Activity() {
         }
 
         // Slice 01: resolve the capture mode from the device capabilities.
-        // Auto only for now; the PC preference arrives with the quality UI.
+        // Auto for initial capture; staged/committed requests must match exactly.
         val mode = when (
             val resolution = runCatching {
                 CaptureModes.collectCapabilities(this, camera.id)?.let { caps ->
-                    CaptureModes.resolve(caps, CaptureModes.CapturePreference())
+                    CaptureModes.resolve(caps, CaptureModes.CapturePreference(requestedMode?.width, requestedMode?.height, requestedMode?.targetFps))
                 }
             }.getOrElse {
                 CaptureModes.Resolution.Rejected(it.message ?: it.javaClass.simpleName)
@@ -505,6 +536,14 @@ class MainActivity : Activity() {
                     if (cameraBridge === bridge) {
                         details.text = message
                         showConnectionStatus(ui("Camera running", "カメラ配信中"))
+                    }
+                }
+            },
+            onStarted = { config ->
+                runOnUiThread {
+                    if (cameraBridge === bridge && session === activeSession) {
+                        qualityController?.captureStarted(config.size.width, config.size.height, config.fps)
+                        advertisedCapabilities = advertisedCapabilities?.copy(streamEpoch = qualityController?.epoch ?: 0)
                     }
                 }
             },
@@ -562,10 +601,12 @@ class MainActivity : Activity() {
             .putString("connectionMode", connectionMode.name).apply()
     }
 
-    private fun stopCamera(clearStartRequest: Boolean = true) {
+    private fun stopCamera(clearStartRequest: Boolean = true, cancelQuality: Boolean = true) {
         if (clearStartRequest) cameraStartRequested = false
-        cameraBridge?.close()
+        val current = cameraBridge
         cameraBridge = null
+        current?.close()
+        if (cancelQuality) qualityController?.cancel()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         updateControls()
     }
@@ -578,11 +619,11 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != CAMERA_PERMISSION_REQUEST) return
         cameraPermissionPending = false
+        refreshQualityCapabilities()
         if (!cameraStartRequested) return
         val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
         if (granted) {
             // The capability list changed from permission-pending to ready.
-            session?.updateCapabilities()
             startCamera()
         }
         else {
@@ -594,6 +635,8 @@ class MainActivity : Activity() {
     private fun closeSession(clearStartRequest: Boolean = true) {
         val current = session
         session = null
+        qualityController = null
+        handler.removeCallbacks(qualityDeadlineRunnable)
         stopCamera(clearStartRequest)
         runCatching { current?.close() }
         runCatching { accessoryFd?.close() }

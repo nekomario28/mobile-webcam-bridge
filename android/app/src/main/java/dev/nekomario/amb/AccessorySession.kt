@@ -11,6 +11,7 @@ class AccessorySession(
     private val onProgress: (Int) -> Unit,
     private val onError: (String) -> Unit,
     private val capabilities: (() -> Wire.Capabilities?)? = null,
+    private val onQuality: (MediaSession, Wire.HostCommand) -> Unit = { _, _ -> },
 ) : MediaSession {
     private val running = AtomicBoolean(false)
     private var readerThread: Thread? = null
@@ -42,39 +43,24 @@ class AccessorySession(
         idrRequester.set(requester)
     }
 
-    override fun onCodecConfig(config: H264Encoder.CodecConfig) {
-        outbound.setCodecConfig(config)
-    }
-
-    override fun onCameraStarted(config: CameraEncoderSession.ActiveConfig) {
-        outbound.sendVideoConfig(config)
-    }
-
-    override fun onAccessUnit(unit: H264Encoder.AccessUnit) {
-        outbound.sendAccessUnit(unit)
-    }
+    override fun beginCapture() = outbound.beginCapture()
+    override fun stopVideo() = outbound.stopVideo()
+    override fun onCodecConfig(config: H264Encoder.CodecConfig, generation: Long) = outbound.setCodecConfig(config, generation)
+    override fun onCameraStarted(config: CameraEncoderSession.ActiveConfig, generation: Long) = outbound.sendVideoConfig(config.size.width, config.size.height, config.fps, config.bitrate, generation)
+    override fun onAccessUnit(unit: H264Encoder.AccessUnit, generation: Long) = outbound.sendAccessUnit(unit, generation)
+    override fun sendQualityResult(result: Wire.QualityResult) = outbound.sendQualityResult(result)
+    override fun pauseQuality(epoch: Wire.Epoch) = outbound.pauseQuality(epoch)
 
     override fun droppedVideoFrames(): Long = outbound.droppedVideoFrames.get()
 
     private fun runLoop() {
         var verified = 0
         try {
-            while (running.get()) {
-                val (header, payload) = Wire.readFrame(input, maxPayloadLength = 8)
-                when (header.type) {
-                    Wire.TYPE_PING -> {
-                        require(payload.size == 8) { "G0.5 PING payload must be 8 bytes" }
-                        outbound.sendPong(header, payload)
-                        verified += 1
-                        if (verified == 1 || verified % 100 == 0) onProgress(verified)
-                    }
-                    Wire.TYPE_VIDEO_IDR_REQUEST -> {
-                        require(payload.isEmpty()) { "VIDEO_IDR_REQUEST payload must be empty" }
-                        outbound.forceRecovery()
-                    }
-                    else -> error("unexpected host message type 0x%02x".format(header.type))
-                }
-            }
+            val control = SessionControl(outbound, onQuality = { onQuality(this, it) }, onPing = {
+                verified += 1
+                if (verified == 1 || verified % 100 == 0) onProgress(verified)
+            })
+            while (running.get()) control.readAndDispatch(input)
         } catch (e: Exception) {
             if (running.get()) onError(e.message ?: e.javaClass.simpleName)
         } finally {

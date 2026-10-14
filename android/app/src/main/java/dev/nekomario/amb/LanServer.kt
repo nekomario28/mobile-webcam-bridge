@@ -15,6 +15,7 @@ class LanSession(
     private val socket: Socket,
     private val onClosed: (LanSession, String?) -> Unit,
     private val capabilities: (() -> Wire.Capabilities?)? = null,
+    private val onQuality: (MediaSession, Wire.HostCommand) -> Unit = { _, _ -> },
 ) : MediaSession {
     private val running = AtomicBoolean(false)
     private val input = socket.getInputStream()
@@ -30,12 +31,13 @@ class LanSession(
 
     fun isActive(): Boolean = running.get()
 
-    fun start() {
+    fun start(onStarted: () -> Unit = {}) {
         if (!running.compareAndSet(false, true)) return
         outbound.start()
         // The new APK advertises its capabilities right after pairing; an old
         // PC ignores the unknown type (spec slice 02).
         capabilities?.invoke()?.let { outbound.sendCapabilities(it) }
+        onStarted()
         readerThread = Thread({ readLoop() }, "mwb-lan-reader").also { it.start() }
     }
 
@@ -48,35 +50,19 @@ class LanSession(
         idrRequester.set(requester)
     }
 
-    override fun onCodecConfig(config: H264Encoder.CodecConfig) = outbound.setCodecConfig(config)
-    override fun onCameraStarted(config: CameraEncoderSession.ActiveConfig) = outbound.sendVideoConfig(config)
-    override fun onAccessUnit(unit: H264Encoder.AccessUnit) = outbound.sendAccessUnit(unit)
+    override fun beginCapture() = outbound.beginCapture()
+    override fun stopVideo() = outbound.stopVideo()
+    override fun onCodecConfig(config: H264Encoder.CodecConfig, generation: Long) = outbound.setCodecConfig(config, generation)
+    override fun onCameraStarted(config: CameraEncoderSession.ActiveConfig, generation: Long) = outbound.sendVideoConfig(config.size.width, config.size.height, config.fps, config.bitrate, generation)
+    override fun onAccessUnit(unit: H264Encoder.AccessUnit, generation: Long) = outbound.sendAccessUnit(unit, generation)
+    override fun sendQualityResult(result: Wire.QualityResult) = outbound.sendQualityResult(result)
+    override fun pauseQuality(epoch: Wire.Epoch) = outbound.pauseQuality(epoch)
     override fun droppedVideoFrames(): Long = outbound.droppedVideoFrames.get()
 
     private fun readLoop() {
         try {
-            var pingWindowStart = System.nanoTime()
-            var pingCount = 0
-            while (running.get()) {
-                val (header, payload) = Wire.readFrame(input, maxPayloadLength = 8)
-                when (header.type) {
-                    Wire.TYPE_PING -> {
-                        require(payload.size == 8) { "PING payload must be 8 bytes" }
-                        val now = System.nanoTime()
-                        if (now - pingWindowStart >= 1_000_000_000L) {
-                            pingWindowStart = now
-                            pingCount = 0
-                        }
-                        require(++pingCount <= 64) { "PING rate limit exceeded" }
-                        outbound.sendPong(header, payload)
-                    }
-                    Wire.TYPE_VIDEO_IDR_REQUEST -> {
-                        require(payload.isEmpty()) { "VIDEO_IDR_REQUEST payload must be empty" }
-                        outbound.forceRecovery()
-                    }
-                    else -> error("unexpected host message type 0x%02x".format(header.type))
-                }
-            }
+            val control = SessionControl(outbound, onQuality = { onQuality(this, it) })
+            while (running.get()) control.readAndDispatch(input)
         } catch (t: Throwable) {
             if (running.get()) finish(if (t is EOFException) null else t.message ?: t.javaClass.simpleName)
         } finally {
@@ -106,6 +92,7 @@ class LanServer(
     private val onStatus: (String) -> Unit,
     private val onError: (String) -> Unit,
     private val capabilities: (() -> Wire.Capabilities?)? = null,
+    private val onQuality: (MediaSession, Wire.HostCommand) -> Unit = { _, _ -> },
 ) : AutoCloseable {
     private val running = AtomicBoolean(false)
     private val active = AtomicReference<LanSession?>(null)
@@ -150,10 +137,9 @@ class LanServer(
                             onSession(closed, false)
                         }
                         if (!error.isNullOrBlank()) onError(error)
-                    }, capabilities)
+                    }, capabilities, onQuality)
                     active.set(session)
-                    session.start()
-                    onSession(session, true)
+                    session.start { onSession(session, true) }
                 }
                 .onFailure {
                     runCatching { socket.close() }

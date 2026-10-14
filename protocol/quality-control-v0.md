@@ -1,8 +1,9 @@
 # Quality control wire contract (AMB1 v0)
 
-Status: wire contract and both-language fixtures implemented; the switching
-state machine (Android capture ownership, Rust worker epochs) is slice 02's
-remaining work.
+Status: wire, Android command delivery/capture ownership/writer boundary and
+both-language fixtures implemented. PC receive/control responsiveness and
+output-confirmed application remain under verification; native-device acceptance
+is separate from these fixtures.
 
 Both languages read the same golden fixture:
 `protocol/fixtures/quality-capabilities-v1.bin` — a `QUALITY_CAPABILITIES`
@@ -39,7 +40,7 @@ the extension keeps serving legacy video; no connection error.
   `u16 height`, `u16 targetFps`, `u16 reserved` (14 bytes).
 - `QUALITY_RESULT`: `u32 requestId`, `u8 status` (0 switching, 1 rejected,
   2 applied), `u8 reason` (0 none, 1 permission, 2 foreground,
-  3 unsupported-mode, 4 stale-revision), `u16 appliedWidth`,
+  3 unsupported-mode, 4 stale-revision, 5 busy, 6 deadline), `u16 appliedWidth`,
   `u16 appliedHeight`, `u16 appliedFps`, `u16 reserved` (14 bytes).
 - `PAUSED` / `COMMIT_QUALITY`: `u32 requestId`, `u32 streamEpoch` (8 bytes).
 
@@ -50,4 +51,12 @@ in-flight apply. An over-limit list is never silently truncated: the encoder
 refuses it and the phone answers with a feature-unavailable capability
 notification, disabling only the quality controls while legacy streaming
 continues. Payload length is validated against the count before the list is
-allocated.
+allocated. USB and LAN host-control readers validate the exact type-specific
+length before allocation. A duplicate prepare replays only its reply, never
+capture actions; a pending request cannot be replaced. A commit must name the
+same request and advance the ending epoch by exactly one.
+
+The phone's single outbound writer fences capture callbacks by generation.
+Old queued video/config is dropped at pause; an already-writing old frame
+finishes before PAUSED. After PAUSED, late old callbacks cannot populate the
+new generation, including codec metadata used for keyframe recovery.

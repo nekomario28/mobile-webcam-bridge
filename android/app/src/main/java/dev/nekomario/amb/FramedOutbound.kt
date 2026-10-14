@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
-/** Bounded writer shared by USB AOA and LAN transports. */
+/** One bounded writer owns control/video order and the capture-generation fence. */
 class FramedOutbound(
     private val output: OutputStream,
     private val onNeedIdr: () -> Unit,
@@ -16,80 +16,93 @@ class FramedOutbound(
     private val threadName: String = "mwb-framed-writer",
 ) : AutoCloseable {
     private data class Frame(val header: Wire.Header, val payload: ByteArray)
-
     private val running = AtomicBoolean(false)
     private val sequence = AtomicInteger(1)
-    // Both control and video must be bounded; untrusted peers can flood PING.
-    private val controlLock = Any()
+    private val lock = Any()
     private val controlQueue = ArrayDeque<Frame>()
-    private val controlOverflowed = AtomicBoolean(false)
-    private val videoLock = Any()
     private val videoQueue = ArrayDeque<Frame>()
+    private val controlOverflowed = AtomicBoolean(false)
     private val wake = Semaphore(0)
     private var writerThread: Thread? = null
+    private var generation = 0L
+    private var videoEnabled = false
     private var latestCodecConfig = ByteArray(0)
     private var latestVideoConfig = ByteArray(0)
     private var recovering = false
-
     val droppedVideoFrames = AtomicLong(0)
 
-    init {
-        require(videoCapacity >= 1)
-    }
+    init { require(videoCapacity >= 1) }
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
         writerThread = Thread({ writerLoop() }, threadName).also { it.start() }
     }
 
-    fun sendPong(request: Wire.Header, payload: ByteArray) {
-        enqueueControl(
-            Frame(
-                request.copy(type = Wire.TYPE_PONG, payloadLength = payload.size),
-                payload,
-            ),
-        )
+    fun beginCapture(): Long = synchronized(lock) {
+        clearVideo()
+        generation += 1
+        videoEnabled = true
+        generation
     }
 
-    /** The quality capability advertisement; a control frame like PONG, so it
-     *  rides the single writer in order. Old PCs ignore the unknown type. */
-    fun sendCapabilities(capabilities: Wire.Capabilities) {
-        val payload = Wire.encodeCapabilities(capabilities)
-        enqueueControl(
-            Frame(
-                Wire.Header(
-                    type = Wire.TYPE_QUALITY_CAPABILITIES,
-                    flags = 0,
-                    sequence = 0,
-                    payloadLength = payload.size,
-                    ptsUs = 0,
-                ),
-                payload,
-            ),
-        )
+    fun stopVideo() = synchronized(lock) {
+        videoEnabled = false
+        clearVideo()
     }
 
-    fun setCodecConfig(config: H264Encoder.CodecConfig) {
-        synchronized(videoLock) { latestCodecConfig = VideoWire.joinCodecConfig(config) }
+    private fun clearVideo() {
+        droppedVideoFrames.addAndGet(videoQueue.size.toLong())
+        videoQueue.clear()
+        controlQueue.removeAll { it.header.type == Wire.TYPE_VIDEO_CONFIG }
+        latestCodecConfig = ByteArray(0)
+        latestVideoConfig = ByteArray(0)
+        recovering = false
     }
 
-    fun sendVideoConfig(config: CameraEncoderSession.ActiveConfig) {
-        val payload = VideoWire.encodeConfig(
-            width = config.size.width,
-            height = config.size.height,
-            fps = config.fps,
-            bitrate = config.bitrate,
-        )
-        synchronized(videoLock) { latestVideoConfig = payload }
-        enqueueVideoConfig(payload)
+    private fun accepts(token: Long): Boolean = running.get() && videoEnabled && token == generation
+
+    fun sendPong(request: Wire.Header, payload: ByteArray) = enqueueControl(
+        Frame(request.copy(type = Wire.TYPE_PONG, payloadLength = payload.size), payload),
+    )
+
+    fun sendCapabilities(capabilities: Wire.Capabilities) = sendControl(
+        Wire.TYPE_QUALITY_CAPABILITIES, Wire.encodeCapabilities(capabilities),
+    )
+
+    fun sendQualityResult(result: Wire.QualityResult) = sendControl(
+        Wire.TYPE_QUALITY_RESULT, Wire.encodeQualityResult(result),
+    )
+
+    /** The in-flight old frame may finish, but the same writer sends it BEFORE
+     * PAUSED. Queued/config/late old-generation video cannot follow PAUSED. */
+    fun pauseQuality(epoch: Wire.Epoch) {
+        stopVideo()
+        sendControl(Wire.TYPE_PAUSED, Wire.encodeEpoch(epoch))
     }
 
-    fun sendAccessUnit(unit: H264Encoder.AccessUnit) {
-        if (!running.get()) return
+    private fun sendControl(type: Byte, payload: ByteArray) = enqueueControl(
+        Frame(Wire.Header(type, 0, nextSequence(), payload.size, 0), payload),
+    )
+
+    fun setCodecConfig(config: H264Encoder.CodecConfig, token: Long) = synchronized(lock) {
+        if (accepts(token)) latestCodecConfig = VideoWire.joinCodecConfig(config)
+    }
+
+    fun sendVideoConfig(width: Int, height: Int, fps: Int, bitrate: Int, token: Long) {
+        val payload = VideoWire.encodeConfig(width, height, fps, bitrate)
+        synchronized(lock) {
+            if (!accepts(token)) return
+            latestVideoConfig = payload
+        }
+        enqueueVideoConfig(payload, token)
+        onNeedIdr()
+    }
+
+    fun sendAccessUnit(unit: H264Encoder.AccessUnit, token: Long) {
         if (unit.codecConfig && !unit.keyFrame) return
-
         var requestIdr = false
-        synchronized(videoLock) {
+        synchronized(lock) {
+            if (!accepts(token) || latestVideoConfig.isEmpty()) return
             if (recovering && !unit.keyFrame) {
                 droppedVideoFrames.incrementAndGet()
                 return
@@ -101,85 +114,57 @@ class FramedOutbound(
                 requestIdr = true
                 if (!unit.keyFrame) {
                     droppedVideoFrames.incrementAndGet()
-                    return@synchronized
+                    // Request IDR outside the lock, including the dropped-AU path.
                 }
             }
-
-            var flags: Short = 0
-            var payload = unit.data
-            if (unit.keyFrame) {
-                flags = (flags.toInt() or Wire.VIDEO_FLAG_KEYFRAME.toInt()).toShort()
-                if (latestCodecConfig.isNotEmpty()) {
-                    payload = ByteArray(latestCodecConfig.size + unit.data.size).also {
-                        System.arraycopy(latestCodecConfig, 0, it, 0, latestCodecConfig.size)
-                        System.arraycopy(unit.data, 0, it, latestCodecConfig.size, unit.data.size)
+            if (!recovering || unit.keyFrame) {
+                var flags: Short = 0
+                var payload = unit.data
+                if (unit.keyFrame) {
+                    flags = Wire.VIDEO_FLAG_KEYFRAME
+                    if (latestCodecConfig.isNotEmpty()) {
+                        payload = latestCodecConfig + payload
+                        flags = (flags.toInt() or Wire.VIDEO_FLAG_CONFIG_INCLUDED.toInt()).toShort()
                     }
-                    flags = (flags.toInt() or Wire.VIDEO_FLAG_CONFIG_INCLUDED.toInt()).toShort()
+                    if (recovering) {
+                        flags = (flags.toInt() or Wire.VIDEO_FLAG_DISCONTINUITY.toInt()).toShort()
+                        recovering = false
+                    }
                 }
-                if (recovering) {
-                    flags = (flags.toInt() or Wire.VIDEO_FLAG_DISCONTINUITY.toInt()).toShort()
-                    recovering = false
-                }
+                videoQueue.addLast(Frame(Wire.Header(Wire.TYPE_VIDEO_AU, flags, nextSequence(), payload.size, unit.presentationTimeUs), payload))
+                wake.release()
             }
-
-            videoQueue.addLast(
-                Frame(
-                    Wire.Header(
-                        type = Wire.TYPE_VIDEO_AU,
-                        flags = flags,
-                        sequence = nextSequence(),
-                        payloadLength = payload.size,
-                        ptsUs = unit.presentationTimeUs,
-                    ),
-                    payload,
-                ),
-            )
-            wake.release()
         }
         if (requestIdr) onNeedIdr()
     }
 
     fun forceRecovery() {
-        val config = synchronized(videoLock) {
+        val snapshot = synchronized(lock) {
+            if (!videoEnabled || !running.get()) return
             droppedVideoFrames.addAndGet(videoQueue.size.toLong())
             videoQueue.clear()
             recovering = true
-            latestVideoConfig
+            generation to latestVideoConfig
         }
-        if (config.isNotEmpty()) enqueueVideoConfig(config)
+        if (snapshot.second.isNotEmpty()) enqueueVideoConfig(snapshot.second, snapshot.first)
         onNeedIdr()
     }
 
-    private fun enqueueVideoConfig(payload: ByteArray) {
-        enqueueControl(
-            Frame(
-                Wire.Header(
-                    type = Wire.TYPE_VIDEO_CONFIG,
-                    flags = 0,
-                    sequence = nextSequence(),
-                    payloadLength = payload.size,
-                    ptsUs = 0,
-                ),
-                payload,
-            ),
-        )
-    }
+    private fun enqueueVideoConfig(payload: ByteArray, token: Long) = enqueueControl(
+        Frame(Wire.Header(Wire.TYPE_VIDEO_CONFIG, 0, nextSequence(), payload.size, 0), payload), token,
+    )
 
-    private fun enqueueControl(frame: Frame) {
+    private fun enqueueControl(frame: Frame, token: Long? = null) {
         if (!running.get() || controlOverflowed.get()) return
-        val admitted = synchronized(controlLock) {
-            if (controlQueue.size >= MAX_CONTROL_FRAMES) {
-                false
-            } else {
+        val admitted = synchronized(lock) {
+            if (!running.get() || (token != null && !accepts(token))) return
+            if (controlQueue.size >= MAX_CONTROL_FRAMES) false else {
                 controlQueue.addLast(frame)
                 true
             }
         }
-        if (admitted) {
-            wake.release()
-        } else if (controlOverflowed.compareAndSet(false, true)) {
-            onError("control queue limit exceeded")
-        }
+        if (admitted) wake.release()
+        else if (controlOverflowed.compareAndSet(false, true)) onError("control queue limit exceeded")
     }
 
     private fun writerLoop() {
@@ -187,37 +172,27 @@ class FramedOutbound(
             while (running.get()) {
                 wake.acquire()
                 if (!running.get()) break
-                val frame = synchronized(controlLock) {
-                    if (controlQueue.isEmpty()) null else controlQueue.removeFirst()
-                } ?: synchronized(videoLock) {
-                    if (videoQueue.isEmpty()) null else videoQueue.removeFirst()
+                val frame = synchronized(lock) {
+                    if (controlQueue.isNotEmpty()) controlQueue.removeFirst()
+                    else if (videoQueue.isNotEmpty()) videoQueue.removeFirst() else null
                 } ?: continue
                 Wire.writeFrame(output, frame.header, frame.payload)
             }
         } catch (t: Throwable) {
             if (running.get()) onError(t.message ?: t.javaClass.simpleName)
-        } finally {
-            running.set(false)
-        }
+        } finally { running.set(false) }
     }
 
-    private fun nextSequence(): Int = sequence.getAndUpdate {
-        if (it == Int.MAX_VALUE) 1 else it + 1
-    }
+    private fun nextSequence(): Int = sequence.getAndUpdate { if (it == Int.MAX_VALUE) 1 else it + 1 }
 
     override fun close() {
-        if (!running.compareAndSet(true, false)) return
+        running.set(false)
         wake.release()
         writerThread?.interrupt()
-        if (Thread.currentThread() !== writerThread) {
-            runCatching { writerThread?.join(500) }
-        }
+        if (Thread.currentThread() !== writerThread) runCatching { writerThread?.join(500) }
         writerThread = null
-        synchronized(controlLock) { controlQueue.clear() }
-        synchronized(videoLock) { videoQueue.clear() }
+        synchronized(lock) { controlQueue.clear(); clearVideo(); videoEnabled = false }
     }
 
-    companion object {
-        private const val MAX_CONTROL_FRAMES = 32
-    }
+    companion object { private const val MAX_CONTROL_FRAMES = 32 }
 }

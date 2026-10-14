@@ -1,6 +1,7 @@
 package dev.nekomario.amb
 
 import android.content.Context
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Connects the Camera2/MediaCodec producer to the selected transport session. */
 class CameraBridgeController(
@@ -8,27 +9,33 @@ class CameraBridgeController(
     private val session: MediaSession,
     private val onStatus: (String) -> Unit,
     private val onError: (String) -> Unit,
+    private val onStarted: (CameraEncoderSession.ActiveConfig) -> Unit = {},
 ) : AutoCloseable {
     private var cameraSession: CameraEncoderSession? = null
+    private val closed = AtomicBoolean(false)
 
     fun start(request: CameraEncoderSession.Request) {
         check(cameraSession == null) { "camera bridge already running" }
 
+        check(!closed.get()) { "camera bridge is closed" }
+        val generation = session.beginCapture()
         val listener = object : CameraEncoderSession.Listener {
             override fun onCodecConfig(config: H264Encoder.CodecConfig) {
-                session.onCodecConfig(config)
+                if (!closed.get()) session.onCodecConfig(config, generation)
             }
 
             override fun onAccessUnit(unit: H264Encoder.AccessUnit) {
-                session.onAccessUnit(unit)
+                if (!closed.get()) session.onAccessUnit(unit, generation)
             }
 
             override fun onEncoderError(message: String, cause: Throwable?) {
-                onError(buildError(message, cause))
+                if (!closed.get()) onError(buildError(message, cause))
             }
 
             override fun onCameraStarted(config: CameraEncoderSession.ActiveConfig) {
-                session.onCameraStarted(config)
+                if (closed.get()) return
+                session.onCameraStarted(config, generation)
+                onStarted(config)
                 onStatus(
                     "Camera ${config.cameraId}: ${config.size.width}x${config.size.height}" +
                         " @${config.fps} fps, ${config.bitrate / 1_000_000.0} Mbps",
@@ -36,7 +43,7 @@ class CameraBridgeController(
             }
 
             override fun onCameraError(message: String, cause: Throwable?) {
-                onError(buildError(message, cause))
+                if (!closed.get()) onError(buildError(message, cause))
             }
         }
 
@@ -46,9 +53,7 @@ class CameraBridgeController(
         try {
             session.start()
         } catch (t: Throwable) {
-            this.session.attachIdrRequester(null)
-            cameraSession = null
-            runCatching { session.close() }
+            close()
             throw t
         }
     }
@@ -58,6 +63,8 @@ class CameraBridgeController(
     }
 
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        session.stopVideo()
         session.attachIdrRequester(null)
         runCatching { cameraSession?.close() }
         cameraSession = null

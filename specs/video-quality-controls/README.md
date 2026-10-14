@@ -21,17 +21,17 @@ PR #6 の `923d083` をソース監査した結果、**「残るのは04の実�
 実機・ネイティブ出力の検証は [Issue #8](https://github.com/nekomario28/mobile-webcam-bridge/issues/8) で分けて追跡する。
 
 - 01: 同名codecのサイズ・速度制約を交差する判定と、最小フレーム時間の不明状態保持を実装。fixture回帰は旧判定で失敗→修正後成功。実機の能力と持続fpsは未確認。
-- 02: wire・純粋状態機械・能力通知・PC workerの基盤はあるが、Android readerから状態機械・カメラ所有者への配線がない。
-  USB/LAN readerは8バイト上限のため14バイトのPrepareを拒否する。writerのpause/drain境界も未実装。
+- 02 Android: USB/LANの共通reader→UI所有者→状態機械→capture→writer境界を配線。重複応答・busy・epoch検証・未Commit期限・idle stageを実装。
+  LANの実reader/controller/writerテストと、ブロック中writer/古い世代callbackの回帰をローカルで確認。Camera2の実機動作は未確認。
 - PC worker: config取得後の120秒receive、部分読み取り後のtimeout再試行、適用確認の不足を修正・回帰テストで固定する必要がある。
 - 03: 選択UIとSettings字段はあるが、自動/明示の組合せ、希望値/適用済み/処理中の分離、失敗後の再適用・再接続が未完了。
 - 04: 実機の能力一覧、USB/Wi-Fi切替、Linux/Windows利用アプリ、持続配信は未確認。
 
 ## Next Agent Prompt
 
-次は01の能力交差を完成させ、02の実際のreader→制御→capture→writer境界を証明する。
-合成Rust peerだけでAndroid側の完了にしない。workerの待機を短くする前に、部分受信を保持するか
-安全に接続を閉じる契約を決め、fragment/trickleと配信中ストールで回帰を確認する。
+次はPC workerの受信待ちを、部分フレームを保持できる受信経路へ変更する。
+fragment/trickleと配信中ストールで停止・5秒期限を確認し、config/FPS/設定付きキーフレーム/出力再開を適用判定に含める。
+ローカルKotlin検証はKotlin 2.0.21・JDK21（target17）・Android APIクラスを使ったJUnitで、Activity/resourcesは含めない。APK全体はCIで確認する。
 02の境界が通るまで03は基盤扱いとし、実機待ちを理由にソフトウェア側の未実装を隠さない。
 secure-Wi-Fi PR #5 は別ブランチであり、両機能の統合も未検証。
 

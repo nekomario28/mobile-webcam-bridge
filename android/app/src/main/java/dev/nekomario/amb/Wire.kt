@@ -81,6 +81,11 @@ object Wire {
 
     data class Epoch(val requestId: Long, val streamEpoch: Long)
 
+    sealed interface HostCommand {
+        data class Prepare(val request: PrepareQuality) : HostCommand
+        data class Commit(val epoch: Epoch) : HostCommand
+    }
+
     /**
      * Fixed little-endian fields, then a counted mode list. The length is
      * validated against the count before the list is built.
@@ -208,7 +213,18 @@ object Wire {
         val ptsUs: Long,
     )
 
-    fun readFrame(input: InputStream, maxPayloadLength: Int = MAX_PAYLOAD): Pair<Header, ByteArray> {
+    /** Both transport readers share exact type-specific limits BEFORE allocation. */
+    fun readHostFrame(input: InputStream): Pair<Header, ByteArray> = readFrame(input, 14) { type ->
+        when (type) {
+            TYPE_PING -> 8
+            TYPE_VIDEO_IDR_REQUEST -> 0
+            TYPE_PREPARE_QUALITY -> 14
+            TYPE_COMMIT_QUALITY -> 8
+            else -> error("unexpected host message type 0x%02x".format(type))
+        }
+    }
+
+    fun readFrame(input: InputStream, maxPayloadLength: Int = MAX_PAYLOAD, expectedLength: ((Byte) -> Int)? = null): Pair<Header, ByteArray> {
         require(maxPayloadLength in 0..MAX_PAYLOAD) { "invalid caller payload limit" }
         val headerBytes = ByteArray(HEADER_SIZE)
         readExact(input, headerBytes)
@@ -221,6 +237,7 @@ object Wire {
         val payloadLength = b.int
         val ptsUs = b.long
         require(payloadLength in 0..maxPayloadLength) { "invalid payload length: $payloadLength" }
+        expectedLength?.let { require(payloadLength == it(type)) { "unexpected control payload length: $payloadLength" } }
         val payload = ByteArray(payloadLength)
         readExact(input, payload)
         return Header(type, flags, sequence, payloadLength, ptsUs) to payload
