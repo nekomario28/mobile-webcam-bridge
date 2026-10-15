@@ -96,7 +96,12 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        usb = getSystemService(UsbManager::class.java)
+        // Every other service lookup in this app treats the return as nullable;
+        // this one assigned it straight to a non-null field, which the platform
+        // stub rejects and which would NPE on first use if it were ever null.
+        usb = requireNotNull(getSystemService(UsbManager::class.java)) {
+            "USB service unavailable"
+        }
 
         status = TextView(this).apply {
             textSize = 17f
