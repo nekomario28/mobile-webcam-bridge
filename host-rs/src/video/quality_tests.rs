@@ -1,22 +1,27 @@
 //! Established-stream pipeline: real TCP framing, FFmpeg and pixel conversion;
 //! only the OS output sink is replaced. This is not virtual-camera acceptance.
 use super::*;
-use crate::{output::Sink, transport::Tcp};
+// The same phone-side TLS fixture the integration tests use, so this pipeline
+// also runs over the authenticated transport rather than a plaintext socket.
+#[path = "../../tests/common/mod.rs"]
+mod common;
+use crate::output::Sink;
+use common::{ACCESS_KEY, PHONE_SHA256, phone_tls};
 use std::{
     io::{Read, Write},
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     sync::atomic::AtomicUsize,
     thread,
 };
 const H264: &[u8] = include_bytes!("../../tests/fixtures/red-blue.h264");
-fn send(stream: &mut TcpStream, kind: u8, payload: Vec<u8>, flags: u16, pts: u64) {
+fn send(stream: &mut impl Write, kind: u8, payload: Vec<u8>, flags: u16, pts: u64) {
     let mut frame = wire::Frame::new(kind, 0, payload).unwrap();
     frame.header.flags = flags;
     frame.header.pts_us = pts;
     stream.write_all(&frame.header.encode().unwrap()).unwrap();
     stream.write_all(&frame.payload).unwrap();
 }
-fn read(stream: &mut TcpStream) -> wire::Frame {
+fn read(stream: &mut impl Read) -> wire::Frame {
     let mut bytes = [0; wire::HEADER_SIZE];
     stream.read_exact(&mut bytes).unwrap();
     let header = wire::Header::decode(&bytes).unwrap();
@@ -66,18 +71,62 @@ enum Case {
     WrongFps,
     OutputUnavailable,
 }
+/// A closed TLS peer surfaces as EOF or a missing close_notify, never as a
+/// clean zero-length read; both mean the worker sent nothing further.
+fn expect_closed(stream: &mut impl Read) {
+    // The worker's apply deadline is 5s, and a case that waits for output keeps
+    // the connection open that long; closing early would cut the deadline short.
+    let deadline = Instant::now() + Duration::from_secs(9);
+    let mut byte = [0];
+    loop {
+        match stream.read(&mut byte) {
+            Ok(0) => return,
+            Ok(_) => panic!("unexpected phone frame after the pipeline finished"),
+            Err(error) => {
+                let gone = matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::NotConnected
+                        | std::io::ErrorKind::ConnectionAborted
+                );
+                assert!(
+                    gone || error.to_string().contains("close_notify"),
+                    "unexpected read error: {error}"
+                );
+                if !gone || Instant::now() >= deadline {
+                    return;
+                }
+            }
+        }
+    }
+}
+
 fn pipeline(case: Case) {
     let submitted = Arc::new(AtomicUsize::new(0));
     let dropped = Arc::new(AtomicUsize::new(0));
     let peer_dropped = dropped.clone();
     let (marker_sent, marker_received) = std::sync::mpsc::channel();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let client = Tcp::new(TcpStream::connect(listener.local_addr().unwrap()).unwrap());
+    let port = listener.local_addr().unwrap().port();
+    // The peer must be accepting before the client starts its TLS handshake:
+    // the kernel completes the TCP connect from its backlog, but the handshake
+    // needs the phone side to answer.
     let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        let mut stream = phone_tls(stream);
+        // Pairing first: the credential must match before any AMB1 frame.
+        let hello = read(&mut stream);
+        assert_eq!(hello.header.kind, wire::HELLO);
+        assert_eq!(
+            hello.payload,
+            crate::secure::parse_hex(ACCESS_KEY, 16).unwrap()
+        );
+        // Pairing completes only with an empty HELLO_ACK carrying sequence 1.
+        let ack = wire::Frame::new(wire::HELLO_ACK, hello.header.sequence, Vec::new()).unwrap();
+        stream.write_all(&ack.header.encode().unwrap()).unwrap();
         assert_eq!(read(&mut stream).header.kind, wire::IDR_REQUEST);
         let caps = wire::Capabilities {
             extension_version: 1,
@@ -204,9 +253,16 @@ fn pipeline(case: Case) {
                 1,
             );
         }
-        let mut byte = [0];
-        assert_eq!(stream.read(&mut byte).unwrap(), 0);
+        expect_closed(&mut stream);
     });
+    let client = crate::secure::SecureTcp::connect(
+        "127.0.0.1",
+        port,
+        PHONE_SHA256,
+        ACCESS_KEY,
+        Duration::from_secs(5),
+    )
+    .unwrap();
     let stop = AtomicBool::new(false);
     let request = Mutex::new(None);
     let changes = Mutex::new(None);
