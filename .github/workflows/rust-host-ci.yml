@@ -43,7 +43,12 @@ jobs:
           host-rs/target/qt-settings read host-rs/target/qt-fixture.conf
   windows:
     runs-on: windows-2025
-    timeout-minutes: 30
+    # Time budget only; every check below is unchanged. The job was canceled
+    # at 30m22s still inside the FFmpeg step (run 38618355206, head 1c506d0),
+    # so 30 minutes could never reach clippy/test/release/Qt verification.
+    # d13face measured the same need for this job on the TLS branch:
+    # FFmpeg 8m21s, clippy 5m29s, test build 14m15s, release still pending.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
