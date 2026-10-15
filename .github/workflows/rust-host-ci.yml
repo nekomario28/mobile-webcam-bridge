@@ -45,7 +45,10 @@ jobs:
           host-rs/target/qt-settings read host-rs/target/qt-fixture.conf
   windows:
     runs-on: windows-2025
-    timeout-minutes: 30
+    # TLS 1.3 (rustls + ring) tripled the windows-gnu dependency
+    # compilation: measured FFmpeg 8m21s, clippy 5m29s, test build 14m+
+    # and the release build still pending at the old 30m limit.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:

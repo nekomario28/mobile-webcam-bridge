@@ -22,7 +22,9 @@ Production message-specific limits will be tighter.
 
 Initial message types:
 
-- `0x01 HELLO` — empty payload; confirms an AMB peer on a LAN connection
+- `0x01 HELLO` — empty payload on the old plaintext LAN protocol; the
+  TLS-only Rust/Android pairing extension carries exactly 16 secret bytes
+  inside the encrypted channel. See [secure Wi-Fi](wire-secure-lan.md).
 - `0x02 HELLO_ACK` — empty payload; accepts the LAN connection
 - `0x03 PING` — G0.5, payload is an opaque 8-byte challenge
 - `0x04 PONG` — G0.5, same sequence / PTS / payload as PING

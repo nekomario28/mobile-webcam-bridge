@@ -3,6 +3,7 @@ package dev.nekomario.amb
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -41,6 +42,10 @@ class MainActivity : Activity() {
     private var accessoryFd: ParcelFileDescriptor? = null
     private var session: MediaSession? = null
     private var lanServer: LanServer? = null
+    private var lanIdentity: SecureLanIdentity? = null
+    private lateinit var pairAction: Button
+    private lateinit var rotateAction: Button
+    private lateinit var pairInfo: TextView
     private var cameraBridge: CameraBridgeController? = null
     private lateinit var cameraButton: Button
     private lateinit var details: TextView
@@ -142,6 +147,69 @@ class MainActivity : Activity() {
                 }
             }
         }
+        pairInfo = TextView(this).apply {
+            textSize = 12f
+            setTextIsSelectable(true)
+            visibility = View.GONE
+        }
+        pairAction = Button(this).apply {
+            text = ui("Show pairing key", "接続キーを表示")
+            setAllCaps(false)
+            // The pairing controls belong to the Wi-Fi flow; startUsbMode hides them.
+            visibility = View.GONE
+            setOnClickListener {
+                if (pairInfo.visibility == View.VISIBLE) {
+                    pairInfo.visibility = View.GONE
+                    pairInfo.text = ""
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    text = ui("Show pairing key", "接続キーを表示")
+                    return@setOnClickListener
+                }
+                val identity = lanIdentity ?: return@setOnClickListener
+                runCatching {
+                    pairInfo.text = ui(
+                        "Verify phone certificate SHA-256 on PC:\n" + identity.fingerprint() +
+                        "\n\nEnter this 128-bit access key on PC:\n" + identity.pairingCode() +
+                        "\n\nKeep the key private.",
+                        "PCでスマホ証明書のSHA-256を確認:\n" + identity.fingerprint() +
+                        "\n\nPCに128ビット接続キーを入力:\n" + identity.pairingCode() +
+                        "\n\n接続キーは秘密にしてください。"
+                    )
+                    // Block screenshots and Android's recent-app snapshot while the
+                    // bearer key is on screen.
+                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    pairInfo.visibility = View.VISIBLE
+                    text = ui("Hide pairing key", "接続キーを隠す")
+                }.onFailure { show("Wi-Fi identity error: " + it.message) }
+            }
+        }
+        rotateAction = Button(this).apply {
+            text = ui("Revoke all paired PCs", "登録PCをすべて失効")
+            setAllCaps(false)
+            visibility = View.GONE
+            setOnClickListener {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle(ui("Revoke all Wi-Fi connections?", "すべてのWi-Fi接続を失効しますか？"))
+                    .setMessage(ui(
+                        "Every PC using the current key will disconnect and must be paired again.",
+                        "現在のキーを使うPCはすべて切断され、再ペアリングが必要になります。"
+                    ))
+                    .setNegativeButton(ui("Cancel", "キャンセル"), null)
+                    .setPositiveButton(ui("Revoke", "失効")) { _, _ ->
+                        runCatching {
+                            lanIdentity?.rotate()
+                            lanServer?.close()
+                            lanServer = null
+                            pairInfo.visibility = View.GONE
+                            pairInfo.text = ""
+                            pairAction.text = ui("Show pairing key", "接続キーを表示")
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                            startLanMode()
+                        }.onFailure { show("Wi-Fi key rotation failed: " + it.message) }
+                    }
+                    .show()
+            }
+        }
         val root = ScrollView(this).apply {
             setBackgroundColor(getColor(R.color.app_background))
             isFillViewport = true
@@ -156,6 +224,9 @@ class MainActivity : Activity() {
                 })
                 addView(cameraButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(12) })
                 addView(cameras, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                addView(pairAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                addView(rotateAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                addView(pairInfo, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(details, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             })
         }
@@ -208,6 +279,11 @@ class MainActivity : Activity() {
         // Do not keep capturing video after the activity leaves the foreground.
         if (cameraBridge != null) stopCamera()
         handler.removeCallbacks(rediscoverRunnable)
+        // Never leave the secret visible in the task switcher or on return.
+        pairInfo.visibility = View.GONE
+        pairInfo.text = ""
+        pairAction.text = ui("Show pairing key", "接続キーを表示")
+        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         super.onPause()
     }
 
@@ -227,6 +303,13 @@ class MainActivity : Activity() {
         stopCamera()
         lanServer?.close()
         lanServer = null
+        lanIdentity = null
+        pairInfo.visibility = View.GONE
+        pairInfo.text = ""
+        pairAction.text = ui("Show pairing key", "接続キーを表示")
+        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        pairAction.visibility = View.GONE
+        rotateAction.visibility = View.GONE
         closeSession()
         connectionMode = ConnectionMode.USB
         usbPermissionDeclined = false
@@ -242,10 +325,14 @@ class MainActivity : Activity() {
         connectionMode = ConnectionMode.LAN
         clearUsbPermissionRequest()
         saveConnectionMode()
+        pairAction.visibility = View.VISIBLE
+        rotateAction.visibility = View.VISIBLE
         lanServer?.close()
+        val identity = lanIdentity ?: SecureLanIdentity(this).also { lanIdentity = it }
 
         lateinit var server: LanServer
         server = LanServer(
+            identity = identity,
             onSession = { lanSession, connected ->
                 runOnUiThread {
                     if (lanServer !== server) {
@@ -291,7 +378,10 @@ class MainActivity : Activity() {
             buildString {
                 append(ui("Phone IP\n", "スマホのIPアドレス\n"))
                 append(addresses.joinToString("\n"))
-                append(ui("\nEnter this IP on the PC and press Connect", "\nPCにこのIPを入力し「接続」を押す"))
+                append(ui(
+                    "\nTLS 1.3 is required. Tap Show pairing key to find the phone fingerprint and key for your PC.",
+                    "\nTLS 1.3必須。接続キーを表示し、PCで証明書の指紋と接続キーを入力してください。"
+                ))
                 if (!detail.isNullOrBlank()) append("\n").append(detail)
             },
         )
@@ -487,6 +577,14 @@ class MainActivity : Activity() {
             button.isSelected = selected
             button.backgroundTintList = ColorStateList.valueOf(getColor(if (selected) R.color.app_accent else R.color.app_inactive))
             button.setTextColor(if (selected) Color.WHITE else getColor(R.color.app_text))
+        }
+        pairAction.visibility = if (connectionMode == ConnectionMode.LAN) View.VISIBLE else View.GONE
+        rotateAction.visibility = pairAction.visibility
+        if (connectionMode != ConnectionMode.LAN) {
+            pairInfo.visibility = View.GONE
+            pairInfo.text = ""
+            pairAction.text = ui("Show pairing key", "接続キーを表示")
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
         cameraButton.isEnabled = session != null || cameraStartRequested
         cameraButton.backgroundTintList = ColorStateList.valueOf(getColor(if (cameraButton.isEnabled) R.color.app_accent else R.color.app_inactive))

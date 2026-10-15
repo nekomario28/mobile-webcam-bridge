@@ -1,4 +1,6 @@
 use super::*;
+#[path = "dpapi.rs"]
+mod dpapi;
 use crate::platform::windows::wide;
 use std::ptr;
 use windows_sys::Win32::{
@@ -69,12 +71,30 @@ fn read_value(root: HKEY, path: &str, name: &str) -> crate::Result<Option<String
 pub fn read() -> crate::Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
     for key in Settings::default().values().keys() {
+        if key == "lanKey" {
+            if let Some(encrypted) = read_value(HKEY_CURRENT_USER, PATH, "lanKeyProtected")? {
+                values.insert(key.clone(), dpapi::unprotect(&encrypted)?);
+            } else if let Some(legacy) = read_value(HKEY_CURRENT_USER, PATH, "lanKey")? {
+                // Migrate the older development build's per-user plaintext key
+                // on the next save. Never read secret values from machine scope.
+                values.insert(key.clone(), legacy);
+            }
+            continue;
+        }
+        // Pairing credentials bind to one user's own phone: the fingerprint
+        // is never read from machine scope either — the same scope rule the
+        // Unix loader applies to XDG fallbacks. Non-secret defaults may
+        // still inherit from a system-wide configuration.
+        let credential = key == "lanFingerprint";
         for (root, path) in [
             (HKEY_CURRENT_USER, PATH),
             (HKEY_CURRENT_USER, "Software\\nekomario28"),
             (HKEY_LOCAL_MACHINE, PATH),
             (HKEY_LOCAL_MACHINE, "Software\\nekomario28"),
         ] {
+            if credential && root == HKEY_LOCAL_MACHINE {
+                continue;
+            }
             if let Some(value) = read_value(root, path, key)? {
                 values.insert(key.clone(), value);
                 break;
@@ -104,7 +124,17 @@ pub fn save(values: &BTreeMap<String, String>) -> crate::Result<()> {
     }
     let key = Key(raw);
     for (name, value) in values {
-        let text = wide(value);
+        let protected = if name == "lanKey" {
+            Some(dpapi::protect(value)?)
+        } else {
+            None
+        };
+        let stored_name = if name == "lanKey" {
+            "lanKeyProtected"
+        } else {
+            name.as_str()
+        };
+        let text = wide(protected.as_deref().unwrap_or(value));
         let number = if name == "rotation" {
             Some(value.parse::<u32>()?)
         } else {
@@ -115,10 +145,17 @@ pub fn save(values: &BTreeMap<String, String>) -> crate::Result<()> {
         } else {
             (REG_SZ, text.as_ptr().cast(), (text.len() * 2) as u32)
         };
-        let code = unsafe { RegSetValueExW(key.0, wide(name).as_ptr(), 0, kind, data, size) };
+        let code =
+            unsafe { RegSetValueExW(key.0, wide(stored_name).as_ptr(), 0, kind, data, size) };
         if code != ERROR_SUCCESS {
             return Err(std::io::Error::from_raw_os_error(code as i32).into());
         }
+    }
+    // Remove the development build's plaintext token only *after* the
+    // DPAPI ciphertext has been successfully written.
+    let code = unsafe { RegDeleteValueW(key.0, wide("lanKey").as_ptr()) };
+    if code != ERROR_SUCCESS && code != ERROR_FILE_NOT_FOUND {
+        return Err(std::io::Error::from_raw_os_error(code as i32).into());
     }
     Ok(())
 }
