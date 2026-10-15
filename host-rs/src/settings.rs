@@ -505,6 +505,8 @@ mod tests {
         assert!(settings.lan_key.is_empty());
     }
 
+    // Store::at is the unix file store; this round trip is a Qt fixture test.
+    #[cfg(unix)]
     #[test]
     fn qt_fixture_unknown_keys_and_failed_save() {
         let dir = tempfile::tempdir().unwrap();
