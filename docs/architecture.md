@@ -63,6 +63,32 @@ validating it. There is no plaintext fallback on the production Wi-Fi path.
 See [transport security](security.md) and
 [wire-secure-lan](../protocol/wire-secure-lan.md).
 
+## Capture quality control
+
+The phone owns what it can capture: it advertises the size/fps tuples its camera
+and the selected encoder actually support, and it owns the first camera start
+and the permission decision. The PC owns the request: it resolves the user's
+saved wish against the advertised list and sends one concrete tuple, never a
+substitute for an unsupported one.
+
+A switch is a fenced transaction on the phone's single outbound writer. The
+in-flight old frame may finish, but it is written before `PAUSED`; queued and
+late old-generation video and codec metadata cannot follow it. The PC releases
+its output, decoder, conversion and timestamp state before `Commit`, and reports
+applied only after a matching config, a config-bearing keyframe, a successful
+decode and a successful output submission. Metadata is never the confirmation.
+
+Nothing retries or rolls back on its own. A failed apply leaves the previous
+stream running or the session failed, with the reason reported; the user decides
+whether to try the same wish again. A phone whose camera is stopped stages the
+request and waits for its user to start it, and the deadline starts when capture
+actually starts rather than when the request was staged.
+
+These frames ride whichever transport the session uses, so over Wi-Fi they are
+inside the TLS session above. Receive polls retain partially received AMB1
+frames and TLS records alike; a partial frame has one lifetime, after which the
+connection terminates rather than trickling indefinitely.
+
 ## Hardware decode
 
 The decoder remains FFmpeg/libavcodec. `HardwareDecode` selects a compatible
