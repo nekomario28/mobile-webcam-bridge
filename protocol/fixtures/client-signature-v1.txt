@@ -1,0 +1,11 @@
+# A PC identity signature, generated once by the Rust Identity.
+# Layout: public key point (65) || message (57) || signature (64) = 186 bytes.
+# message = clientId (16) || nonce (32) || label ("studio-pc").
+# The private key was discarded after generating this; only the public half and
+# one signature over one message are here. Both languages verify this exact
+# signature, which is what proves they agree on the scheme.
+public_key_point  = 0415bff2bb16aa6950a79fd784bfd4c2d2c5e11180bf6827e60f10c792eccb8830f1967aa220f206d087bc3d1a3e16ded476a71ca70b2593c697d3031c08a6099a
+client_id         = d4cce9d8f112ec215f891b940fd9d03d
+nonce             = 0707070707070707070707070707070707070707070707070707070707070707
+label             = studio-pc
+signature         = 98b3aa146b29ce01e8a866c5d0755d3232ab97be767728bf24ea6187cffff3bbc6d90e53657d9d894a3c0854fe7d8ca51ea8d654df35695b87756e0945d05299

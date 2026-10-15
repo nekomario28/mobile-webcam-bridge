@@ -290,6 +290,32 @@ mod tests {
         assert!(Identity::from_hex("").is_none(), "empty");
     }
 
+    /// The same fixture the Kotlin suite verifies. Both languages verifying one
+    /// signature is what proves they agree on the scheme; a mismatch here is a
+    /// wire-format bug, not a test bug.
+    #[test]
+    fn the_canonical_signature_verifies_in_both_languages() {
+        let fixture: &[u8] = include_bytes!("../../protocol/fixtures/client-signature-v1.bin");
+        let (public_key, rest) = fixture.split_at(PUBLIC_KEY_BYTES);
+        let (message, signature) = rest.split_at(57);
+        assert_eq!(signature.len(), SIGNATURE_BYTES);
+        assert!(Identity::verify(public_key, message, signature));
+        // The client ID inside the message is the derived one.
+        assert_eq!(
+            client_id_of(public_key).to_vec(),
+            message[..CLIENT_ID_BYTES]
+        );
+        // One changed byte anywhere in the signed message fails.
+        for index in [0, 16, 48, 56] {
+            let mut tampered = message.to_vec();
+            tampered[index] ^= 1;
+            assert!(!Identity::verify(public_key, &tampered, signature));
+        }
+        // And the fixture's own sizes are what the wire reserves.
+        assert_eq!(public_key.len(), PUBLIC_KEY_BYTES);
+        assert_eq!(fixture.len(), PUBLIC_KEY_BYTES + 57 + SIGNATURE_BYTES);
+    }
+
     /// A signature is not a constant: the same message signed twice differs,
     /// because ECDSA is randomized, and both verify.
     #[test]
@@ -301,5 +327,38 @@ mod tests {
         assert_ne!(first, second, "ECDSA must not be deterministic");
         assert!(Identity::verify(identity.public_key(), &message, &first));
         assert!(Identity::verify(identity.public_key(), &message, &second));
+    }
+}
+
+#[cfg(test)]
+mod fixture_generator {
+    //! Run with `cargo test --lib identity::fixture_generator::print -- --nocapture`
+    //! to regenerate protocol/fixtures/client-signature-v1.bin.
+    use super::*;
+
+    #[test]
+    #[ignore = "generator, not a test"]
+    fn print() {
+        let identity = Identity::generate();
+        let client_id = identity.client_id();
+        let nonce = [7u8; 32];
+        let label = b"studio-pc";
+        let mut message = client_id.to_vec();
+        message.extend_from_slice(&nonce);
+        message.extend_from_slice(label);
+        let signature = identity.sign(&message).unwrap();
+        let mut out = Vec::new();
+        out.extend_from_slice(identity.public_key());
+        out.extend_from_slice(&message);
+        out.extend_from_slice(&signature);
+        std::fs::write("../../protocol/fixtures/client-signature-v1.bin", &out).unwrap();
+        println!(
+            "public {} message {} signature {} total {}",
+            identity.public_key().len(),
+            message.len(),
+            signature.len(),
+            out.len()
+        );
+        println!("client_id {}", hex(&client_id));
     }
 }

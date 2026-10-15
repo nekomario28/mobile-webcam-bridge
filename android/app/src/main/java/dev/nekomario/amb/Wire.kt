@@ -131,6 +131,10 @@ object Wire {
         val expiresAtUnixSeconds: Long,
     )
 
+/** SHA-256, for deriving a client ID from its public key. */
+    fun sha256(bytes: ByteArray): ByteArray =
+        java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+
     fun encodeClientChallenge(challenge: ClientChallenge): ByteArray {
         require(challenge.version == 1) { "unsupported client challenge version" }
         require(challenge.nonce.size == NONCE_BYTES) { "client challenge nonce must be 32 bytes" }
