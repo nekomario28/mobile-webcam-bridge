@@ -1,3 +1,4 @@
+pub mod client_auth;
 pub mod control;
 #[cfg(feature = "gui")]
 pub mod gui;
