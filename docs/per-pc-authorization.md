@@ -263,6 +263,72 @@ a phone that has none — which is exactly today's behaviour.
 - Automatic re-approval, grace periods, or "remember this PC" shortcuts.
 - Multi-user phones, shared PCs, or per-session approval.
 
+## The USB path needs the authorization, not the pairing
+
+USB is the better transport for this: the physical plug *is* the bootstrap, so
+none of the pairing machinery applies — no fingerprint to compare, no key to
+type, no QR, no short code. What it still needs is the authorization list, and
+today it has neither that nor a way to tell one PC from another.
+
+Four findings, from reading the accessory path.
+
+### H1 — the start consent survives a different accessory
+
+```kotlin
+openAccessory() {
+    closeSession(clearStartRequest = false)
+    ...
+    if (cameraStartRequested) startCamera()
+}
+```
+
+Once the user presses *Start camera*, that flag is **carried across accessory
+changes**. The camera does not auto-start on a fresh install, which is the part
+that matters most and is correct. But combined with H2 it means a second PC can
+inherit the first PC's consent.
+
+### H2 — the displayed identity is a string the PC chooses
+
+```kotlin
+"USB connected · ${accessory.manufacturer} ${accessory.model}"
+```
+
+The AOA accessory descriptor's manufacturer and model are set by the PC
+application. A hostile PC can call itself anything, and Android's accessory
+permission is keyed on that descriptor, so **presenting the same strings reuses
+an already-granted permission**. H1 plus H2 is the real hole: press start once,
+unplug, plug into a PC claiming the same accessory identity, and the camera
+starts by itself.
+
+### H3 — no per-PC authorization over USB
+
+The LAN path has no per-PC identity either, but it at least has a key. USB has
+nothing: the connected PC is not identified and cannot be revoked individually.
+
+### H4 — host commands are unauthenticated
+
+`SessionControl` validates every Prepare and Commit, but nothing identifies the
+sending PC. A hostile PC can request quality switches — annoying, recoverable —
+and change the display transform, which the user sees. Low severity, and it is
+still an unauthenticated control channel.
+
+### The fix
+
+| Finding | Fix |
+| --- | --- |
+| H1 | Stop carrying `cameraStartRequested` across accessories. Require a press per newly opened accessory, or only carry it when the accessory identity is byte-identical to the one that just closed. |
+| H2 | Display the strings as *claimed*, or use the accessory serial as a stable identifier. Never as a trust anchor. |
+| H3 | Apply the same authorization list as the LAN path. The plug is the bootstrap; the first connection needs one tap on the phone; after that the PC authenticates itself and revocation comes from the list. |
+| H4 | Accept host commands only from an authorized PC. An unauthorized one gets no video. |
+
+H3 is also the correct fix for H2: stop trusting the string, and let the phone
+hold the list, so the identity is one the phone issued rather than one the PC
+announced.
+
+The pairing design above exists because the LAN bootstrap happens across a
+screen. USB's bootstrap is physical, so the authorization model is identical and
+only the bootstrap differs.
+
 ## Open decisions
 
 These are recommendations, not settled. Each one changes the user-visible cost,
@@ -291,6 +357,8 @@ so they are worth a decision before implementation.
 5. Regressions: unknown client, revoked client, expired client, replayed
    signature, wrong label, too many clients, and revocation of the live session.
 6. The migration path from a pairing-key-only installation.
+7. The USB path: stop carrying the start consent across accessories, and apply
+   the same authorization list with the physical plug as its bootstrap.
 
 Steps 1 and 2 are independently testable and do not change the current
 handshake. Nothing here should ship without the release gate in
