@@ -134,7 +134,11 @@ impl Session {
         let stop = self.stop.clone();
         let pending = self.pending.clone();
         let writer = std::thread::spawn(move || {
-            if control::write(&mut stdin, &Command::Start { settings, device }).is_err() {
+            let start = Command::Start {
+                settings: Box::new(settings),
+                device,
+            };
+            if control::write(&mut stdin, &start).is_err() {
                 return;
             }
             while !stop.load(Ordering::Acquire) {
@@ -917,7 +921,7 @@ mod tests {
                 .unwrap();
         match command {
             Command::Start { settings, device } => {
-                assert_eq!(settings, latest);
+                assert_eq!(*settings, latest);
                 assert_eq!(device, None);
             }
             other => panic!("unexpected worker command: {other:?}"),

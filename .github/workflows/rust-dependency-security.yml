@@ -1,0 +1,42 @@
+name: rust-dependency-security
+on:
+  pull_request:
+    paths:
+      - 'host-rs/Cargo.toml'
+      - 'host-rs/Cargo.lock'
+      - '.github/workflows/rust-dependency-security.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'host-rs/Cargo.toml'
+      - 'host-rs/Cargo.lock'
+      - '.github/workflows/rust-dependency-security.yml'
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rustsec:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install pinned RustSec scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo install --locked cargo-audit --version 0.22.2
+      - name: Audit resolved host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Always refresh RustSec: scheduled runs catch newly published
+          # advisories without changing any source or lockfile.
+          cargo audit --file host-rs/Cargo.lock

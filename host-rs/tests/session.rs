@@ -1,4 +1,7 @@
 #![cfg(all(feature = "gui", feature = "video", any(target_os = "linux", windows)))]
+mod common;
+
+use common::{ACCESS_KEY, PHONE_SHA256, phone_tls};
 use mobile_webcam::{
     session::{Session, State},
     settings::Settings,
@@ -11,17 +14,34 @@ use std::{
     time::{Duration, Instant},
 };
 
+fn paired_settings() -> Settings {
+    Settings {
+        transport: "lan".into(),
+        lan_host: "127.0.0.1".into(),
+        lan_fingerprint: PHONE_SHA256.into(),
+        lan_key: ACCESS_KEY.into(),
+        decode: "off".into(),
+        ..Default::default()
+    }
+}
+
 fn peer(listener: TcpListener) {
-    let (mut socket, _) = listener.accept().unwrap();
-    socket
-        .set_read_timeout(Some(Duration::from_secs(4)))
-        .unwrap();
+    let mut socket = phone_tls(listener.accept().expect("accept").0);
     let mut header = [0; 24];
     socket.read_exact(&mut header).unwrap();
     assert_eq!(header[5], 1);
     assert_eq!(&header[8..12], &1u32.to_le_bytes());
+    assert_eq!(&header[12..16], &16u32.to_le_bytes());
+    let mut token = [0u8; 16];
+    socket.read_exact(&mut token).unwrap();
+    assert_eq!(
+        token.as_slice(),
+        &mobile_webcam::secure::parse_hex(ACCESS_KEY, 16).unwrap()
+    );
     header[5] = 2;
+    header[12..16].copy_from_slice(&0u32.to_le_bytes());
     socket.write_all(&header).unwrap();
+    socket.flush().unwrap();
     socket.read_exact(&mut header).unwrap();
     assert_eq!(header[5], 0x12);
     let mut byte = [0];
@@ -29,7 +49,13 @@ fn peer(listener: TcpListener) {
     // Both terminal outcomes prove the peer closed; data/timeouts still fail.
     match socket.read(&mut byte) {
         Ok(0) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::ConnectionAborted
+            ) => {}
         other => panic!("worker connection remained open or sent unexpected data: {other:?}"),
     }
 }
@@ -40,12 +66,7 @@ fn real_worker_disconnect_and_parent_death() {
         .unwrap_or_else(|| env!("CARGO_BIN_EXE_mobile-webcam").into());
     let ctx = eframe::egui::Context::default();
     let mut session = Session::new(executable.clone());
-    let settings = Settings {
-        transport: "lan".into(),
-        lan_host: "127.0.0.1".into(),
-        decode: "off".into(),
-        ..Default::default()
-    };
+    let settings = paired_settings();
     for _ in 0..2 {
         let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
         let server = thread::spawn(move || peer(listener));
@@ -95,18 +116,7 @@ fn abrupt_parent_fixture() {
     };
     let ctx = eframe::egui::Context::default();
     let mut session = Session::new(executable.into());
-    session
-        .start(
-            Settings {
-                transport: "lan".into(),
-                lan_host: "127.0.0.1".into(),
-                decode: "off".into(),
-                ..Default::default()
-            },
-            None,
-            ctx.clone(),
-        )
-        .unwrap();
+    session.start(paired_settings(), None, ctx.clone()).unwrap();
     let started = Instant::now();
     while !matches!(session.state, State::Waiting) {
         session.poll(&ctx);

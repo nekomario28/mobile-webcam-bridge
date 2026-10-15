@@ -7,6 +7,11 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import javax.net.ssl.SSLSocket
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -87,6 +92,7 @@ class LanSession(
 }
 
 class LanServer(
+    private val identity: SecureLanIdentity,
     private val port: Int = DEFAULT_PORT,
     private val onSession: (LanSession, Boolean) -> Unit,
     private val onStatus: (String) -> Unit,
@@ -98,11 +104,19 @@ class LanServer(
     private val active = AtomicReference<LanSession?>(null)
     private var server: ServerSocket? = null
     private var acceptThread: Thread? = null
+    private val handshakeTimer = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "mwb-tls-handshake-deadline").apply { isDaemon = true }
+    }
+    private val handshakeWorkers = Executors.newFixedThreadPool(MAX_HANDSHAKES) { task ->
+        Thread(task, "mwb-tls-handshake").apply { isDaemon = true }
+    }
+    private val handshakeSlots = Semaphore(MAX_HANDSHAKES)
+    private val unauthenticated = Collections.newSetFromMap(ConcurrentHashMap<Socket, Boolean>())
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
         try {
-            val socket = ServerSocket(port).apply { reuseAddress = true }
+            val socket: ServerSocket = identity.listener(port)
             server = socket
             acceptThread = Thread({ acceptLoop(socket) }, "mwb-lan-accept").also { it.start() }
             onStatus("Wi-Fi listening on ${endpoints().joinToString()}")
@@ -121,11 +135,31 @@ class LanServer(
                 if (running.get()) onError(t.message ?: t.javaClass.simpleName)
                 break
             }
-            if (active.get() != null) {
+            // Do not let one stalled TLS handshake monopolize the accept loop.
+            // Only a fixed number of untrusted sockets may consume worker slots.
+            if (active.get() != null || !handshakeSlots.tryAcquire()) {
                 runCatching { socket.close() }
                 continue
             }
-            runCatching { authenticate(socket) }
+            unauthenticated.add(socket)
+            try {
+                handshakeWorkers.execute { completeHandshake(socket) }
+            } catch (_: java.util.concurrent.RejectedExecutionException) {
+                unauthenticated.remove(socket)
+                handshakeSlots.release()
+                runCatching { socket.close() }
+            }
+        }
+    }
+
+    private fun completeHandshake(socket: Socket) {
+        // Per-read SO_TIMEOUT is insufficient against a TLS record byte trickle.
+        // This task closes the unauthenticated connection after an absolute deadline.
+        val timeout = handshakeTimer.schedule(
+            { runCatching { socket.close() } }, HANDSHAKE_TIMEOUT_MS, TimeUnit.MILLISECONDS
+        )
+        try {
+            runCatching { authenticate(socket as SSLSocket) }
                 .onSuccess {
                     if (!running.get()) {
                         runCatching { socket.close() }
@@ -138,20 +172,40 @@ class LanServer(
                         }
                         if (!error.isNullOrBlank()) onError(error)
                     }, capabilities, onQuality)
-                    active.set(session)
+                    // Parallel handshakes must never seize the same receiver slot.
+                    if (!active.compareAndSet(null, session)) {
+                        runCatching { socket.close() }
+                        return@onSuccess
+                    }
+                    if (!running.get()) {
+                        session.close()
+                        return@onSuccess
+                    }
                     session.start { onSession(session, true) }
                 }
                 .onFailure {
                     runCatching { socket.close() }
-                    onError("Wi-Fi client rejected: ${it.message}")
+                    // Do not echo arbitrary peer-induced TLS exceptions into UI.
+                    if (running.get()) onError("Wi-Fi client rejected (check pairing details)")
                 }
+        } finally {
+            timeout.cancel(false)
+            unauthenticated.remove(socket)
+            handshakeSlots.release()
         }
     }
 
-    private fun authenticate(socket: Socket) {
+    private fun authenticate(socket: SSLSocket) {
         socket.tcpNoDelay = true
         socket.keepAlive = true
-        val hello = readHelloWithDeadline(socket, 5_000)
+        socket.useClientMode = false
+        socket.enabledProtocols = arrayOf("TLSv1.3")
+        socket.soTimeout = HANDSHAKE_TIMEOUT_MS.toInt()
+        socket.startHandshake()
+        val (hello, credential) = readHelloWithDeadline(socket, HANDSHAKE_TIMEOUT_MS.toInt(), 16)
+        require(credential.size == 16 && identity.authenticates(credential)) {
+            "Wi-Fi pairing key rejected"
+        }
         Wire.writeFrame(
             socket.getOutputStream(),
             Wire.Header(Wire.TYPE_HELLO_ACK, 0, hello.sequence, 0, 0),
@@ -166,14 +220,20 @@ class LanServer(
         if (!running.compareAndSet(true, false)) return
         active.getAndSet(null)?.close()
         runCatching { server?.close() }
+        // Closing pending sockets wakes every worker that was blocked in TLS.
+        unauthenticated.forEach { runCatching { it.close() } }
+        handshakeWorkers.shutdownNow()
         acceptThread?.interrupt()
         runCatching { acceptThread?.join(500) }
         acceptThread = null
         server = null
+        handshakeTimer.shutdownNow()
     }
 
     companion object {
         const val DEFAULT_PORT = 48_527
+        private const val MAX_HANDSHAKES = 4
+        private const val HANDSHAKE_TIMEOUT_MS = 5_000L
 
         fun localIpv4Addresses(): List<String> = runCatching {
             NetworkInterface.getNetworkInterfaces().toList()
@@ -192,7 +252,11 @@ class LanServer(
  * Enforce one absolute HELLO deadline, not a new socket timeout per received byte.
  * A slow sender must not occupy the single-threaded accept loop indefinitely.
  */
-internal fun readHelloWithDeadline(socket: Socket, timeoutMillis: Int): Wire.Header {
+internal fun readHelloWithDeadline(
+    socket: Socket,
+    timeoutMillis: Int,
+    credentialBytes: Int = 0,
+): Pair<Wire.Header, ByteArray> {
     require(timeoutMillis > 0)
     val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis.toLong())
     val limitedInput = object : FilterInputStream(socket.getInputStream()) {
@@ -204,8 +268,8 @@ internal fun readHelloWithDeadline(socket: Socket, timeoutMillis: Int): Wire.Hea
             return super.read(bytes, offset, length)
         }
     }
-    val (hello, payload) = Wire.readFrame(limitedInput, maxPayloadLength = 0)
+    val (hello, payload) = Wire.readFrame(limitedInput, maxPayloadLength = credentialBytes)
     require(hello.type == Wire.TYPE_HELLO) { "expected HELLO" }
-    require(payload.isEmpty()) { "HELLO payload must be empty" }
-    return hello
+    require(payload.size == credentialBytes) { "invalid Wi-Fi HELLO credential length" }
+    return hello to payload
 }

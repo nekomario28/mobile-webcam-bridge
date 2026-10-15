@@ -1,7 +1,7 @@
 //! Established-stream pipeline: real TCP framing, FFmpeg and pixel conversion;
 //! only the OS output sink is replaced. This is not virtual-camera acceptance.
 use super::*;
-use crate::output::Sink;
+use crate::{output::Sink, transport::Tcp};
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},

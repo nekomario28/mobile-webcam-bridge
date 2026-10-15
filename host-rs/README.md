@@ -3,8 +3,12 @@
 Open Mobile Webcam on your phone and PC. Choose the same mode on both:
 
 - **USB:** connect the cable, select the phone on the PC, then press **Connect**.
-- **Wi-Fi:** use the same network, select Wi-Fi on the phone, enter its displayed
-  IP on the PC, then press **Connect**. The address is remembered.
+- **Wi-Fi (development build, Android 10+):** select Wi-Fi on the phone,
+  choose **Show Wi-Fi pairing details**, and manually verify the SHA-256
+  certificate fingerprint against the phone display. Enter the displayed
+  128-bit access key and the phone IP in the Rust desktop client, then press
+  **Connect**. Secure Wi-Fi uses TLS 1.3 with certificate pinning. The old
+  C++ host cannot connect to the secure-only phone listener.
 
 Press **Start camera** on the phone and allow camera access. If USB access is
 declined, select USB again to retry. USB debugging is not required.
@@ -21,8 +25,17 @@ missing, then resumes connecting. Setup does not install kernel modules.
 Windows USB also requires a libusb-compatible phone/accessory driver;
 Setup.exe installs the virtual camera only.
 
-Use Wi-Fi on a trusted local network: the current stream is not encrypted or
-authenticated. Rotation, flips and advanced settings are in **Details**.
+**Published v0.2.0 releases use plaintext Wi-Fi.** In this unreleased
+security branch, Wi-Fi is TLS 1.3-only and requires the correct pinned
+certificate and access key; it does not silently fall back to plaintext.
+On Windows the access key is stored with per-user DPAPI protection. On Linux
+the settings file uses permissions 0600; secrets are not encrypted at rest.
+Treat the key as sensitive, and rotate it
+from the phone if exposed (this disconnects/revokes *all* paired PCs).
+Physical Android, Linux and Windows end-to-end acceptance is still pending.
+See [security and test boundaries](../docs/security.md).
+
+Rotation, flips and advanced settings are in **Details**.
 
 ## Build and verification
 

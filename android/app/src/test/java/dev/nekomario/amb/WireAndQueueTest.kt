@@ -35,6 +35,17 @@ class WireAndQueueTest {
     }
 
     @Test
+    fun pairingCredentialIsExactly128Bits() {
+        val code = "00112233445566778899aabbccddeeff"
+        assertTrue(SecureLanIdentity.isHex(code, 32))
+        assertEquals(16, SecureLanIdentity.decodeHex(code).size)
+        assertTrue(!SecureLanIdentity.isHex(code.dropLast(2), 32))
+        assertThrows(IllegalArgumentException::class.java) {
+            SecureLanIdentity.decodeHex("invalid-pairing-credential")
+        }
+    }
+
+    @Test
     fun eightByteControlFrameStillRoundTrips() {
         val payload = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8)
         val output = ByteArrayOutputStream()

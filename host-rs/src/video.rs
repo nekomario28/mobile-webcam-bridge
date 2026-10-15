@@ -5,8 +5,9 @@ pub mod transform;
 use crate::{
     control::{self, Command, Event},
     quality::Action,
+    secure::SecureTcp,
     settings::Settings,
-    transport::{Tcp, Transport},
+    transport::Transport,
     usb::{DeviceId, Usb},
     wire,
 };
@@ -70,6 +71,7 @@ pub fn worker(parent: u32) -> crate::Result<()> {
     let Command::Start { settings, device } = first else {
         return Err("first command must start a session".into());
     };
+    let settings = *settings;
     settings.validate()?;
     let stop = Arc::new(AtomicBool::new(false));
     let changes = Arc::new(Mutex::new(None));
@@ -142,9 +144,11 @@ fn receive(
     event: impl FnMut(Event) -> crate::Result<()>,
 ) -> crate::Result<()> {
     let transport: Box<dyn Transport> = if settings.transport == "lan" {
-        Box::new(Tcp::connect(
+        Box::new(SecureTcp::connect(
             &settings.lan_host,
             48527,
+            &settings.lan_fingerprint,
+            &settings.lan_key,
             Duration::from_secs(5),
         )?)
     } else {

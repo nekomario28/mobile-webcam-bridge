@@ -73,6 +73,12 @@ A partial frame has one five-second budget, not a renewed timeout per fragment;
 expiry or invalid framing is terminal. Idle and configured streams both poll so
 Apply, Stop and the monotonic apply deadline remain observable during a stall.
 
+These frames ride whichever transport the session uses. Over Wi-Fi that is
+the authenticated TLS 1.3 transport, and the receive polls above are the same
+ones that keep a partially received TLS record intact: a poll timeout returns
+`Ok(None)` with the AMB1 fragment retained, so neither an AMB1 frame boundary
+nor a TLS record is lost by a short poll.
+
 PAUSED must match the request and advertised ending epoch. Before Commit, the
 PC releases its output, decoder, conversion buffers and timestamp state. A
 matching width/height/target-fps config only begins output confirmation: Applied

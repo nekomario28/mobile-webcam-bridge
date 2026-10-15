@@ -1,5 +1,5 @@
 use crate::{
-    transport::{FrameReader, Transport},
+    transport::{FrameReader, Transport, remaining},
     wire::Frame,
 };
 use rusb::{Context, Device, DeviceHandle, UsbContext};
@@ -293,13 +293,6 @@ impl Drop for Usb {
     fn drop(&mut self) {
         let _ = self.handle.release_interface(self.interface);
     }
-}
-fn remaining(deadline: Instant) -> crate::Result<Duration> {
-    deadline
-        .checked_duration_since(Instant::now())
-        .filter(|d| !d.is_zero())
-        .map(|d| d.max(Duration::from_millis(1)))
-        .ok_or_else(|| "USB transfer timed out".into())
 }
 impl Transport for Usb {
     fn receive(&mut self, timeout: Duration) -> crate::Result<Frame> {

@@ -7,8 +7,10 @@ pub const MAX_LINE: usize = 16 * 1024;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Boxed: the settings payload dwarfs the other variants, and every
+    /// variant of this channel message is copied through a pipe.
     Start {
-        settings: Settings,
+        settings: Box<Settings>,
         device: Option<DeviceId>,
     },
     Transform {

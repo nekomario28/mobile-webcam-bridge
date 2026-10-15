@@ -38,6 +38,7 @@ struct App {
     settings: Settings,
     store: Option<Store>,
     save_error: Option<String>,
+    load_error: Option<String>,
     dirty: Option<Instant>,
     session: Session,
     ja: bool,
@@ -51,23 +52,25 @@ struct App {
     usb_error: Option<String>,
     /// The quality draft; 0 fields mean auto (slice 03).
     quality_draft: (u16, u16, u16),
+    confirm_forget_phone: bool,
     #[cfg(feature = "capture")]
     capture_requested: bool,
 }
 impl App {
     fn new(ctx: &egui::Context) -> Self {
         let store = Store::native();
-        let mut error = None;
+        let mut save_error = None;
+        let mut load_error = None;
         let (store, settings) = match store {
             Ok(store) => {
                 let s = store.load().unwrap_or_else(|e| {
-                    error = Some(e.to_string());
+                    load_error = Some(e.to_string());
                     Settings::default()
                 });
                 (Some(store), s)
             }
             Err(e) => {
-                error = Some(e.to_string());
+                save_error = Some(e.to_string());
                 (None, Settings::default())
             }
         };
@@ -142,7 +145,8 @@ impl App {
         Self {
             settings,
             store,
-            save_error: error,
+            save_error,
+            load_error,
             dirty: None,
             session: Session::default(),
             ja: japanese(),
@@ -155,6 +159,7 @@ impl App {
             usb_events: receiver,
             usb_error: None,
             quality_draft: quality_wish,
+            confirm_forget_phone: false,
             #[cfg(feature = "capture")]
             capture_requested: false,
         }
@@ -410,6 +415,19 @@ impl eframe::App for App {
             .inner_margin(24.0)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        if let Some(error) = &self.load_error {
+                            ui.colored_label(
+                                egui::Color32::LIGHT_RED,
+                                format!(
+                                    "{}: {error}",
+                                    self.text(
+                                        "Settings could not be loaded",
+                                        "設定を読み込めませんでした"
+                                    )
+                                ),
+                            );
+                            ui.add_space(8.0);
+                        }
                         ui.add_enabled_ui(!self.session.running(), |ui| {
                             ui.horizontal(|ui| {
                                 let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
@@ -454,6 +472,72 @@ impl eframe::App for App {
                                 .min_size(egui::vec2(0.0, 28.0))
                                         .desired_width(f32::INFINITY),
                                 );
+                                ui.label(self.text(
+                                    "Phone certificate SHA-256 (verify on phone)",
+                                    "スマホの証明書SHA-256（端末画面で確認）",
+                                ));
+                                ui.add_enabled(
+                                    !self.session.running(),
+                                    egui::TextEdit::singleline(&mut self.settings.lan_fingerprint)
+                                        .hint_text("64 hexadecimal characters")
+                                        .desired_width(f32::INFINITY),
+                                );
+                                ui.label(self.text("128-bit Wi-Fi pairing key", "128ビットWi-Fi接続キー"));
+                                ui.add_enabled(
+                                    !self.session.running(),
+                                    egui::TextEdit::singleline(&mut self.settings.lan_key)
+                                        .password(true)
+                                        .hint_text("32 hexadecimal characters")
+                                        .desired_width(f32::INFINITY),
+                                );
+                                let valid_fingerprint =
+                                    crate::secure::is_hex(&self.settings.lan_fingerprint, 32);
+                                let valid_key =
+                                    crate::secure::is_hex(&self.settings.lan_key, 16);
+                                if !valid_fingerprint || !valid_key {
+                                    ui.colored_label(
+                                        egui::Color32::YELLOW,
+                                        self.text(
+                                            "Pairing required: enter the 64-digit phone fingerprint and 32-digit access key.",
+                                            "ペアリングが必要です：端末の64桁の指紋と32桁の接続キーを入力してください。",
+                                        ),
+                                    );
+                                }
+                                ui.weak(self.text(
+                                    "Wi-Fi requires TLS 1.3. No plaintext fallback.",
+                                    "Wi-FiはTLS 1.3必須。平文接続への切替なし。",
+                                ));
+                                if !self.session.running()
+                                    && (!self.settings.lan_key.is_empty()
+                                        || !self.settings.lan_fingerprint.is_empty())
+                                {
+                                    if self.confirm_forget_phone {
+                                        ui.horizontal(|ui| {
+                                            ui.label(self.text(
+                                                "Remove stored pairing details?",
+                                                "保存したペアリング情報を削除しますか？",
+                                            ));
+                                            if ui.button(self.text("Remove", "削除")).clicked() {
+                                                self.settings.lan_host.clear();
+                                                self.settings.lan_fingerprint.clear();
+                                                self.settings.lan_key.clear();
+                                                self.confirm_forget_phone = false;
+                                                self.save();
+                                            }
+                                            if ui.button(self.text("Cancel", "キャンセル")).clicked() {
+                                                self.confirm_forget_phone = false;
+                                            }
+                                        });
+                                    } else if ui
+                                        .small_button(self.text(
+                                            "Forget paired phone",
+                                            "登録済みスマホの情報を削除",
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.confirm_forget_phone = true;
+                                    }
+                                }
                             } else {
                                 if matches!(self.session.state, State::Idle) {
                                     ui.label(self.text(
@@ -528,6 +612,8 @@ impl eframe::App for App {
                         let allowed = running
                             || self.settings.transport == "lan"
                                 && !self.settings.lan_host.trim().is_empty()
+                                && crate::secure::is_hex(&self.settings.lan_fingerprint, 32)
+                                && crate::secure::is_hex(&self.settings.lan_key, 16)
                             || self.settings.transport == "usb"
                                 && self.selected.is_some()
                                 && !self.selection_lost;
@@ -577,7 +663,12 @@ impl eframe::App for App {
                             State::Idle => "",
                             State::Connecting => self.text("Connecting…", "接続中…"),
                             State::Waiting => {
-                                if cfg!(windows) && matches!(&self.session.stats, Some(Event::Stats { decoded, active: false, .. }) if *decoded > 0) {
+                                if self.settings.transport == "lan" {
+                                    self.text(
+                                        "TLS 1.3 verified · Press Start camera on your phone",
+                                        "TLS 1.3で認証済み · スマホで「カメラ開始」を押してください",
+                                    )
+                                } else if cfg!(windows) && matches!(&self.session.stats, Some(Event::Stats { decoded, active: false, .. }) if *decoded > 0) {
                                     self.text("Select Mobile Webcam in your PC's camera app", "PCのカメラアプリでMobile Webcamを選択")
                             } else { self.text("Connected · Press Start camera on your phone", "接続済み · スマホで「カメラ開始」を押してください") }
                             },
@@ -587,6 +678,10 @@ impl eframe::App for App {
                                 if error.contains("v4l2loopback") || error.contains("host setup is not included")
                                 {
                                     self.text("Camera driver unavailable", "カメラドライバーを利用できません")
+                                } else if error.contains("fingerprint mismatch") {
+                                    self.text("Fingerprint mismatch", "フィンガープリントが一致しません")
+                                } else if error.contains("was not authorized") {
+                                    self.text("Access key rejected", "接続キーが拒否されました")
                                 } else if self.session.usb_permission.is_some() {
                                     self.text("Allow USB access", "USBアクセスを許可してください")
                                 } else if error.contains("WinUSB") {
@@ -606,6 +701,21 @@ impl eframe::App for App {
                         if let State::Failed(error) = &self.session.state {
                             let next = if error.contains("v4l2loopback") || error.contains("host setup is not included") {
                                 self.text("Install v4l2loopback for your OS, then reconnect.", "OSにv4l2loopbackを導入して、接続し直してください。")
+                            } else if error.contains("fingerprint mismatch") {
+                                self.text(
+                                    "The certificate fingerprint does not match your phone. Re-check all 64 characters.",
+                                    "証明書のフィンガープリントがスマホと一致しません。64桁すべてを再確認してください。",
+                                )
+                            } else if error.contains("was not authorized") {
+                                self.text(
+                                    "The phone rejected the access key. Re-check all 32 characters; a rotated key revokes the old one.",
+                                    "スマホが接続キーを拒否しました。32桁を再確認してください。ローテーション後のスマホでは旧キーは無効です。",
+                                )
+                            } else if error.contains("peer disconnected") {
+                                self.text(
+                                    "The phone closed the connection. Check the phone's Wi-Fi screen or app.",
+                                    "スマホが接続を閉じました。スマホのWi-Fi画面またはアプリを確認してください。",
+                                )
                             } else if error.contains("WinUSB") {
                                 self.text("The selected phone needs a compatible USB driver.", "選択したスマホ用のUSBドライバーが必要です。")
                             } else if self.session.usb_permission.is_some() {

@@ -32,6 +32,19 @@ PR #6 の `923d083` をソース監査した結果、**「残るのは04の実�
   重複PAUSEDが新しい撮影を再停止する不具合をwriterの回帰で検出・修正。失敗時は撮影開始意図も解除する。
 - 04: 実機の能力一覧、USB/Wi-Fi切替、Linux/Windows利用アプリ、持続配信は未確認。
 
+## 統合の確認（2026-10-14）
+
+`feature/secure-quality-integration` に secure-Wi-Fi（PR #5）と品質制御（PR #6）を統合した。
+品質制御は認証済みTLS 1.3の上で動き、部分TLS recordを含むpollでもAMB1のフレーム境界を失わない。
+
+- 統合で見つかった不具合: `DeadlineSocket` が**成功した読み取りの後**で期限を判定していた。
+  カーネルが既に渡したバイトを破棄するため、rustlsのrecord列がずれ、後続recordで
+  `cannot decrypt peer's message` になっていた。実TLSの統合テストでは修正前に5回に1回失敗し、
+  修正後は連続して成功。期限は**操作の前**だけを検査する形に変更し、既存のtrickle回帰は維持した。
+- 実TLS subprocessテスト: 能力通知の分割送信、Stop、部分フレーム、期限、trickleした制御frameの境界保持、
+  trickleが部分フレーム期限を延ばせないことを確認。Linux CIは成功。
+- 残る確認: このheadのAndroid APK全体CI、Windows CI、実機。
+
 ## Next Agent Prompt
 
 次はこのheadのAndroid APK全体・Windows/Linux CIを確認し、UIの操作・視覚受入を別ゲートとして残したままsecure-Wi-Fi branchとの統合へ進む。
@@ -43,7 +56,7 @@ secure-Wi-Fi PR #5 は別ブランチであり、両機能の統合も未検証�
 - [ ] [01: Androidの対応モードと設定解決（能力交差実装、実機能力未確認）](slices/01-modes.md)
 - [ ] [02: 能力通知と安全な切替（実セッション配線・writer境界・PC pipelineのソフトウェア回帰あり、統合と実機は別ゲート）](slices/02-control.md)
 - [ ] [03: PCの詳細UIと保存（保存・状態回帰あり、画面受入未実施）](slices/03-ui.md)
-- [ ] [04: Linux／Windows・実機での確認](slices/04-integration.md)
+- [ ] [04: Linux／Windows・実機での確認（secure-Wi-Fiとの統合はソフトウェア回帰あり、CIと実機は別ゲート）](slices/04-integration.md)
 
 ## 目標と操作
 

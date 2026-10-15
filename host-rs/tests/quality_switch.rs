@@ -1,11 +1,14 @@
 #![cfg(all(feature = "video", any(target_os = "linux", windows)))]
-//! Real subprocess + TCP control/framing. Peers do not prove Android capture
+//! Real subprocess + TLS control/framing. Peers do not prove Android capture
 //! or native output acceptance; the pipeline's output seam is tested separately.
+mod common;
+use common::{ACCESS_KEY, PHONE_SHA256, phone_tls};
 use mobile_webcam::{
     control::{self, Command, Event},
     settings::Settings,
     wire::{self, Header},
 };
+use rustls::{ServerConnection, StreamOwned};
 use std::{
     io::{BufReader, Read, Write},
     net::{TcpListener, TcpStream},
@@ -24,7 +27,7 @@ fn bytes(kind: u8, payload: &[u8], sequence: u32) -> Vec<u8> {
     };
     [header.encode().unwrap().as_slice(), payload].concat()
 }
-fn read(stream: &mut TcpStream) -> (u8, Vec<u8>) {
+fn read(stream: &mut impl Read) -> (u8, Vec<u8>) {
     let mut header = [0; wire::HEADER_SIZE];
     stream.read_exact(&mut header).unwrap();
     let header = Header::decode(&header).unwrap();
@@ -51,6 +54,8 @@ enum Case {
     UnsupportedMode,
     WrongFps,
     StopPartial,
+    TrickledResult,
+    TrickledPastBudget,
 }
 struct Peer(Option<thread::JoinHandle<()>>);
 impl Peer {
@@ -65,13 +70,58 @@ impl Drop for Peer {
         }
     }
 }
+/// Assert the worker sent no further command. Any AMB1 byte after a denial or
+/// Stop is a failure; EOF, a TLS close_notify absence or an elapsed budget are
+/// all acceptable silence.
+fn expect_no_more_frames(stream: &mut StreamOwned<ServerConnection, TcpStream>) {
+    stream
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    // The worker's own apply deadline is 5s; a staged or output-pending case
+    // legitimately keeps the connection open that long before it closes.
+    let deadline = Instant::now() + Duration::from_secs(9);
+    let mut byte = [0];
+    loop {
+        match stream.read(&mut byte) {
+            Ok(0) => return,
+            Ok(_) => panic!("unexpected host command after denial/stop"),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                assert!(Instant::now() < deadline, "no close and no further command");
+            }
+            Err(error) => {
+                let text = error.to_string();
+                let gone = matches!(
+                    error.kind(),
+                    std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::NotConnected
+                        | std::io::ErrorKind::ConnectionAborted
+                );
+                assert!(
+                    gone || text.contains("close_notify")
+                        || text.contains("UnexpectedEof")
+                        || text.contains("peer disconnected"),
+                    "unexpected read error: {text}"
+                );
+                return;
+            }
+        }
+    }
+}
+
 fn peer(case: Case) -> (String, Peer) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap().to_string();
     listener.set_nonblocking(true).unwrap();
     let task = thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(10);
-        let mut stream = loop {
+        let stream = loop {
             match listener.accept() {
                 Ok((stream, _)) => break stream,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -83,9 +133,7 @@ fn peer(case: Case) -> (String, Peer) {
         };
         // Accepted sockets inherit the listener's nonblocking mode on Windows.
         stream.set_nonblocking(false).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .unwrap();
+        let mut stream = phone_tls(stream);
         assert_eq!(read(&mut stream).0, wire::HELLO);
         stream.write_all(&bytes(wire::HELLO_ACK, &[], 1)).unwrap();
         assert_eq!(read(&mut stream).0, wire::IDR_REQUEST);
@@ -125,6 +173,61 @@ fn peer(case: Case) -> (String, Peer) {
             stream
                 .write_all(&bytes(wire::VIDEO_AU, &[0; 128], 0)[..11])
                 .unwrap();
+        }
+        if matches!(case, Case::TrickledPastBudget) {
+            // A frame that starts before any apply exists, so only the partial
+            // frame's own budget can expire - not the apply deadline.
+            // 64 payload bytes, one byte every 400ms: the frame cannot finish
+            // before its own 5s budget expires.
+            // A peer-side timeout firing inside rustls' complete_io aborts a
+            // record mid-write, which the worker reports as a decryption
+            // failure instead of the frame deadline under test. This peer is
+            // bounded by its own loop, not by socket timeouts.
+            let socket = stream.get_mut();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(30)))
+                .unwrap();
+            socket
+                .set_write_timeout(Some(Duration::from_secs(30)))
+                .unwrap();
+            let partial = bytes(wire::VIDEO_AU, &[7; 64], 0);
+            stream.write_all(&partial[..wire::HEADER_SIZE + 1]).unwrap();
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(9) {
+                thread::sleep(Duration::from_millis(400));
+                let sent = 1 + started.elapsed().as_millis() as usize / 400;
+                // The worker closes once the frame deadline expires; writing
+                // into that closed socket is the expected end of this peer.
+                if stream
+                    .write_all(&partial[wire::HEADER_SIZE + sent..][..1])
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }
+        if matches!(case, Case::TrickledResult) {
+            let (kind, payload) = read(&mut stream);
+            assert_eq!(kind, wire::PREPARE_QUALITY);
+            let prepare = wire::PrepareQuality::decode(&payload).unwrap();
+            let result = wire::QualityResult {
+                request_id: prepare.request_id,
+                status: wire::RESULT_REJECTED,
+                reason: wire::REASON_BUSY,
+                applied_width: 0,
+                applied_height: 0,
+                applied_fps: 0,
+            };
+            let reply = bytes(wire::QUALITY_RESULT, &result.encode(), 0);
+            if matches!(case, Case::TrickledResult) {
+                // Every chunk lands inside its own read timeout, so only the
+                // retained partial frame can keep the AMB1 boundary. rustls
+                // buffers the incomplete record internally; the PC must not.
+                for chunk in reply.chunks(3) {
+                    stream.write_all(chunk).unwrap();
+                    thread::sleep(Duration::from_millis(180));
+                }
+            }
         }
         if matches!(case, Case::ConfigOnly | Case::Stall | Case::WrongFps) {
             let (kind, payload) = read(&mut stream);
@@ -168,12 +271,9 @@ fn peer(case: Case) -> (String, Peer) {
             }
         }
         // Every case must close; denied requests must not leak even one byte.
-        let mut byte = [0];
-        assert_eq!(
-            stream.read(&mut byte).unwrap(),
-            0,
-            "unexpected host command after denial/stop"
-        );
+        // A closed TLS peer surfaces as EOF or a missing close_notify, never as
+        // a clean zero-length read, so both are accepted as "nothing more".
+        expect_no_more_frames(&mut stream);
     });
     (address, Peer(Some(task)))
 }
@@ -207,12 +307,14 @@ impl Worker {
         control::write(
             &mut stdin,
             &Command::Start {
-                settings: Settings {
+                settings: Box::new(Settings {
                     transport: "lan".into(),
                     lan_host: address,
+                    lan_fingerprint: PHONE_SHA256.into(),
+                    lan_key: ACCESS_KEY.into(),
                     decode: "off".into(),
                     ..Default::default()
-                },
+                }),
                 device: None,
             },
         )
@@ -314,6 +416,36 @@ fn stop_remains_responsive_during_partial_frame() {
     drop(worker);
     peer.finish();
 }
+#[test]
+fn trickled_control_frame_over_tls_keeps_the_amb1_boundary() {
+    let (address, peer) = peer(Case::TrickledResult);
+    let mut worker = Worker::new(address);
+    worker.advertised();
+    worker.apply(1920);
+    // A frame split across many records and polls must arrive whole: the
+    // rejection reason proves the payload was decoded, not discarded.
+    worker.until(
+        |event| matches!(event, Event::QualityFailed { reason, .. } if reason.contains("in flight")),
+    );
+    worker.stop();
+    drop(worker);
+    peer.finish();
+}
+
+#[test]
+fn trickled_frame_cannot_extend_the_partial_frame_budget_over_tls() {
+    let (address, peer) = peer(Case::TrickledPastBudget);
+    let worker = Worker::new(address);
+    worker.advertised();
+    let events = worker.until(|event| matches!(event, Event::Stopped {}));
+    assert!(
+        events.iter().any(|event| matches!(event, Event::Error { message } if message.contains("incomplete AMB1 frame"))),
+        "{events:?}"
+    );
+    drop(worker);
+    peer.finish();
+}
+
 #[test]
 fn no_command_before_advertisement() {
     let (address, peer) = peer(Case::NoAdvertisement);
