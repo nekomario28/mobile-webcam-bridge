@@ -96,8 +96,18 @@ pub fn parse_hex(value: &str, bytes: usize) -> crate::Result<Vec<u8>> {
 }
 
 /// rustls can perform many socket operations inside one `complete_io` or
-/// stream read. Enforce the shared deadline at each underlying I/O boundary,
-/// not only at the outer TLS call; trickled records must not renew the budget.
+/// stream read, so the shared deadline is enforced at each underlying I/O
+/// boundary instead of only around the outer TLS call: trickled records cannot
+/// renew the budget.
+///
+/// The budget is checked *before* an operation, never after a successful one.
+/// Reporting an expiry after the kernel already delivered bytes would discard
+/// them: rustls keeps no copy, the record stream desynchronizes and a later
+/// record fails to decrypt. Found by running quality control over this
+/// transport (integration branch `044a20c`): the real-TLS test failed once in
+/// five runs before the fix and passed consecutively after it. An expired
+/// deadline stops the *next* operation instead, which bounds the total just as
+/// tightly.
 struct DeadlineSocket {
     socket: TcpStream,
     deadline: Instant,
@@ -107,9 +117,7 @@ impl Read for DeadlineSocket {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         self.socket
             .set_read_timeout(Some(transport::remaining(self.deadline)?))?;
-        let count = self.socket.read(bytes)?;
-        transport::remaining(self.deadline)?;
-        Ok(count)
+        self.socket.read(bytes)
     }
 }
 
@@ -117,16 +125,12 @@ impl Write for DeadlineSocket {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.socket
             .set_write_timeout(Some(transport::remaining(self.deadline)?))?;
-        let count = self.socket.write(bytes)?;
-        transport::remaining(self.deadline)?;
-        Ok(count)
+        self.socket.write(bytes)
     }
 
     fn flush(&mut self) -> io::Result<()> {
         transport::remaining(self.deadline)?;
-        self.socket.flush()?;
-        transport::remaining(self.deadline)?;
-        Ok(())
+        self.socket.flush()
     }
 }
 
