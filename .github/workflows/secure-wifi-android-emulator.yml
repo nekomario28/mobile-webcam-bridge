@@ -162,9 +162,16 @@ jobs:
                                   assert time.monotonic() < deadline, \
                                       f"{what}: never arrived, last type {seen}"
                           capabilities = wait_for_kind(0x05, "quality capabilities")
+                          # u8 version, u8 permission, u16 revision,
+                          # u32 epoch, u16 mode count, then 12-byte modes.
                           assert capabilities[0] == 1, capabilities[0]
                           assert capabilities[1] == 1, capabilities[1]
-                          assert struct.unpack("<H", capabilities[6:8])[0] == 1, capabilities[6:8]
+                          assert struct.unpack("<H", capabilities[2:4])[0] == 7, capabilities[2:4]
+                          assert struct.unpack("<H", capabilities[8:10])[0] == 1, capabilities[8:10]
+                          width, height, fps, _reserved, bitrate = struct.unpack(
+                              "<HHHHI", capabilities[10:22])
+                          assert (width, height, fps, bitrate) == (1280, 720, 30, 6000000), \
+                              (width, height, fps, bitrate)
                           connection.sendall(
                               struct.pack("<4sBBHIIQ", b"AMB1", 1, 0x06, 0, 2, 14, 0) +
                               struct.pack("<IHHHHH", 1, 7, 1280, 720, 30, 0))
