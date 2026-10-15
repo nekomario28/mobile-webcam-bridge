@@ -31,6 +31,8 @@
   dialog button text in the pointer driver, and keep Android dimension getters
   out of the shared media boundary so the retained socket case runs in Gradle's
   plain JVM suite rather than only with android-all utilities.
+- Close an unstarted LAN session's socket during shutdown and refuse restarting
+  that closed connection; retain a real-socket EOF/restart regression.
 - Upgrade the Android app and Rust host together: older clients, including the
   classic Qt host on USB, do not implement mandatory v2 authorization.
 

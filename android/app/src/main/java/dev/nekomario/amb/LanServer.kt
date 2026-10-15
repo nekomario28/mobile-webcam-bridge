@@ -33,7 +33,7 @@ class LanSession(
     fun isActive(): Boolean = running.get()
 
     fun start(onStarted: () -> Unit = {}) {
-        if (!running.compareAndSet(false, true)) return
+        if (socket.isClosed || !running.compareAndSet(false, true)) return
         try {
             onStarted()
             startMedia()
@@ -50,8 +50,9 @@ class LanSession(
     override fun failMedia(reason: String) = finish(reason)
 
     private fun finish(error: String?) {
-        if (!running.compareAndSet(true, false)) return
+        // A server shutdown may close a constructed session before start().
         runCatching { socket.close() }
+        if (!running.compareAndSet(true, false)) return
         closeMedia()
         onClosed(this, error)
     }

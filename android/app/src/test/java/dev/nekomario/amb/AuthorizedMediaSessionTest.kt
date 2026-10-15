@@ -25,6 +25,24 @@ class AuthorizedMediaSessionTest {
         catch (_: java.net.SocketException) {} // terminal reset is also a close, not a timeout
     }
 
+    @Test fun closing_a_session_before_start_closes_its_socket_and_cannot_reopen_it() {
+        PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = { fail("unexpected storage failure") }).use { owner ->
+            ServerSocket(0).use { listener ->
+                Socket("127.0.0.1", listener.localPort).use { client ->
+                    client.soTimeout = 200
+                    LanSession(listener.accept(), { _, _ -> }, owner, ClientCryptoFixture.phoneBinding(), {}).use { session ->
+                        session.close()
+                        eof(client)
+                        session.close()
+                        session.start { fail("a closed session was restarted") }
+                        assertFalse(session.isActive())
+                        assertNull(session.clientAuthorization)
+                    }
+                }
+            }
+        }
+    }
+
     @Test fun real_reader_rejects_every_control_before_authorization_and_capture_cannot_begin() {
         for ((type, size) in listOf(Wire.TYPE_PING to 8, Wire.TYPE_VIDEO_IDR_REQUEST to 0,
             Wire.TYPE_PREPARE_QUALITY to 14, Wire.TYPE_COMMIT_QUALITY to 8)) {

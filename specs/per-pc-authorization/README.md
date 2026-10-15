@@ -3,8 +3,9 @@
 Requested scope: real identity/list persistence, phone approval/revocation UI,
 and mandatory camera/control authorization over both USB and pinned TLS Wi-Fi.
 All three are committed on the integration branch. Local mechanical gates pass;
-the production-Activity/emulator attempt has partial runtime evidence but is
-not yet a passing conformance or visual-acceptance gate.
+API 35 production-Activity conformance passed at `36ab5b4`. Later lifecycle
+repairs still require their exact-head CI; neither conformance nor screenshots
+are independent security/visual acceptance.
 No merge or release is authorized by tests alone. The earlier independent static
 transport review does not cover this protocol, stores or UI. Do not launch another
 independent model review under the exhausted one-review authorization.
@@ -42,10 +43,10 @@ semantic storage/TLS/signature PASS marker. Those results belong to that storage
 checkpoint, not to the later integrated gate/UI revision.
 
 The newer adapter also refuses a lost record when its Keystore alias survives;
-that native conformance case requires the new emulator run, not inference from
+that case passed in the later `36ab5b4` emulator run, not by inference from
 previous storage CI.
 
-### 2. Approval and revocation — implemented, runtime/visual gate pending
+### 2. Approval and revocation — API 35 conformance, visual acceptance pending
 
 The real Activity displays explicitly unverified names and full PC IDs, allows
 or rejects the exact pending session, and lists saved IDs/expiry with confirmed
@@ -109,8 +110,24 @@ and reached real EN reject, pending, stale-action, approve and reconnect effects
 It stopped at the renewal button lookup: Android exposes transformed uppercase
 button text. Six PNG/metadata pairs were collected before shutdown. The pointer
 driver now matches that transformation; renew/revoke, JA/scaled and storage-failed
-startup still require a passing rerun. This partial attempt is not conformance
+startup still required a passing rerun. That partial attempt was not conformance
 success or independent visual acceptance.
+
+### API 35 rerun and subsequent lifecycle guard
+
+At `36ab5b4`, emulator run `38783327991` passed the actual semantic marker and
+all 15 PNG/metadata pairs at 840×1400 / 320dp, with EN font1.0 and JA font1.3.
+The production-Activity pointer actions checked durable approval, unchanged
+known-key expiry, confirmed renewal, live revoke/socket closure, stale actions,
+rejection and corrupt-storage startup. Source/APK receipts were collected before
+shutdown. This is functional emulator evidence, not independent visual approval,
+physical USB/Camera2 or native consumer acceptance.
+
+A later shutdown review found an unstarted `LanSession.close()` skipped physical
+socket closure because `running` was still false. Its real-socket regression
+failed with `SocketTimeoutException` (1/94). Close now owns physical I/O regardless
+of start state, and a closed socket cannot restart its session. All 94 local JVM
+cases pass after the repair; its exact-head native workflows remain required.
 
 ## Remaining acceptance and follow-through
 
