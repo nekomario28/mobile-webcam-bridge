@@ -1781,6 +1781,7 @@ dependencies = [
  "image",
  "io-budget",
  "libc",
+ "ring",
  "rusb",
  "rustls",
  "serde",

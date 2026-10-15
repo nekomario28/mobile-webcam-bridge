@@ -1,6 +1,7 @@
 pub mod control;
 #[cfg(feature = "gui")]
 pub mod gui;
+pub mod identity;
 #[cfg(feature = "video")]
 pub mod output;
 pub mod platform;

@@ -13,6 +13,10 @@ capture = ["gui", "dep:image"]
 
 [dependencies]
 io-budget = { git = "https://github.com/nekomario28/io-budget", rev = "b018023" }
+# Already in the tree through rustls, so this adds no crate, version or audit
+# surface. rustls exposes no public way to generate a key, which the per-PC
+# identity needs.
+ring = "=0.17.14"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 rusb = "=0.9.4"
