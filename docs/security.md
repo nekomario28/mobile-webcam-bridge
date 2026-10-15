@@ -19,7 +19,8 @@ wrong keys before creating a camera session or returning HELLO_ACK.
 Use **Show Wi-Fi pairing details** on the phone to obtain the fingerprint and
 secret. Use **Revoke Wi-Fi access key** to rotate the 128-bit access key and
 disconnect an existing session. All desktops using the previous key are
-revoked together; per-PC credentials and revocation remain future work.
+revoked together. Per-PC credentials, expiry and per-PC revocation are designed
+but not implemented; see [per-PC authorization](per-pc-authorization.md).
 No plaintext fallback is provided on the Rust production Wi-Fi path.
 Android 10 (API 29) or newer is required for secure Wi-Fi; USB still works
 on earlier supported Android releases.
@@ -50,7 +51,9 @@ on earlier supported Android releases.
 
 This first implementation still has limitations: a single bearer key is
 shared by any PCs that the owner provisions, so one lost key forces global
-rotation rather than per-PC revocation.
+rotation rather than per-PC revocation. The design that closes this is in
+[per-PC authorization](per-pc-authorization.md); it is a proposal, and none of
+it is implemented or reviewed.
 
 Desktop settings enforce mode 0600 for Linux files containing a Wi-Fi key
 and store the Windows credential as per-user DPAPI ciphertext in the
