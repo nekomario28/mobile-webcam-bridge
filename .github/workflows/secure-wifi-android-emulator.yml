@@ -154,7 +154,40 @@ jobs:
           tls_hello("wrong-key", "ffeeddccbbaa99887766554433221100", expect_ack=False)
           # Authorized key: the real per-install credential, completes pairing.
           tls_hello("authorized", os.environ["PHONE_KEY"], expect_ack=True)
-          print("PASS external TLS 1.3 client, wrong-key rejection, pinned Android Keystore certificate and AMB1 response")
+          # Quality control inside the same TLS session: the phone advertises
+          # its modes, then a 14-byte PREPARE_QUALITY must be dispatched and
+          # answered. The emulator holds no camera grant, so the answer is a
+          # typed permission rejection, not a dropped connection.
+          def frame(connection):
+              header = receive_exact(connection, 24)
+              magic, version, kind, flags, sequence, length, timestamp = struct.unpack(
+                  "<4sBBHIIQ", header)
+              assert (magic, version) == (b"AMB1", 1), header
+              payload = receive_exact(connection, length) if length else b""
+              return kind, payload
+          def wait_for_kind(connection, kind, what):
+              deadline = time.monotonic() + 6
+              while True:
+                  seen, payload = frame(connection)
+                  if seen == kind:
+                      return payload
+                  assert time.monotonic() < deadline, f"{what}: never arrived, last type {seen}"
+          with socket.create_connection(("127.0.0.1", 48527), timeout=6) as raw:
+              with context.wrap_socket(raw, server_hostname="mobile-webcam.local") as connection:
+                  connection.settimeout(6)
+                  capabilities = wait_for_kind(connection, 0x05, "quality capabilities")
+                  assert capabilities[0] == 1 and capabilities[1] == 1, capabilities[:2]
+                  mode_count = struct.unpack("<H", capabilities[6:8])[0]
+                  assert mode_count == 1, mode_count
+                  connection.sendall(struct.pack("<4sBBHIIQ", b"AMB1", 1, 0x06, 0, 2, 14, 0) +
+                                     struct.pack("<IHHHHH", 1, 7, 1280, 720, 30, 0))
+                  result = wait_for_kind(connection, 0x07, "quality result")
+                  request_id, status, reason = struct.unpack("<IBB", result[:6])
+                  assert (request_id, status, reason) == (1, 1, 1), (request_id, status, reason)
+                  # The reader survives a rejected apply: a PING still gets a PONG.
+                  connection.sendall(struct.pack("<4sBBHIIQ", b"AMB1", 1, 0x03, 0, 3, 8, 0) + bytes(8))
+                  assert wait_for_kind(connection, 0x04, "pong") == bytes(8)
+          print("PASS external TLS 1.3 client, wrong-key rejection, pinned Android Keystore certificate, AMB1 response and quality command dispatch")
           PY_TLS
           wait "$instrument_pid"
           cat build/secure-wifi/instrumentation.log

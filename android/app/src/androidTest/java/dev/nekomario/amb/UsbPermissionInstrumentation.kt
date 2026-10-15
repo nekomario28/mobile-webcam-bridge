@@ -7,6 +7,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.Manifest
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
@@ -39,12 +41,56 @@ class UsbPermissionInstrumentation : Instrumentation() {
         check(pin.length == 64)
         val sessions = LinkedBlockingQueue<Pair<LanSession, Boolean>>()
         val errors = LinkedBlockingQueue<String>()
+        val qualityCommands = LinkedBlockingQueue<Wire.HostCommand>()
+        // The emulator holds no camera grant, so the controller must answer a
+        // prepare with a typed permission rejection rather than dropping the
+        // connection or starting a camera.
+        val captureMode = CaptureModes.CaptureMode(
+            cameraId = "0",
+            codecName = "fixture-encoder",
+            width = 1280,
+            height = 720,
+            targetFps = 30,
+            aeRange = CaptureModes.FpsRange(30, 30),
+            bitrate = 6_000_000,
+            minFrameDurationKnown = true,
+        )
+        val snapshot = Wire.Capabilities(
+            extensionVersion = 1,
+            permission = Wire.PERMISSION_PENDING,
+            catalogRevision = 7,
+            streamEpoch = 0,
+            modes = listOf(Wire.QualityMode(1280, 720, 30, 6_000_000)),
+        )
+        var controller: PhoneQualityController? = null
         val server = LanServer(
             identity = identity,
             port = 48_527,
-            onSession = { session, connected -> sessions.add(session to connected) },
+            onSession = { session, connected ->
+                if (connected) {
+                    controller = PhoneQualityController(
+                        session = session,
+                        revision = { 7 },
+                        modes = { listOf(captureMode) },
+                        permissionReady = {
+                            context.checkSelfPermission(Manifest.permission.CAMERA) ==
+                                PackageManager.PERMISSION_GRANTED
+                        },
+                        foreground = { true },
+                        streaming = { false },
+                        stopCapture = { _ -> },
+                        startCapture = { error("the TLS gate must not start a camera") },
+                    )
+                }
+                sessions.add(session to connected)
+            },
             onStatus = {},
             onError = { error -> errors.add(error) },
+            capabilities = { snapshot },
+            onQuality = { _, command ->
+                qualityCommands.add(command)
+                controller?.handle(command)
+            },
         )
         server.start()
         // Test-only: the CI client needs the real per-install credential the
@@ -62,9 +108,24 @@ class UsbPermissionInstrumentation : Instrumentation() {
             check(authorized != null && authorized.second) {
                 "authorized client did not connect; server errors observed: $errors"
             }
+            // The authorized client also sends a 14-byte PREPARE_QUALITY inside
+            // the TLS session; the real server must dispatch it to the
+            // controller and keep serving frames afterwards.
+            val command = qualityCommands.poll(20, TimeUnit.SECONDS)
+            check(command is Wire.HostCommand.Prepare) {
+                "TLS server did not dispatch a quality command: $command"
+            }
+            val request = (command as Wire.HostCommand.Prepare).request
+            check(
+                request.catalogRevision == 7 && request.width == 1280 &&
+                    request.height == 720 && request.targetFps == 30
+            ) {
+                "quality command lost its fields: $request"
+            }
+            check(errors.isEmpty()) { "quality dispatch reported an error: $errors" }
             android.util.Log.i(
                 "SecureWifiGate",
-                "PASS native TLS 1.3 handshake, wrong-key rejection and authenticated AMB framing",
+                "PASS native TLS 1.3 handshake, wrong-key rejection, authenticated AMB framing and quality command dispatch",
             )
         } finally {
             server.close()
