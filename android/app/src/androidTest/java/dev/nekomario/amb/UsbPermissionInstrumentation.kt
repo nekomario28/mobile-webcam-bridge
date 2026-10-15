@@ -123,6 +123,13 @@ class UsbPermissionInstrumentation : Instrumentation() {
                 "quality command lost its fields: $request"
             }
             check(errors.isEmpty()) { "quality dispatch reported an error: $errors" }
+            // The client reads the rejection and then disconnects. Closing the
+            // server first would drop the queued reply, so the gate waits for
+            // the client's own end of the session instead of assuming a timing.
+            val disconnected = sessions.poll(20, TimeUnit.SECONDS)
+            check(disconnected != null && !disconnected.second) {
+                "client did not finish the session after the rejection: $disconnected"
+            }
             android.util.Log.i(
                 "SecureWifiGate",
                 "PASS native TLS 1.3 handshake, wrong-key rejection, authenticated AMB framing and quality command dispatch",
