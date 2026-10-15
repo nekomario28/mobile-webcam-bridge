@@ -22,10 +22,28 @@ fn japanese() -> bool {
     })
 }
 pub fn run() -> eframe::Result {
+    // The only mutation is the capture-only position pin below.
+    #[cfg_attr(not(feature = "capture"), allow(unused_mut))]
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([420.0, 440.0])
+        .with_min_inner_size([360.0, 360.0]);
+    // Without a window manager the server places the window wherever it likes,
+    // which on a headless display can be off-screen entirely. A capture pins
+    // the position so the screenshot is reproducible.
+    #[cfg(feature = "capture")]
+    if std::env::var_os("MW_CAPTURE_DETAILS").is_some() {
+        let (x, y) = std::env::var("MW_CAPTURE_POSITION")
+            .ok()
+            .and_then(|value| {
+                value
+                    .split_once(',')
+                    .map(|(x, y)| (x.to_owned(), y.to_owned()))
+            })
+            .unwrap_or_else(|| ("0".into(), "0".into()));
+        viewport = viewport.with_position([x.trim().parse().unwrap(), y.trim().parse().unwrap()]);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([420.0, 440.0])
-            .with_min_inner_size([360.0, 360.0]),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
@@ -56,6 +74,25 @@ struct App {
     #[cfg(feature = "capture")]
     capture_requested: bool,
 }
+/// The native capture entry point: replay a recorded event list through the
+/// real session so a screenshot shows what those events produce.
+#[cfg(feature = "capture")]
+fn capture_session() -> Session {
+    let Some(path) = std::env::var_os("MW_CAPTURE_FIXTURE") else {
+        return Session::default();
+    };
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("capture fixture {}: {error}", path.to_string_lossy()));
+    let events: Vec<crate::control::Event> = serde_json::from_str(&text)
+        .unwrap_or_else(|error| panic!("capture fixture {}: {error}", path.to_string_lossy()));
+    Session::for_capture(events)
+}
+
+#[cfg(not(feature = "capture"))]
+fn capture_session() -> Session {
+    Session::default()
+}
+
 impl App {
     fn new(ctx: &egui::Context) -> Self {
         let store = Store::native();
@@ -148,7 +185,7 @@ impl App {
             save_error,
             load_error,
             dirty: None,
-            session: Session::default(),
+            session: capture_session(),
             ja: japanese(),
             devices: Vec::new(),
             selected: None,

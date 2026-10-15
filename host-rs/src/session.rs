@@ -59,6 +59,23 @@ impl Default for Session {
     }
 }
 impl Session {
+    /// A session driven by a recorded event list instead of a worker, for the
+    /// native capture entry point. The events are replayed through the normal
+    /// `poll` path, so what the capture shows is what those events produce —
+    /// not a second rendering of them.
+    #[cfg(feature = "capture")]
+    pub fn for_capture(events: Vec<control::Event>) -> Self {
+        let (sender, receiver) = mpsc::channel();
+        for event in events {
+            sender.send(event).expect("capture fixture channel");
+        }
+        let mut session = Self::new(std::path::PathBuf::new());
+        session.events = Some(receiver);
+        // A capture must look connected: the quality controls and the Apply
+        // button are only reachable while a session runs.
+        session.state = State::Connecting;
+        session
+    }
     pub fn new(executable: std::path::PathBuf) -> Self {
         Self {
             executable,
@@ -825,6 +842,107 @@ mod tests {
         assert!(session.quality.pending.is_none());
         assert_eq!(session.quality.applied, Some((1280, 720, 30)));
     }
+    /// The capture fixtures drive the real session through the normal `poll`
+    /// path, so what a screenshot shows is what these events produce. Assert
+    /// the resulting UI-visible state here: this machine's display stack will
+    /// not present a frame to the X framebuffer (verified with the real
+    /// display, Xvfb, software Vulkan and a compositor), so the pixel capture
+    /// itself still needs a machine with a working display.
+    #[cfg(all(test, feature = "capture"))]
+    mod capture {
+        use super::*;
+
+        fn replay(events: Vec<control::Event>) -> Session {
+            let mut session = Session::for_capture(events);
+            let ctx = egui::Context::default();
+            for _ in 0..10 {
+                session.poll(&ctx);
+            }
+            session
+        }
+
+        fn fixture(name: &str) -> Vec<control::Event> {
+            let text = std::fs::read_to_string(format!("tests/fixtures/capture/{name}"))
+                .unwrap_or_else(|error| panic!("fixture {name}: {error}"));
+            serde_json::from_str(&text).unwrap_or_else(|error| panic!("fixture {name}: {error}"))
+        }
+
+        /// The live stream's own tuple is what "applied" means before any
+        /// switch: Stats reports what the phone is actually sending.
+        #[test]
+        fn a_stream_already_at_the_wished_mode_needs_no_apply() {
+            let session = replay(fixture("streaming.json"));
+            let modes = session
+                .quality
+                .modes
+                .clone()
+                .expect("modes were not advertised");
+            assert_eq!(modes.len(), 3);
+            assert!(session.quality.ready());
+            assert_eq!(session.quality.applied, Some((1280, 720, 30)));
+            assert!(
+                session.quality.pending.is_none(),
+                "an already-satisfied wish must not apply"
+            );
+        }
+
+        /// The phone is at 1080p while the saved wish is Auto, so the initial
+        /// apply is in flight: pending, not applied.
+        #[test]
+        fn a_different_stream_mode_leaves_the_initial_wish_pending() {
+            let session = replay(fixture("pending.json"));
+            assert_eq!(
+                session.quality.pending.map(crate::quality::Mode::tuple),
+                Some((1280, 720, 30))
+            );
+            assert_eq!(session.quality.applied, Some((1920, 1080, 30)));
+            assert!(!session.quality.staged);
+        }
+
+        #[test]
+        fn a_confirmed_apply_moves_the_confirmed_target() {
+            let session = replay(fixture("applied.json"));
+            assert_eq!(session.quality.applied, Some((1280, 720, 30)));
+            assert!(session.quality.pending.is_none());
+            assert!(session.quality.error.is_none());
+        }
+
+        #[test]
+        fn a_rejected_apply_keeps_the_reason_and_the_previous_stream() {
+            let session = replay(fixture("failed.json"));
+            assert!(
+                session
+                    .quality
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("not supported"))
+            );
+            assert!(session.quality.pending.is_none());
+            assert!(
+                session.stats.is_some(),
+                "the stream must survive a failed apply"
+            );
+        }
+
+        #[test]
+        fn permission_pending_advertises_nothing_usable() {
+            let session = replay(fixture("permission.json"));
+            assert_eq!(
+                session.quality.permission,
+                Some(crate::wire::PERMISSION_PENDING)
+            );
+            assert!(!session.quality.ready());
+            assert!(session.quality.pending.is_none());
+        }
+
+        #[test]
+        fn an_old_app_streams_without_advertising_modes() {
+            let session = replay(fixture("oldapp.json"));
+            assert!(session.quality.modes.is_none());
+            assert!(session.stats.is_some());
+        }
+    }
+
     #[test]
     fn video_pause_waits_and_fresh_frames_resume() {
         let ctx = egui::Context::default();

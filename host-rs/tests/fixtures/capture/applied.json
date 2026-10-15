@@ -1,0 +1,47 @@
+[
+ {
+  "event": "connecting"
+ },
+ {
+  "event": "stats",
+  "decoded": 120,
+  "submitted": 118,
+  "active": true,
+  "width": 1920,
+  "height": 1080,
+  "target_fps": 30,
+  "decoder": "software"
+ },
+ {
+  "event": "quality_capabilities",
+  "permission": 0,
+  "revision": 7,
+  "epoch": 43,
+  "modes": [
+   {
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "bitrate": 6000000
+   },
+   {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "bitrate": 13500000
+   },
+   {
+    "width": 1280,
+    "height": 720,
+    "fps": 60,
+    "bitrate": 12000000
+   }
+  ]
+ },
+ {
+  "event": "quality_applied",
+  "width": 1280,
+  "height": 720,
+  "fps": 30
+ }
+]

@@ -1,0 +1,15 @@
+[
+ {
+  "event": "connecting"
+ },
+ {
+  "event": "stats",
+  "decoded": 120,
+  "submitted": 118,
+  "active": true,
+  "width": 1280,
+  "height": 720,
+  "target_fps": 30,
+  "decoder": "software"
+ }
+]
