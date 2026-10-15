@@ -85,7 +85,59 @@ token. Zero typing, one scan, and the anchor is physical — the user pointed
 their own phone at their own screen. The costs are a camera permission, a QR
 decoder on the phone, and the scan UI.
 
+**QR on the phone, read by the PC's camera.** The phone displays everything the
+PC needs — address, certificate fingerprint, and a one-time token — so a single
+scan finishes setup. The cost is a camera capture stack on the desktop, which
+this project does not have: it decodes PNGs and nothing else. Linux could read
+V4L2 through `libc`, but Windows needs Media Foundation, which is a new
+dependency in a project whose standing rule is to avoid them.
+
 **Keeping the hexadecimal entry.** No change, worst experience, least work.
+
+#### What may go in a QR, which is a leak question
+
+The payload decides the damage, so it is worth separating.
+
+| Content | If it leaks |
+| --- | --- |
+| Address | Not a secret |
+| Certificate fingerprint | **Safe.** A pin, not a secret: without the private key it cannot be used to impersonate the phone. The existing docs already say fingerprints are pins, not secrets. |
+| The long-lived access key | **Must never be in a QR.** It is a bearer token; whoever reads it connects indefinitely. |
+| A one-time token with an expiry | **This is what belongs there.** Sixty seconds, single use, one registration. |
+
+So a QR carries a *short-lived bootstrap credential*, not a long-lived secret.
+That is the whole trick behind "must not leak": the thing on screen is not the
+thing that grants standing access.
+
+```text
+Opaque binary, decoded only by this app — never a URI scheme, because a generic
+QR reader would display the token as text and may log it.
+
+  u8  version = 1
+  u8  addressKind                    4 or 6
+  16  address
+  u16 port
+  32  certificate SHA-256, raw
+  16  one-time token, raw
+  u32 expiresAtUnixSeconds
+  u8  labelLength, then the label    32 bytes maximum
+```
+
+Roughly 75 bytes, a QR version 4 or 5, readable on a phone screen.
+
+Leak paths, and what bounds them:
+
+| Path | Consequence | Bound |
+| --- | --- | --- |
+| Screenshot or screen recording of the phone | Token captured | `FLAG_SECURE` is already set while the pairing display is open, and cleared in `onPause` |
+| Another phone photographing the screen | Token captured | Sixty seconds, single use, one registration — and the legitimate PC normally uses it first |
+| A QR appearing in a bug report | Token captured | Recording is blocked, and the token has expired |
+| Someone reading over the user's shoulder | Token captured | The same window |
+
+The residual risk is stated rather than hidden: **within that window a third
+party's PC can connect with the captured token, and the user cannot tell which
+PC read it.** That is why the QR transports the pin and the tap grants the
+camera — a QR connection still requires approval before video.
 
 #### The trade-off, stated plainly
 
@@ -223,7 +275,9 @@ so they are worth a decision before implementation.
 | Fresh install with no clients | Pairing key reaches the approval prompt | Pairing key alone grants a session (weaker, no extra tap) |
 | Pairing key after registration | Registration only | Keep it as a full fallback (weaker) |
 | Where the proof lives | Application frame inside TLS | TLS client certificate |
-| Pairing flow | Numeric comparison + phone approval, no typing | QR scanned by the phone, or keep the hex entry |
+| Pairing flow | Numeric comparison + phone approval, no typing | QR in either direction, or keep the hex entry |
+| QR direction, if QR is chosen | PC shows a token, phone scans it | Phone shows address + pin + one-time token, PC's camera reads it |
+| One-time token lifetime | 60 seconds | Longer is more convenient and leaks further |
 
 ## Implementation slices
 
