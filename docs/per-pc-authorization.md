@@ -51,6 +51,72 @@ modes are the ones the existing reader already validates. A TLS client
 certificate would also change the handshake itself, which is the part most worth
 keeping boring.
 
+### Pairing, which is the part worth redesigning
+
+Today the user reads a 64-character certificate fingerprint and a 32-character
+access key off the phone screen and types both into the desktop. That is the
+worst part of the setup, and it is the trust anchor, so it cannot simply be
+dropped — but how it is entered has room to improve, and two established
+patterns apply to exactly this two-device situation.
+
+**Numeric comparison, as Bluetooth Secure Simple Pairing does it.** Both sides
+display the same short code and the user compares them, then approves on the
+phone. No typing at all, no camera on either side, and the tap *is* the pairing
+action — so the approval this design needs anyway is not an extra step.
+
+```text
+phone: a PC wants to connect · 418273 · [Approve] [Reject]
+PC:    compare with your phone: 418273        (nothing to type)
+```
+
+The code is derived from the handshake, so a machine-in-the-middle cannot make
+the two sides agree:
+
+```
+SHA256(serverNonce || clientPublicKey || certificateFingerprint)[0..4] mod 10^6
+```
+
+The nonce is the phone's own `CLIENT_CHALLENGE`, so it is fresh per attempt and
+neither predictable nor choosable by the client.
+
+**QR on the PC, scanned by the phone, as WhatsApp Web does it.** The desktop
+shows a one-time token; the phone scans it and pushes its identity bound to that
+token. Zero typing, one scan, and the anchor is physical — the user pointed
+their own phone at their own screen. The costs are a camera permission, a QR
+decoder on the phone, and the scan UI.
+
+**Keeping the hexadecimal entry.** No change, worst experience, least work.
+
+#### The trade-off, stated plainly
+
+| | 64-digit fingerprint | 6-8 digit code |
+| --- | --- | --- |
+| Theoretical strength | 2^256 | 10^6 to 10^8 |
+| Effective strength | "did the user read 64 hex digits correctly" — in practice nobody does | "did the user actually compare them" — short enough that they do |
+
+A readable code the user genuinely compares is stronger in practice than a
+fingerprint nobody checks. Signal's 60-digit safety number, which is almost
+never verified, is the counter-example that makes this argument.
+
+Two things must come with it, because they are what the pairing key provides
+today:
+
+- **At most one pending request, and a cooldown after a rejection.** Without
+  them, anything on the LAN can spam approval prompts.
+- **The full fingerprint stays available on demand**, one click away in the
+  details, for a user who wants the complete check.
+
+#### Consequence: the pairing key is no longer required
+
+TLS pinning, the code comparison and the phone's approval together are the
+anchor; the 128-bit bearer key has no remaining job. The user is the weak link
+in both models. The difference is that the new model asks them to do something
+comprehensible instead of handling an opaque secret — and it removes 96
+characters of typing from every setup.
+
+A user who is not physically at the phone cannot pair, which is also true today
+and is not a regression.
+
 ### Identity
 
 On first run the PC generates a P-256 keypair and stores it with the same
@@ -157,10 +223,12 @@ so they are worth a decision before implementation.
 | Fresh install with no clients | Pairing key reaches the approval prompt | Pairing key alone grants a session (weaker, no extra tap) |
 | Pairing key after registration | Registration only | Keep it as a full fallback (weaker) |
 | Where the proof lives | Application frame inside TLS | TLS client certificate |
+| Pairing flow | Numeric comparison + phone approval, no typing | QR scanned by the phone, or keep the hex entry |
 
 ## Implementation slices
 
-1. Wire types and canonical fixtures for the four new frames, both languages,
+1. Wire types and canonical fixtures for the new frames — the four client-auth
+   frames plus the pairing code shown to both sides — in both languages,
    with the payload lengths validated before allocation as the existing reader
    does.
 2. PC keypair generation and storage, with the existing 0600 / DPAPI rules.
