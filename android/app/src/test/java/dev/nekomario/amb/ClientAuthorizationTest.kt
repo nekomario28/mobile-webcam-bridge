@@ -14,7 +14,15 @@ import org.junit.Test
 class ClientAuthorizationTest {
     private val now = 1_800_000_000L
 
-    private fun keyPair() = ClientAuthorization.generateTestKeyPair()
+    private fun keyPair(): Pair<ByteArray, java.security.PrivateKey> {
+        val generator = java.security.KeyPairGenerator.getInstance("EC")
+        generator.initialize(java.security.spec.ECGenParameterSpec("secp256r1"))
+        val pair = generator.generateKeyPair()
+        val point = (pair.public as java.security.interfaces.ECPublicKey).w
+        fun fixed32(value: java.math.BigInteger): ByteArray =
+            value.toByteArray().takeLast(32).toByteArray().let { ByteArray(32 - it.size) + it }
+        return (byteArrayOf(0x04) + fixed32(point.affineX) + fixed32(point.affineY)) to pair.private
+    }
 
     private fun signed(
         publicKey: ByteArray,
@@ -24,7 +32,11 @@ class ClientAuthorizationTest {
     ): Triple<ByteArray, ByteArray, ByteArray> {
         val clientId = ClientAuthorization.deriveClientId(publicKey)
         val message = ClientAuthorization.signedMessage(clientId, nonce, label)
-        val der = ClientAuthorization.signForTest(privateKey, message)
+        val der = java.security.Signature.getInstance("SHA256withECDSA").run {
+            initSign(privateKey)
+            update(message)
+            sign()
+        }
         return Triple(clientId, message, derToRaw(der))
     }
 
@@ -250,7 +262,20 @@ class ClientAuthorizationTest {
 
     @Test
     fun the_rust_generated_signature_verifies_here() {
-        val fixture = locateFixture("protocol/fixtures/client-signature-v1.bin").readBytes()
+        verifyFixture(locateFixture("protocol/fixtures/client-signature-v1.bin").readBytes())
+    }
+
+    @Test
+    fun a_rust_signature_with_a_leading_zero_verifies_here() {
+        val fixture = locateFixture("protocol/fixtures/client-signature-leading-zero-v1.bin").readBytes()
+        val signature = fixture.copyOfRange(122, 186)
+        assertEquals(0, signature[0].toInt())
+        assertTrue(signature[1].toInt() in 1 until 0x80)
+        verifyFixture(fixture)
+    }
+
+    private fun verifyFixture(fixture: ByteArray) {
+        assertEquals(186, fixture.size)
         val publicKey = fixture.copyOfRange(0, 65)
         val message = fixture.copyOfRange(65, 65 + 57)
         val signature = fixture.copyOfRange(65 + 57, 65 + 57 + 64)
@@ -278,28 +303,34 @@ class ClientAuthorizationTest {
         assertEquals(clientId.toList(), ClientAuthorization.deriveClientId(publicKey).toList())
     }
 
-    /** The DER wrapper is where a fixed-width signature could silently break:
-     * a stripped or unpadded integer verifies against nothing. */
+    /** Fixed width is a wire rule, not a DER rule. Check every leading-zero
+     * length and both sign-bit branches against BigInteger's minimal encoding.
+     * These are encoding vectors, not claims that zero is a valid EC scalar. */
     @Test
-    fun the_der_wrapper_preserves_the_significant_bytes() {
-        // A raw signature whose halves start with a zero byte and with a high
-        // bit set covers both padding directions.
-        val raw = ByteArray(64)
-        raw[0] = 0          // r's leading zero is significant
-        raw[32] = 0x80.toByte()  // s needs a sign byte in DER
-        val der = ClientAuthorization.rawSignatureToDer(raw)
-        // r starts with 0x00, so its high bit is clear and DER needs no sign
-        // byte; s starts with 0x80, so DER adds one. 34 + 35 = 69 contents.
-        assertEquals(0x30.toByte(), der[0])
-        assertEquals(69, der[1].toInt() and 0xff)
-        assertEquals(71, der.size)
-        assertEquals(0x02.toByte(), der[2])
-        assertEquals(32, der[3].toInt() and 0xff)
-        assertEquals(0, der[4].toInt())            // r keeps its significant zero
-        assertEquals(0x02.toByte(), der[36])
-        assertEquals(33, der[37].toInt() and 0xff)
-        assertEquals(0, der[38].toInt())           // s gained a sign byte
-        assertEquals(0x80.toByte(), der[39])
+    fun the_der_wrapper_uses_minimal_positive_integers() {
+        val halves = mutableListOf(ByteArray(32))
+        for (zeros in 0 until 32) {
+            for (first in listOf(1, 0x7f, 0x80, 0xff)) {
+                halves += ByteArray(32).also {
+                    it[zeros] = first.toByte()
+                    for (index in zeros + 1 until 32) it[index] = 0x55
+                }
+            }
+        }
+        fun referenceInteger(raw: ByteArray): ByteArray {
+            val minimal = java.math.BigInteger(1, raw).toByteArray()
+            return byteArrayOf(0x02, minimal.size.toByte()) + minimal
+        }
+        for ((index, r) in halves.withIndex()) {
+            val s = halves[halves.lastIndex - index]
+            val contents = referenceInteger(r) + referenceInteger(s)
+            val expected = byteArrayOf(0x30, contents.size.toByte()) + contents
+            org.junit.Assert.assertArrayEquals(
+                "minimal DER for vector $index", expected,
+                ClientAuthorization.rawSignatureToDer(r + s),
+            )
+            org.junit.Assert.assertArrayEquals(r + s, derToRaw(expected))
+        }
     }
 
     @Test
@@ -331,8 +362,8 @@ class ClientAuthorizationTest {
         val s = integer()
         assertEquals(der.size, offset)
         fun fixed32(value: ByteArray): ByteArray {
-            // A DER integer may carry a sign byte; that one is not part of the
-            // coordinate. Any other leading zero is significant.
+            // DER adds a sign byte to keep the unsigned scalar positive;
+            // raw encoding restores the fixed 32-byte width with zero padding.
             val body = if (value.size == 33 && value[0] == 0.toByte()) {
                 value.copyOfRange(1, 33)
             } else {

@@ -1,11 +1,7 @@
 package dev.nekomario.amb
 
-import java.math.BigInteger
 import java.security.KeyFactory
-import java.security.KeyPairGenerator
 import java.security.Signature
-import java.security.spec.ECGenParameterSpec
-import java.security.spec.ECPublicKeySpec
 import java.security.spec.X509EncodedKeySpec
 
 /**
@@ -198,14 +194,22 @@ object ClientAuthorization {
     /**
      * Wrap a fixed-width r||s signature in the DER sequence the platform wants.
      *
-     * The halves are fixed-width, so a leading zero byte is significant and is
-     * never stripped; a zero is only *added* when the high bit is set, because
-     * DER integers are signed.
+     * DER INTEGERs use minimal signed encoding, unlike the wire's fixed-width
+     * unsigned halves: remove redundant leading zeros, then add a sign zero
+     * only if the first remaining byte has its high bit set. Keep one byte for
+     * zero (the verifier still rejects it as an invalid ECDSA scalar).
      */
     internal fun rawSignatureToDer(signature: ByteArray): ByteArray {
         require(signature.size == SIGNATURE_BYTES) { "signature must be 64 raw bytes" }
         fun integer(half: ByteArray): ByteArray {
-            val body = if ((half[0].toInt() and 0x80) != 0) byteArrayOf(0) + half else half
+            var first = 0
+            while (first < half.lastIndex && half[first] == 0.toByte()) first += 1
+            val magnitude = half.copyOfRange(first, half.size)
+            val body = if ((magnitude[0].toInt() and 0x80) != 0) {
+                byteArrayOf(0) + magnitude
+            } else {
+                magnitude
+            }
             return byteArrayOf(0x02, body.size.toByte()) + body
         }
         val contents = integer(signature.copyOfRange(0, 32)) +
@@ -225,30 +229,4 @@ object ClientAuthorization {
         0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86.toByte(), 0x48, 0xce.toByte(),
         0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
     )
-
-    /** Test-only: a platform keypair, so a signature can be produced on the JVM. */
-    fun generateTestKeyPair(): Pair<ByteArray, java.security.PrivateKey> {
-        val generator = KeyPairGenerator.getInstance("EC")
-        generator.initialize(ECGenParameterSpec("secp256r1"))
-        val pair = generator.generateKeyPair()
-        val point = (pair.public as java.security.interfaces.ECPublicKey).w
-        val encoded = byteArrayOf(0x04) +
-            point.affineX.toByteArray().let { bytes ->
-                // Strip the sign byte BigInteger adds, then left-pad to 32.
-                val raw = bytes.dropWhile { it == 0.toByte() }.takeLast(32).toByteArray()
-                ByteArray(32 - raw.size) + raw
-            } +
-            point.affineY.toByteArray().let { bytes ->
-                val raw = bytes.dropWhile { it == 0.toByte() }.takeLast(32).toByteArray()
-                ByteArray(32 - raw.size) + raw
-            }
-        return encoded to pair.private
-    }
-
-    fun signForTest(privateKey: java.security.PrivateKey, message: ByteArray): ByteArray =
-        Signature.getInstance("SHA256withECDSA").run {
-            initSign(privateKey)
-            update(message)
-            sign()
-        }
 }

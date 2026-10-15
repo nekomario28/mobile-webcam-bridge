@@ -139,6 +139,32 @@ class UsbPermissionInstrumentation : Instrumentation() {
         }
     }
 
+    /** Exercise the actual Android EC provider, not only a desktop JVM. The
+     * leading-zero fixture used to produce a nonminimal DER INTEGER. */
+    private fun smokeClientSignatures() {
+        for (name in listOf("client-signature-v1.bin", "client-signature-leading-zero-v1.bin")) {
+            val fixture = context.assets.open(name).use { it.readBytes() }
+            check(fixture.size == 186) { "unexpected signature fixture shape: $name" }
+            val publicKey = fixture.copyOfRange(0, 65)
+            val message = fixture.copyOfRange(65, 122)
+            val signature = fixture.copyOfRange(122, 186)
+            if (name.contains("leading-zero")) {
+                check(signature[0] == 0.toByte() && signature[1].toInt() in 1 until 0x80)
+            }
+            check(ClientAuthorization.verify(publicKey, message, signature)) {
+                "Android EC provider rejected the Rust signature: $name"
+            }
+            for (index in listOf(0, 16, 48, 56)) {
+                val changed = message.copyOf()
+                changed[index] = (changed[index].toInt() xor 1).toByte()
+                check(!ClientAuthorization.verify(publicKey, changed, signature)) {
+                    "Android EC provider accepted a changed transcript: $name byte $index"
+                }
+            }
+        }
+        android.util.Log.i("SecureWifiGate", "PASS Android EC provider signature fixtures")
+    }
+
     override fun onStart() {
         val context = targetContext
         val received = LinkedBlockingQueue<Intent>()
@@ -170,9 +196,10 @@ class UsbPermissionInstrumentation : Instrumentation() {
                     "USB request could be replayed"
                 }
             }
+            smokeClientSignatures()
             if (Build.VERSION.SDK_INT >= 29) smokeSecureWifi(context)
             finish(Activity.RESULT_OK, Bundle().apply {
-                putString("stream", "PASS USB permission, Android Keystore TLS 1.3, wrong-key rejection and host handshake\n")
+                putString("stream", "PASS USB permission, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection and host handshake\n")
             })
         } catch (error: Throwable) {
             finish(Activity.RESULT_CANCELED, Bundle().apply { putString("stream", "FAIL: $error\n") })

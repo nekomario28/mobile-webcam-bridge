@@ -5,11 +5,9 @@
 //! is the opposite — the phone stores the *public* half and can revoke one PC
 //! without touching the others. This module owns the private half.
 //!
-//! Signing uses `ring`, which is already in the dependency tree through rustls
-//! and is the only crypto this project trusts. Adding it as a direct
-//! dependency introduces no new crate, no new version and no new audit surface;
-//! rustls exposes no public way to *generate* a key, which is the one operation
-//! this module needs.
+//! Signing uses `ring`, already in the dependency tree through rustls. The
+//! direct dependency adds no crate or version, but this use of its key-generation
+//! and signing APIs still needs review independently of TLS.
 
 use ring::signature::{
     ECDSA_P256_SHA256_FIXED, EcdsaKeyPair, EcdsaSigningAlgorithm, EcdsaVerificationAlgorithm,
@@ -51,17 +49,18 @@ impl std::fmt::Debug for Identity {
 impl Identity {
     /// Load the stored identity, or create and persist a new one.
     ///
-    /// An unreadable or corrupt stored value is replaced rather than fatal: the
-    /// phone will see an unknown client ID and ask again, which is the correct
-    /// outcome for a key the user cannot recover anyway.
+    /// Only a missing value creates an identity. Read errors and corrupt values
+    /// fail without writing: silently rotating an existing key would discard
+    /// the PC's authorization. Explicit recovery belongs to the storage/UI
+    /// boundary, which is not implemented here yet.
     pub fn load_or_create(
         read: impl FnOnce() -> crate::Result<Option<String>>,
         write: impl FnOnce(&str) -> crate::Result<()>,
     ) -> crate::Result<Self> {
-        if let Some(stored) = read()?
-            && let Some(identity) = Self::from_hex(&stored)
-        {
-            return Ok(identity);
+        if let Some(stored) = read()? {
+            return Self::from_hex(&stored).ok_or_else(|| {
+                "this PC's stored identity is corrupt; explicit recovery required".into()
+            });
         }
         let identity = Self::generate();
         write(&identity.to_hex())?;
@@ -150,7 +149,9 @@ fn hex(bytes: &[u8]) -> String {
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
     let value = value.trim();
-    if !value.len().is_multiple_of(2) {
+    // Validate ASCII hex before byte slicing: even byte length alone does not
+    // make an index a UTF-8 character boundary (for example "0é0").
+    if !value.len().is_multiple_of(2) || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
     (0..value.len() / 2)
@@ -235,24 +236,57 @@ mod tests {
     }
 
     #[test]
-    fn a_corrupt_stored_identity_is_replaced_not_fatal() {
-        // The read and write closures cannot both hold the cell, so the store
-        // is a channel between them rather than shared state.
-        let (sender, receiver) = std::sync::mpsc::channel();
-        sender.send(Some("not hex".to_string())).unwrap();
-        let identity = Identity::load_or_create(
-            || Ok(receiver.recv().ok().flatten()),
+    fn a_corrupt_stored_identity_is_not_silently_replaced() {
+        for stored in ["not hex", "00", "0é0"] {
+            let written = std::cell::Cell::new(false);
+            let result = Identity::load_or_create(
+                || Ok(Some(stored.to_string())),
+                |_| {
+                    written.set(true);
+                    Ok(())
+                },
+            );
+            assert!(result.is_err(), "corrupt identity must require recovery");
+            assert!(!written.get(), "never overwrite an existing identity");
+        }
+    }
+
+    #[test]
+    fn missing_identity_is_created_but_read_errors_never_write() {
+        let written = std::cell::RefCell::new(None);
+        let generated = Identity::load_or_create(
+            || Ok(None),
             |value| {
-                sender.send(Some(value.to_string())).unwrap();
+                *written.borrow_mut() = Some(value.to_owned());
                 Ok(())
             },
         )
-        .expect("a corrupt identity is replaced");
+        .unwrap();
         assert_eq!(
-            receiver.recv().unwrap(),
-            Some(identity.to_hex()),
-            "the replacement was persisted"
+            written.borrow().as_deref(),
+            Some(generated.to_hex().as_str())
         );
+        let loaded = Identity::load_or_create(
+            || Ok(written.borrow().clone()),
+            |_| panic!("a valid stored identity must not be replaced"),
+        )
+        .unwrap();
+        assert_eq!(loaded.client_id(), generated.client_id());
+
+        let error = Identity::load_or_create(
+            || Err("permission denied".into()),
+            |_| panic!("a read error must not overwrite the store"),
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "permission denied");
+        assert!(Identity::load_or_create(|| Ok(None), |_| Err("disk full".into())).is_err());
+    }
+
+    #[test]
+    fn malformed_identity_text_never_panics() {
+        for input in ["0é0", "😀", "a€", "+a", "zz", "abc", ""] {
+            assert!(Identity::from_hex(input).is_none(), "reject {input:?}");
+        }
     }
 
     #[test]
@@ -295,7 +329,25 @@ mod tests {
     /// wire-format bug, not a test bug.
     #[test]
     fn the_canonical_signature_verifies_in_both_languages() {
-        let fixture: &[u8] = include_bytes!("../../protocol/fixtures/client-signature-v1.bin");
+        verify_fixture(include_bytes!(
+            "../../protocol/fixtures/client-signature-v1.bin"
+        ));
+    }
+
+    #[test]
+    fn a_leading_zero_signature_verifies_in_both_languages() {
+        let fixture =
+            include_bytes!("../../protocol/fixtures/client-signature-leading-zero-v1.bin");
+        let signature = &fixture[PUBLIC_KEY_BYTES + 57..];
+        assert_eq!(
+            signature[0], 0,
+            "r must exercise the old nonminimal DER bug"
+        );
+        assert!((1..0x80).contains(&signature[1]));
+        verify_fixture(fixture);
+    }
+
+    fn verify_fixture(fixture: &[u8]) {
         let (public_key, rest) = fixture.split_at(PUBLIC_KEY_BYTES);
         let (message, signature) = rest.split_at(57);
         assert_eq!(signature.len(), SIGNATURE_BYTES);
@@ -316,15 +368,15 @@ mod tests {
         assert_eq!(fixture.len(), PUBLIC_KEY_BYTES + 57 + SIGNATURE_BYTES);
     }
 
-    /// A signature is not a constant: the same message signed twice differs,
-    /// because ECDSA is randomized, and both verify.
+    /// ring uses randomized signing here. Deterministic ECDSA is also valid;
+    /// this test pins this backend's behavior, not a cryptographic requirement.
     #[test]
     fn the_same_message_signs_differently_and_both_verify() {
         let identity = Identity::generate();
         let message = message();
         let first = identity.sign(&message).unwrap();
         let second = identity.sign(&message).unwrap();
-        assert_ne!(first, second, "ECDSA must not be deterministic");
+        assert_ne!(first, second, "ring uses fresh signing randomness");
         assert!(Identity::verify(identity.public_key(), &message, &first));
         assert!(Identity::verify(identity.public_key(), &message, &second));
     }
@@ -332,9 +384,36 @@ mod tests {
 
 #[cfg(test)]
 mod fixture_generator {
-    //! Run with `cargo test --lib identity::fixture_generator::print -- --nocapture`
+    //! Run with `cargo test --lib identity::fixture_generator::print -- --ignored --nocapture`
     //! to regenerate protocol/fixtures/client-signature-v1.bin.
     use super::*;
+
+    /// Produces a valid signature with redundant fixed-width leading padding.
+    /// The private key is discarded; the committed fixture contains public data.
+    #[test]
+    #[ignore = "generator, not a test"]
+    fn leading_zero() {
+        let identity = Identity::generate();
+        let mut message = identity.client_id().to_vec();
+        message.extend_from_slice(&[7u8; 32]);
+        message.extend_from_slice(b"studio-pc");
+        let signature = (0..10_000)
+            .find_map(|_| {
+                let signature = identity.sign(&message).unwrap();
+                (signature[0] == 0 && (1..0x80).contains(&signature[1])).then_some(signature)
+            })
+            .expect("no suitable signature within the bounded generation budget");
+        let mut out = identity.public_key().to_vec();
+        out.extend_from_slice(&message);
+        out.extend_from_slice(&signature);
+        std::fs::write(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../protocol/fixtures/client-signature-leading-zero-v1.bin"),
+            &out,
+        )
+        .unwrap();
+        println!("leading-zero signature fixture: {} public bytes", out.len());
+    }
 
     #[test]
     #[ignore = "generator, not a test"]
@@ -351,7 +430,12 @@ mod fixture_generator {
         out.extend_from_slice(identity.public_key());
         out.extend_from_slice(&message);
         out.extend_from_slice(&signature);
-        std::fs::write("../../protocol/fixtures/client-signature-v1.bin", &out).unwrap();
+        std::fs::write(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../protocol/fixtures/client-signature-v1.bin"),
+            &out,
+        )
+        .unwrap();
         println!(
             "public {} message {} signature {} total {}",
             identity.public_key().len(),

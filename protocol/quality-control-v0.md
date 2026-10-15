@@ -28,10 +28,11 @@ Control space, after the session types; video types (0x10+) untouched.
 | 0x0b | `CLIENT_AUTH` | PC → phone |
 | 0x0c | `CLIENT_AUTH_RESULT` | phone → PC |
 
-The client-authorization types are **designed, not wired**. No peer sends them
-yet, and nothing in the handshake changes until they do. They are specified and
-fixture-tested so the contract exists before the implementation; see
-[per-PC authorization](../docs/per-pc-authorization.md).
+The client-authorization types are **prototype codecs, not a complete protocol**.
+A standalone PC exchange is tested against a synthetic TLS peer but is not
+called by connection startup; the production phone sends no challenge.
+Enrollment public-key transfer, transcript binding and allocation limits remain
+unresolved; see [per-PC authorization](../docs/per-pc-authorization.md).
 
 Old peers ignore unknown received types (existing behavior); a new PC sends
 no new command before the capability notification arrives. A phone without
@@ -54,8 +55,9 @@ the extension keeps serving legacy video; no connection error.
 - `CLIENT_CHALLENGE`: `u8 version`, 32-byte nonce (33 bytes).
 - `CLIENT_AUTH`: `u8 version`, 16-byte clientId, `u8 labelLength`,
   `labelLength` label bytes (UTF-8, at most 32), 64-byte signature.
-  The signature covers `clientId || nonce || label`, so a registration cannot be
-  replayed into another session, moved to another PC, or relabelled.
+  The prototype signature covers `clientId || nonce || label`. This binds those
+  bytes only; replay resistance requires phone-owned fresh, single-use nonces
+  and session/transcript binding, which are not implemented yet.
 - `CLIENT_AUTH_RESULT`: `u8 status` (0 authorized, 1 pending, 2 rejected),
   `u8 reason` (0 none, 1 unknown, 2 revoked, 3 expired, 4 too many,
   5 bad signature), `u32 expiresAtUnixSeconds` (6 bytes).
@@ -68,8 +70,9 @@ in-flight apply. An over-limit list is never silently truncated: the encoder
 refuses it and the phone answers with a feature-unavailable capability
 notification, disabling only the quality controls while legacy streaming
 continues. Payload length is validated against the count before the list is
-allocated. USB and LAN host-control readers validate the exact type-specific
-length before allocation. A duplicate prepare replays only its reply, never
+allocated. USB and LAN host-control readers validate the exact quality-command
+length before allocation; those limits do not yet support the auth prototype.
+A duplicate prepare replays only its reply, never
 capture actions; a pending request cannot be replaced. A commit must name the
 same request and advance the ending epoch by exactly one.
 

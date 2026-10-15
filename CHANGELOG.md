@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — authorization scaffolding (not enabled)
+
+- Encode raw P-256 signatures as minimal DER for the phone verifier; cover
+  leading-zero scalars with shared Rust/JVM/Android instrumentation fixtures.
+- Reject malformed identity text without a UTF-8 slicing panic. Preserve corrupt
+  stored identities for explicit recovery instead of silently replacing them.
+- Clarify that per-PC approval, persistence, revocation and transport gating
+  remain unimplemented; the prototype exchange is not an enforced authorization
+  protocol.
+
 ## 0.1.2 - 2026-10-04
 
 - Add an experimental Windows host and a single Setup.exe that installs the app,

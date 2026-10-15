@@ -104,10 +104,14 @@ fn phone_peer(
     tls.write_all(&result.header.encode().unwrap()).unwrap();
     tls.write_all(&result.payload).unwrap();
     tls.flush().unwrap();
-    // Stay connected until the PC has read the answer. Closing here would race
-    // the read and surface as an EOF instead of the result.
+    // Wait for the client to close after consuming the result. A timeout is
+    // not successful teardown: the owner must drop its transport before join.
     let mut byte = [0u8];
-    let _ = tls.read(&mut byte);
+    match tls.read(&mut byte) {
+        Ok(0) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {}
+        other => panic!("client did not disconnect after reading auth result: {other:?}"),
+    }
 }
 
 fn signed(client_id: &[u8], nonce: &[u8], label: &str) -> Vec<u8> {
@@ -138,6 +142,7 @@ fn run(nonce: [u8; 32], reply: Reply) -> Outcome {
     .expect("the peer completes pairing");
     let outcome = exchange(&mut transport, &identity, Duration::from_secs(5))
         .expect("the exchange completes");
+    drop(transport);
     peer.join().expect("the peer finishes");
     outcome
 }
