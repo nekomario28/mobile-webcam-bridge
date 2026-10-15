@@ -200,6 +200,20 @@ impl Store {
             fallbacks: Vec::new(),
         }
     }
+    pub(crate) fn identity_path(&self) -> crate::Result<std::path::PathBuf> {
+        #[cfg(unix)]
+        let path = self.path.with_file_name("Mobile Webcam.identity");
+        #[cfg(windows)]
+        let path = std::path::PathBuf::from(
+            std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA unavailable for PC identity")?,
+        )
+        .join("nekomario28/Mobile Webcam/client-identity.dpapi");
+        if !path.is_absolute() {
+            return Err("PC identity requires an absolute user configuration path".into());
+        }
+        Ok(path)
+    }
+
     pub fn load(&self) -> crate::Result<Settings> {
         #[cfg(unix)]
         {
@@ -413,6 +427,8 @@ fn encode_ini(value: &str) -> String {
     result
 }
 
+#[cfg(windows)]
+pub(crate) mod dpapi;
 #[cfg(windows)]
 mod registry;
 

@@ -54,8 +54,9 @@ This first implementation still has limitations: a single bearer key is
 shared by any PCs that the owner provisions, so one lost key forces global
 rotation rather than per-PC revocation. The design that closes this is in
 [per-PC authorization](per-pc-authorization.md). Isolated identity, signature and
-exchange tests exist; enforcement, persistent identity/list storage and approval
-UI are not implemented, and the authorization design is unreviewed.
+exchange tests exist, along with host identity and encrypted phone-list storage
+adapters. Enforcement, approval UI and connecting those stores to the transport
+are not implemented, and the authorization design is unreviewed.
 
 Desktop settings enforce mode 0600 for Linux files containing a Wi-Fi key
 and store the Windows credential as per-user DPAPI ciphertext in the

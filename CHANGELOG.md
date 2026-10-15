@@ -2,13 +2,16 @@
 
 ## Unreleased — authorization scaffolding (not enabled)
 
+- Add real user-scoped PC identity persistence with atomic first-use publication,
+  Unix private-file checks and Windows DPAPI ciphertext. Add a validated,
+  immutable phone authorization repository and Android Keystore AES-GCM storage.
+  Connection startup and approval UI do not consume these stores yet.
 - Encode raw P-256 signatures as minimal DER for the phone verifier; cover
   leading-zero scalars with shared Rust/JVM/Android instrumentation fixtures.
 - Reject malformed identity text without a UTF-8 slicing panic. Preserve corrupt
   stored identities for explicit recovery instead of silently replacing them.
-- Clarify that per-PC approval, persistence, revocation and transport gating
-  remain unimplemented; the prototype exchange is not an enforced authorization
-  protocol.
+- Clarify that per-PC approval UI, live revocation and transport gating remain
+  unimplemented; storage adapters alone do not enforce the prototype exchange.
 
 ## 0.1.2 - 2026-10-04
 

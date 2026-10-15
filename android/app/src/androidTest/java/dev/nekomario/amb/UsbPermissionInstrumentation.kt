@@ -139,6 +139,55 @@ class UsbPermissionInstrumentation : Instrumentation() {
         }
     }
 
+    /** Real preferences + Keystore, isolated from the application's approvals. */
+    private fun smokeClientStorage() {
+        val namespace = "client_authorization_instrumentation"
+        val prefs = targetContext.getSharedPreferences(namespace, Context.MODE_PRIVATE)
+        val alias = "mobile_webcam_${namespace}_aes_v1"
+        val keystore = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        check(prefs.edit().clear().commit())
+        keystore.deleteEntry(alias)
+        try {
+            val fixture = context.assets.open("client-signature-v1.bin").use { it.readBytes() }
+            val publicKey = fixture.copyOfRange(0, 65)
+            val id = ClientAuthorization.deriveClientId(publicKey)
+            val now = 1_800_000_000L
+            val first = ClientStore(targetContext, namespace).repository
+            check(first.snapshot().isEmpty())
+            first.approve(id, publicKey, "studio-pc", now)
+            val ciphertext = checkNotNull(prefs.getString(ClientStore.RECORD, null))
+            check(prefs.all.keys == setOf(ClientStore.RECORD)) { "unexpected plaintext authorization fields" }
+            val plaintext = ClientRecordCodec.encode(first.snapshot())
+            check(ciphertext != android.util.Base64.encodeToString(plaintext, android.util.Base64.NO_WRAP))
+            var reloaded = ClientStore(targetContext, namespace).repository
+            check(reloaded.snapshot() == first.snapshot()) { "Keystore authorization round trip failed" }
+            reloaded.renew(id, now + 10)
+            reloaded = ClientStore(targetContext, namespace).repository
+            check(reloaded.snapshot().single().expiresAtUnixSeconds == now + 10 + ClientAuthorization.EXPIRY_SECONDS)
+            reloaded.revoke(id)
+            check(ClientStore(targetContext, namespace).repository.snapshot().isEmpty())
+            reloaded.approve(id, publicKey, "studio-pc", now)
+            val valid = checkNotNull(prefs.getString(ClientStore.RECORD, null))
+            val changed = android.util.Base64.decode(valid, android.util.Base64.NO_WRAP)
+            changed[changed.lastIndex] = (changed.last().toInt() xor 1).toByte()
+            check(prefs.edit().putString(ClientStore.RECORD,
+                android.util.Base64.encodeToString(changed, android.util.Base64.NO_WRAP)).commit())
+            check(runCatching { ClientStore(targetContext, namespace) }.isFailure) {
+                "tampered authorization ciphertext was accepted"
+            }
+            check(prefs.edit().putString(ClientStore.RECORD, valid).commit())
+            keystore.deleteEntry(alias)
+            check(runCatching { ClientStore(targetContext, namespace) }.isFailure) {
+                "missing Keystore key silently reset the authorization list"
+            }
+            check(!keystore.containsAlias(alias)) { "decryption unexpectedly generated a replacement key" }
+            check(prefs.getString(ClientStore.RECORD, null) == valid) { "corrupt storage was overwritten" }
+        } finally {
+            prefs.edit().clear().commit()
+            keystore.deleteEntry(alias)
+        }
+    }
+
     /** Exercise the actual Android EC provider, not only a desktop JVM. The
      * leading-zero fixture used to produce a nonminimal DER INTEGER. */
     private fun smokeClientSignatures() {
@@ -196,10 +245,11 @@ class UsbPermissionInstrumentation : Instrumentation() {
                     "USB request could be replayed"
                 }
             }
+            smokeClientStorage()
             smokeClientSignatures()
             if (Build.VERSION.SDK_INT >= 29) smokeSecureWifi(context)
             finish(Activity.RESULT_OK, Bundle().apply {
-                putString("stream", "PASS USB permission, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection and host handshake\n")
+                putString("stream", "PASS USB permission, encrypted client storage, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection and host handshake\n")
             })
         } catch (error: Throwable) {
             finish(Activity.RESULT_CANCELED, Bundle().apply { putString("stream", "FAIL: $error\n") })

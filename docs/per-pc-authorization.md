@@ -30,17 +30,22 @@ These are requirements, **not current transport behavior**.
 ## What exists, and what remains
 
 [Host identity](../host-rs/src/identity.rs) generates a P-256 key and derives its
-ID from the public point. Its load/create API accepts callbacks, not an OS
-store. Only a missing value creates a key; corruption or read failure must not
-silently rotate an existing identity. Atomic private-file storage on Linux,
-DPAPI storage on Windows and explicit recovery UX remain to be implemented.
-Linux file permissions would be access control, not encryption at rest.
+ID from the public point. [Its store](../host-rs/src/identity/store.rs) persists
+that identity in a user-only file on Unix and a user-scope DPAPI-encrypted file
+under LocalAppData on Windows. Atomic no-replace publication prevents concurrent
+first launches from returning different keys. Only a missing value creates a
+key; corruption or read failure preserves existing data. This API is not yet
+consumed by connection startup. Explicit recovery UX remains open. Linux file
+permissions are access control, not encryption at rest.
 
 [Phone authorization](../android/app/src/main/java/dev/nekomario/amb/ClientAuthorization.kt)
-is an in-memory decision model. Its expiry/cap defaults live in that model; it
-has no persistent store, approval UI or ownership of a live socket. Removing an
-entry currently makes the next valid proof pending again, not permanently
-blocked. Re-enrollment/cooldown policy still needs an explicit decision.
+owns the decision model and expiry/cap defaults. Its immutable key records feed
+[a bounded codec and transactional repository](../android/app/src/main/java/dev/nekomario/amb/ClientRepository.kt)
+and [an Android Keystore AES-GCM store](../android/app/src/main/java/dev/nekomario/amb/ClientStore.kt).
+A failed write latches that repository closed rather than publishing a grant.
+These adapters have not yet been wired to an approval UI or live socket.
+Removing an entry currently makes the next valid proof pending again, not
+permanently blocked. Re-enrollment/cooldown policy still needs an explicit decision.
 
 [Host exchange](../host-rs/src/client_auth.rs) has a real-TLS synthetic-peer
 regression but is not called by connection startup. The prototype codecs and
@@ -60,11 +65,14 @@ complete enrollment protocol:
   Do not use a timeout as feature detection or allow an old client to bypass
   authorization just because the phone's list is empty.
 
-The phone list must eventually persist the **public key as well as its derived
-ID**, label and approval/expiry times. Use the Android Keystore protection
-boundary, validate the decoded list before use, and expose storage failures
-without silently approving a connection. Persistence, approval, camera gating
-and live revocation must be tested together before enabling the exchange.
+The phone storage format keeps the **public key**, label and approval/expiry
+times, deriving the ID rather than storing a second value that could disagree.
+Decoded lists are validated before use, and missing decryption keys or invalid
+ciphertext do not silently reset them. Persistence, approval, camera gating and
+live revocation must still be tested together before enabling the exchange.
+
+The implementation/acceptance sequence lives in
+[the active spec](../specs/per-pc-authorization/README.md).
 
 ### Signature encoding boundary
 

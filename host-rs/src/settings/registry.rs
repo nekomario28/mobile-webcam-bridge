@@ -1,6 +1,4 @@
 use super::*;
-#[path = "dpapi.rs"]
-mod dpapi;
 use crate::platform::windows::wide;
 use std::ptr;
 use windows_sys::Win32::{

@@ -203,7 +203,7 @@ jobs:
           # The custom instrumentation writes a PASS marker via finish(stream)
           # but Android's am instrument -w does not necessarily print a final
           # INSTRUMENTATION_CODE line. Require the authenticated result itself.
-          grep -q "PASS USB permission, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection and host handshake" build/secure-wifi/instrumentation.log
+          grep -q "PASS USB permission, encrypted client storage, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection and host handshake" build/secure-wifi/instrumentation.log
           if grep -q '^FAIL:' build/secure-wifi/instrumentation.log; then
             echo "Instrumentation reported a failure" >&2
             exit 1

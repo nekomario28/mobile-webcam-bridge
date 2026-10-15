@@ -9,6 +9,8 @@
 //! direct dependency adds no crate or version, but this use of its key-generation
 //! and signing APIs still needs review independently of TLS.
 
+mod store;
+
 use ring::signature::{
     ECDSA_P256_SHA256_FIXED, EcdsaKeyPair, EcdsaSigningAlgorithm, EcdsaVerificationAlgorithm,
     KeyPair,
@@ -47,26 +49,6 @@ impl std::fmt::Debug for Identity {
 }
 
 impl Identity {
-    /// Load the stored identity, or create and persist a new one.
-    ///
-    /// Only a missing value creates an identity. Read errors and corrupt values
-    /// fail without writing: silently rotating an existing key would discard
-    /// the PC's authorization. Explicit recovery belongs to the storage/UI
-    /// boundary, which is not implemented here yet.
-    pub fn load_or_create(
-        read: impl FnOnce() -> crate::Result<Option<String>>,
-        write: impl FnOnce(&str) -> crate::Result<()>,
-    ) -> crate::Result<Self> {
-        if let Some(stored) = read()? {
-            return Self::from_hex(&stored).ok_or_else(|| {
-                "this PC's stored identity is corrupt; explicit recovery required".into()
-            });
-        }
-        let identity = Self::generate();
-        write(&identity.to_hex())?;
-        Ok(identity)
-    }
-
     pub fn generate() -> Self {
         let rng = ring::rand::SystemRandom::new();
         let document = EcdsaKeyPair::generate_pkcs8(SIGNING_ALG, &rng)
@@ -233,53 +215,6 @@ mod tests {
             &message,
             &identity.sign(&message).unwrap()
         ));
-    }
-
-    #[test]
-    fn a_corrupt_stored_identity_is_not_silently_replaced() {
-        for stored in ["not hex", "00", "0é0"] {
-            let written = std::cell::Cell::new(false);
-            let result = Identity::load_or_create(
-                || Ok(Some(stored.to_string())),
-                |_| {
-                    written.set(true);
-                    Ok(())
-                },
-            );
-            assert!(result.is_err(), "corrupt identity must require recovery");
-            assert!(!written.get(), "never overwrite an existing identity");
-        }
-    }
-
-    #[test]
-    fn missing_identity_is_created_but_read_errors_never_write() {
-        let written = std::cell::RefCell::new(None);
-        let generated = Identity::load_or_create(
-            || Ok(None),
-            |value| {
-                *written.borrow_mut() = Some(value.to_owned());
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            written.borrow().as_deref(),
-            Some(generated.to_hex().as_str())
-        );
-        let loaded = Identity::load_or_create(
-            || Ok(written.borrow().clone()),
-            |_| panic!("a valid stored identity must not be replaced"),
-        )
-        .unwrap();
-        assert_eq!(loaded.client_id(), generated.client_id());
-
-        let error = Identity::load_or_create(
-            || Err("permission denied".into()),
-            |_| panic!("a read error must not overwrite the store"),
-        )
-        .unwrap_err();
-        assert_eq!(error.to_string(), "permission denied");
-        assert!(Identity::load_or_create(|| Ok(None), |_| Err("disk full".into())).is_err());
     }
 
     #[test]

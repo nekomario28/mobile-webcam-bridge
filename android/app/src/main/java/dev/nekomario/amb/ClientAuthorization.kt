@@ -43,13 +43,18 @@ object ClientAuthorization {
 
     /** One authorized PC. The public key is the identity; the label is a
      * convenience string the PC proposed and the user may edit. */
-    data class Client(
-        val clientId: ByteArray,
-        val publicKey: ByteArray,
+    class Client(
+        clientId: ByteArray,
+        publicKey: ByteArray,
         val label: String,
         val approvedAtUnixSeconds: Long,
         val expiresAtUnixSeconds: Long,
     ) {
+        private val idBytes = clientId.copyOf()
+        private val keyBytes = publicKey.copyOf()
+        val clientId: ByteArray get() = idBytes.copyOf()
+        val publicKey: ByteArray get() = keyBytes.copyOf()
+
         override fun equals(other: Any?) = other is Client &&
             clientId.contentEquals(other.clientId) &&
             publicKey.contentEquals(other.publicKey) &&
@@ -120,7 +125,7 @@ object ClientAuthorization {
         if (!known.publicKey.contentEquals(publicKey)) {
             return Result(Decision.REJECTED, Reason.BAD_SIGNATURE, 0)
         }
-        return if (nowUnixSeconds >= known.expiresAtUnixSeconds) {
+        return if (nowUnixSeconds < known.approvedAtUnixSeconds || nowUnixSeconds >= known.expiresAtUnixSeconds) {
             Result(Decision.REJECTED, Reason.EXPIRED, known.expiresAtUnixSeconds)
         } else {
             Result(Decision.AUTHORIZED, Reason.NONE, known.expiresAtUnixSeconds)
@@ -137,13 +142,16 @@ object ClientAuthorization {
         label: String,
         nowUnixSeconds: Long,
     ): List<Client>? {
+        if (!validPublicKey(publicKey) || !deriveClientId(publicKey).contentEquals(clientId) ||
+            !validLabel(label) || nowUnixSeconds < 0 || nowUnixSeconds > 0xffffffffL - EXPIRY_SECONDS
+        ) return null
         if (clients.none { it.clientId.contentEquals(clientId) } && clients.size >= MAX_CLIENTS) {
             return null
         }
         val entry = Client(
             clientId = clientId,
             publicKey = publicKey,
-            label = label.take(MAX_LABEL_BYTES),
+            label = label,
             approvedAtUnixSeconds = nowUnixSeconds,
             expiresAtUnixSeconds = nowUnixSeconds + EXPIRY_SECONDS,
         )
@@ -159,10 +167,8 @@ object ClientAuthorization {
     fun renew(clients: List<Client>, clientId: ByteArray, nowUnixSeconds: Long): List<Client> =
         clients.map {
             if (it.clientId.contentEquals(clientId)) {
-                it.copy(
-                    approvedAtUnixSeconds = nowUnixSeconds,
-                    expiresAtUnixSeconds = nowUnixSeconds + EXPIRY_SECONDS,
-                )
+                require(nowUnixSeconds in 0..(0xffffffffL - EXPIRY_SECONDS)) { "invalid approval time" }
+                Client(it.clientId, it.publicKey, it.label, nowUnixSeconds, nowUnixSeconds + EXPIRY_SECONDS)
             } else {
                 it
             }
@@ -171,6 +177,28 @@ object ClientAuthorization {
     /** The ID is a truncated hash of the public key, never chosen. */
     fun deriveClientId(publicKey: ByteArray): ByteArray =
         Wire.sha256(publicKey).copyOfRange(0, CLIENT_ID_BYTES)
+
+    fun validLabel(label: String): Boolean = label.isNotBlank() &&
+        label.toByteArray(Charsets.UTF_8).size <= MAX_LABEL_BYTES &&
+        String(label.toByteArray(Charsets.UTF_8), Charsets.UTF_8) == label &&
+        label.none { Character.isISOControl(it) || Character.getType(it) == Character.FORMAT.toInt() }
+
+    private fun publicKey(point: ByteArray): java.security.interfaces.ECPublicKey {
+        require(point.size == PUBLIC_KEY_BYTES && point[0] == 0x04.toByte()) { "invalid P-256 point encoding" }
+        val key = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(EC_SPKI_PREFIX + point))
+            as java.security.interfaces.ECPublicKey
+        // KeyFactory validation varies by provider; reject off-curve points
+        // before they can enter a persisted authorization record.
+        val p = (key.params.curve.field as java.security.spec.ECFieldFp).p
+        val x = key.w.affineX
+        val y = key.w.affineY
+        require(x.signum() >= 0 && y.signum() >= 0 && x < p && y < p)
+        require(y.multiply(y).mod(p) == x.multiply(x).multiply(x)
+            .add(key.params.curve.a.multiply(x)).add(key.params.curve.b).mod(p))
+        return key
+    }
+
+    fun validPublicKey(point: ByteArray): Boolean = runCatching { publicKey(point); true }.getOrDefault(false)
 
     /**
      * Verify a signature against the public point the phone stored.
@@ -182,8 +210,7 @@ object ClientAuthorization {
      */
     fun verify(publicKeyPoint: ByteArray, message: ByteArray, signature: ByteArray): Boolean =
         runCatching {
-            val key = KeyFactory.getInstance("EC")
-                .generatePublic(X509EncodedKeySpec(EC_SPKI_PREFIX + publicKeyPoint))
+            val key = publicKey(publicKeyPoint)
             val verifier = Signature.getInstance("SHA256withECDSA")
             verifier.initVerify(key)
             verifier.update(message)
