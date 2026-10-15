@@ -11,7 +11,7 @@ use rustls::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    io::{self, Read, Write},
+    io::{self, Read},
     net::TcpStream,
     sync::Arc,
     time::{Duration, Instant},
@@ -95,40 +95,26 @@ pub fn parse_hex(value: &str, bytes: usize) -> crate::Result<Vec<u8>> {
         .collect()
 }
 
-/// rustls can perform many socket operations inside one `complete_io` or
-/// stream read, so the shared deadline is enforced at each underlying I/O
-/// boundary instead of only around the outer TLS call: trickled records cannot
-/// renew the budget.
+/// The socket beneath rustls, with one budget installed before every
+/// underlying operation. rustls can perform many socket operations inside one
+/// `complete_io` or stream read, so an outer check cannot bound it.
 ///
-/// The budget is checked *before* an operation, never after a successful one.
-/// Reporting an expiry after the kernel already delivered bytes would discard
-/// them: rustls keeps no copy, the record stream desynchronizes and a later
-/// record fails to decrypt. An expired deadline stops the *next* operation
-/// instead, which bounds the total just as tightly.
-struct DeadlineSocket {
-    socket: TcpStream,
-    deadline: Instant,
-}
+/// The ordering rule — check the budget *before* the operation, never after a
+/// successful one — and its deterministic regression live in the `io-budget`
+/// crate. Getting it the other way round discards bytes the kernel already
+/// delivered, rustls keeps no copy, and a later record fails to decrypt; that
+/// failure was observed here at roughly one run in five before the fix.
+type DeadlineSocket = io_budget::DeadlineStream<TcpStream, io_budget::SystemClock>;
 
-impl Read for DeadlineSocket {
-    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        self.socket
-            .set_read_timeout(Some(transport::remaining(self.deadline)?))?;
-        self.socket.read(bytes)
-    }
-}
-
-impl Write for DeadlineSocket {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.socket
-            .set_write_timeout(Some(transport::remaining(self.deadline)?))?;
-        self.socket.write(bytes)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        transport::remaining(self.deadline)?;
-        self.socket.flush()
-    }
+/// Install one absolute deadline as a budget measured from now.
+fn budget_for(deadline: Instant) -> io::Result<io_budget::Budget> {
+    let clock = io_budget::SystemClock;
+    let budget =
+        io_budget::Budget::for_duration(deadline.saturating_duration_since(Instant::now()), &clock);
+    // Fail fast rather than leaving an already-expired budget to fail at the
+    // first read, which is harder to attribute.
+    budget.remaining(io_budget::Clock::now(&clock))?;
+    Ok(budget)
 }
 
 /// The pinned TLS transport. Like every socket transport it owns one
@@ -141,7 +127,7 @@ pub struct SecureTcp(
 
 impl SocketTransport for SecureTcp {
     fn socket(&mut self) -> &mut TcpStream {
-        &mut self.0.sock.socket
+        self.0.sock.get_mut()
     }
     fn stream(&mut self) -> &mut dyn ByteStream {
         &mut self.0
@@ -151,17 +137,17 @@ impl SocketTransport for SecureTcp {
         // through it, so it is moved out for the poll and restored afterwards.
         let mut reader = std::mem::take(&mut self.1);
         let outcome = reader.poll(timeout, |bytes, left| {
-            let deadline = Instant::now() + left;
-            transport::remaining(deadline)?;
-            self.0.sock.deadline = deadline;
+            self.0.sock.set_budget(io_budget::Budget::for_duration(
+                left,
+                &io_budget::SystemClock,
+            ));
             Ok(self.0.read(bytes)?)
         });
         self.1 = reader;
         outcome
     }
     fn set_deadline(&mut self, deadline: Instant) -> io::Result<()> {
-        transport::remaining(deadline)?;
-        self.0.sock.deadline = deadline;
+        self.0.sock.set_budget(budget_for(deadline)?);
         Ok(())
     }
 }
@@ -194,7 +180,14 @@ impl SecureTcp {
             socket.set_nodelay(true)?;
             let client = ClientConnection::new(Arc::new(config.clone()), server_name.clone())?;
             let mut secure = Self(
-                StreamOwned::new(client, DeadlineSocket { socket, deadline }),
+                StreamOwned::new(
+                    client,
+                    io_budget::DeadlineStream::new(
+                        socket,
+                        budget_for(deadline)?,
+                        io_budget::SystemClock,
+                    ),
+                ),
                 transport::FrameReader::default(),
             );
             while secure.0.conn.is_handshaking() {

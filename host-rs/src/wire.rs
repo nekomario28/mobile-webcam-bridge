@@ -268,7 +268,7 @@ impl Header {
         Ok(header)
     }
 
-    fn validate_payload_size(self) -> io::Result<()> {
+    pub(crate) fn validate_payload_size(self) -> io::Result<()> {
         let length = self.payload_len as usize;
         let valid = match self.kind {
             QUALITY_CAPABILITIES => (1..=MAX_CONTROL_PAYLOAD).contains(&length),

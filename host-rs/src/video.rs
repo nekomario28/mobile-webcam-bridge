@@ -127,12 +127,24 @@ pub fn worker(parent: u32) -> crate::Result<()> {
         control::write(
             &mut stdout,
             &Event::Error {
-                message: error.to_string().chars().take(2048).collect(),
+                // The frame reader is shared with any protocol, so its message
+                // says "frame"; a user of this app needs to know it was AMB1.
+                message: describe_receive_failure(error.as_ref()),
             },
         )?;
     }
     control::write(&mut stdout, &Event::Stopped {})?;
     result
+}
+
+/// Put the protocol back into a transport error the user will read.
+fn describe_receive_failure(error: &(dyn std::error::Error + Send + Sync)) -> String {
+    let message = error.to_string();
+    let named = message.replace(
+        "incomplete frame deadline expired",
+        "incomplete AMB1 frame deadline expired",
+    );
+    named.chars().take(2048).collect()
 }
 
 fn receive(

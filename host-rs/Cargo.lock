@@ -1510,6 +1510,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-budget"
+version = "0.1.0"
+source = "git+https://github.com/nekomario28/io-budget?rev=b018023#b018023d51e523b8bbcb5a4a8c5b138035c93f23"
+
+[[package]]
 name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1774,6 +1779,7 @@ dependencies = [
  "ffmpeg-sys-next",
  "fontdb",
  "image",
+ "io-budget",
  "libc",
  "rusb",
  "rustls",

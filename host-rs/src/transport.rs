@@ -145,13 +145,14 @@ impl<T: SocketTransport> Transport for T {
 }
 
 /// Time left on a deadline, never zero: some USB stacks read a zero timeout
-/// as "wait forever".
+/// as "wait forever". The rule and its regressions live in the `io-budget`
+/// crate; this only converts the caller's absolute `Instant` deadline into a
+/// budget measured from now.
 pub(crate) fn remaining(deadline: Instant) -> io::Result<Duration> {
-    deadline
-        .checked_duration_since(Instant::now())
-        .filter(|duration| !duration.is_zero())
-        .map(|duration| duration.max(Duration::from_millis(1)))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "deadline expired"))
+    let clock = io_budget::SystemClock;
+    let budget =
+        io_budget::Budget::for_duration(deadline.saturating_duration_since(Instant::now()), &clock);
+    budget.remaining(io_budget::Clock::now(&clock))
 }
 
 /// Resolve a host to candidate addresses; a literal address is used as-is.
