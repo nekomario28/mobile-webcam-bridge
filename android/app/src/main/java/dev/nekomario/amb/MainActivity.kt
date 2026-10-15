@@ -505,7 +505,13 @@ class MainActivity : Activity() {
 
     private fun openAccessory(accessory: UsbAccessory) {
         if (connectionMode != ConnectionMode.USB) return
-        closeSession(clearStartRequest = false)
+        // A *reconnected* accessory must not inherit the previous session's start
+        // consent: the accessory descriptor is a string the PC application sets,
+        // so a different PC can claim the same identity and be granted the same
+        // permission. An initial open keeps a pending intent, because the user
+        // pressed Start before the accessory was ready.
+        val reconnecting = session != null
+        closeSession(clearStartRequest = reconnecting)
         val pfd = usb.openAccessory(accessory)
         if (pfd == null) {
             show(ui("Could not open USB accessory. Retrying…", "USB accessoryを開けません。再試行します…"))

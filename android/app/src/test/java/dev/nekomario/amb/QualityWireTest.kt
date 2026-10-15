@@ -57,6 +57,73 @@ class QualityWireTest {
             }
     }
 
+@Test
+    fun clientAuthFramesMatchTheGoldenFixture() {
+        val fixture = locateFixture("protocol/fixtures/client-auth-v1.bin").readBytes()
+        var offset = 0
+        fun frame(): Pair<Wire.Header, ByteArray> {
+            val (header, payload) = Wire.readFrame(fixture.inputStream(offset, fixture.size))
+            offset += Wire.HEADER_SIZE + payload.size
+            return header to payload
+        }
+
+        val (challengeHeader, challengePayload) = frame()
+        assertEquals(Wire.TYPE_CLIENT_CHALLENGE, challengeHeader.type)
+        val challenge = Wire.decodeClientChallenge(challengePayload)
+        assertEquals(1, challenge.version)
+        assertEquals(ByteArray(32) { it.toByte() }.toList(), challenge.nonce.toList())
+        val challengeEncoded = Wire.encodeClientChallenge(challenge)
+        val challengeOut = ByteArrayOutputStream()
+        Wire.writeFrame(challengeOut, challengeHeader.copy(payloadLength = challengeEncoded.size), challengeEncoded)
+        assertArrayEquals(
+            fixture.copyOfRange(offset - challengeOut.size(), offset),
+            challengeOut.toByteArray(),
+        )
+
+        val (authHeader, authPayload) = frame()
+        assertEquals(Wire.TYPE_CLIENT_AUTH, authHeader.type)
+        val auth = Wire.decodeClientAuth(authPayload)
+        assertEquals(1, auth.version)
+        assertEquals(ByteArray(16) { it.toByte() }.toList(), auth.clientId.toList())
+        assertEquals("studio-pc", auth.label)
+        assertEquals(Wire.SIGNATURE_BYTES, auth.signature.size)
+        val authEncoded = Wire.encodeClientAuth(auth)
+        val authOut = ByteArrayOutputStream()
+        Wire.writeFrame(authOut, authHeader.copy(payloadLength = authEncoded.size), authEncoded)
+        assertArrayEquals(fixture.copyOfRange(offset - authOut.size(), offset), authOut.toByteArray())
+
+        val (resultHeader, resultPayload) = frame()
+        assertEquals(Wire.TYPE_CLIENT_AUTH_RESULT, resultHeader.type)
+        val result = Wire.decodeClientAuthResult(resultPayload)
+        assertEquals(Wire.AUTH_AUTHORIZED, result.status)
+        assertEquals(Wire.AUTH_REASON_NONE, result.reason)
+        assertEquals(1_800_000_000L, result.expiresAtUnixSeconds)
+        val resultEncoded = Wire.encodeClientAuthResult(result)
+        val resultOut = ByteArrayOutputStream()
+        Wire.writeFrame(resultOut, resultHeader.copy(payloadLength = resultEncoded.size), resultEncoded)
+        assertArrayEquals(
+            fixture.copyOfRange(offset - resultOut.size(), offset),
+            resultOut.toByteArray(),
+        )
+
+        assertEquals(fixture.size, offset)
+    }
+
+    @Test
+    fun clientAuthLabelLengthIsValidatedBeforeAllocation() {
+        val payload = Wire.encodeClientAuth(
+            Wire.ClientAuth(1, ByteArray(Wire.CLIENT_ID_BYTES), "ok", ByteArray(Wire.SIGNATURE_BYTES)),
+        )
+        // A label count far longer than the payload carries is refused, and a
+        // count that fits the ceiling but not the payload is refused too.
+        val overLimit = payload.copyOf()
+        overLimit[1 + Wire.CLIENT_ID_BYTES] = 200.toByte()
+        assertThrows(IllegalArgumentException::class.java) { Wire.decodeClientAuth(overLimit) }
+        val short = payload.copyOf()
+        short[1 + Wire.CLIENT_ID_BYTES] = Wire.MAX_CLIENT_LABEL.toByte()
+        assertThrows(IllegalArgumentException::class.java) { Wire.decodeClientAuth(short) }
+    }
+
     @Test
     fun qualityCapabilitiesMatchTheGoldenFixture() {
         val fixture = locateFixture("protocol/fixtures/quality-capabilities-v1.bin").readBytes()

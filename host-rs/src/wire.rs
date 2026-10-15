@@ -13,12 +13,34 @@ pub const PREPARE_QUALITY: u8 = 0x06;
 pub const QUALITY_RESULT: u8 = 0x07;
 pub const PAUSED: u8 = 0x08;
 pub const COMMIT_QUALITY: u8 = 0x09;
+/// Per-PC authorization (designed, not yet wired). The phone challenges, the PC
+/// proves possession of its key, the phone answers.
+pub const CLIENT_CHALLENGE: u8 = 0x0a;
+pub const CLIENT_AUTH: u8 = 0x0b;
+pub const CLIENT_AUTH_RESULT: u8 = 0x0c;
 pub const VIDEO_CONFIG: u8 = 0x10;
 pub const VIDEO_AU: u8 = 0x11;
 pub const IDR_REQUEST: u8 = 0x12;
 pub const KEYFRAME: u16 = 1;
 pub const CONFIG_INCLUDED: u16 = 2;
 pub const DISCONTINUITY: u16 = 4;
+
+/// Client authorization outcomes.
+pub const AUTH_AUTHORIZED: u8 = 0;
+pub const AUTH_PENDING: u8 = 1;
+pub const AUTH_REJECTED: u8 = 2;
+pub const AUTH_REASON_NONE: u8 = 0;
+pub const AUTH_REASON_UNKNOWN: u8 = 1;
+pub const AUTH_REASON_REVOKED: u8 = 2;
+pub const AUTH_REASON_EXPIRED: u8 = 3;
+pub const AUTH_REASON_TOO_MANY: u8 = 4;
+pub const AUTH_REASON_BAD_SIGNATURE: u8 = 5;
+
+/// A PC-proposed label. Attacker-chosen: never an identity.
+pub const MAX_CLIENT_LABEL: usize = 32;
+pub const CLIENT_ID_BYTES: usize = 16;
+pub const SIGNATURE_BYTES: usize = 64;
+pub const NONCE_BYTES: usize = 32;
 
 /// Control payload limit; the counted capability list must fit inside it.
 pub const MAX_CONTROL_PAYLOAD: usize = 16 * 1024;
@@ -215,6 +237,128 @@ impl QualityResult {
     }
 }
 
+/// The phone's fresh nonce, sent before the PC proves anything.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClientChallenge {
+    pub version: u8,
+    pub nonce: Vec<u8>,
+}
+
+impl ClientChallenge {
+    pub fn decode(payload: &[u8]) -> io::Result<Self> {
+        if payload.len() != 1 + NONCE_BYTES {
+            return Err(invalid("client challenge payload must be 33 bytes"));
+        }
+        if payload[0] != 1 {
+            return Err(invalid("unsupported client challenge version"));
+        }
+        Ok(Self {
+            version: payload[0],
+            nonce: payload[1..].to_vec(),
+        })
+    }
+    pub fn encode(&self) -> Vec<u8> {
+        assert_eq!(self.version, 1, "unsupported client challenge version");
+        assert_eq!(self.nonce.len(), NONCE_BYTES, "nonce must be 32 bytes");
+        let mut payload = Vec::with_capacity(1 + NONCE_BYTES);
+        payload.push(self.version);
+        payload.extend_from_slice(&self.nonce);
+        payload
+    }
+}
+
+/// The PC proves possession of its key over clientId, nonce and label.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClientAuth {
+    pub version: u8,
+    pub client_id: Vec<u8>,
+    pub label: String,
+    pub signature: Vec<u8>,
+}
+
+impl ClientAuth {
+    pub fn decode(payload: &[u8]) -> io::Result<Self> {
+        if payload.len() < 1 + CLIENT_ID_BYTES + 1 + SIGNATURE_BYTES {
+            return Err(invalid("client auth payload is too short"));
+        }
+        if payload[0] != 1 {
+            return Err(invalid("unsupported client auth version"));
+        }
+        let label_length = payload[1 + CLIENT_ID_BYTES] as usize;
+        if label_length > MAX_CLIENT_LABEL {
+            return Err(invalid("client label exceeds the limit"));
+        }
+        let expected = 1 + CLIENT_ID_BYTES + 1 + label_length + SIGNATURE_BYTES;
+        if payload.len() != expected {
+            return Err(invalid(
+                "client auth payload length does not match its label",
+            ));
+        }
+        let label_start = 1 + CLIENT_ID_BYTES + 1;
+        Ok(Self {
+            version: payload[0],
+            client_id: payload[1..1 + CLIENT_ID_BYTES].to_vec(),
+            label: String::from_utf8(payload[label_start..label_start + label_length].to_vec())
+                .map_err(|_| invalid("client label is not valid UTF-8"))?,
+            signature: payload[expected - SIGNATURE_BYTES..].to_vec(),
+        })
+    }
+    pub fn encode(&self) -> Vec<u8> {
+        assert_eq!(self.version, 1, "unsupported client auth version");
+        assert_eq!(
+            self.client_id.len(),
+            CLIENT_ID_BYTES,
+            "client id must be 16 bytes"
+        );
+        assert_eq!(
+            self.signature.len(),
+            SIGNATURE_BYTES,
+            "signature must be 64 bytes"
+        );
+        let label = self.label.as_bytes();
+        assert!(
+            label.len() <= MAX_CLIENT_LABEL,
+            "client label exceeds the limit"
+        );
+        let mut payload =
+            Vec::with_capacity(1 + CLIENT_ID_BYTES + 1 + label.len() + SIGNATURE_BYTES);
+        payload.push(self.version);
+        payload.extend_from_slice(&self.client_id);
+        payload.push(label.len() as u8);
+        payload.extend_from_slice(label);
+        payload.extend_from_slice(&self.signature);
+        payload
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClientAuthResult {
+    pub status: u8,
+    pub reason: u8,
+    pub expires_at_unix_seconds: u32,
+}
+
+impl ClientAuthResult {
+    pub const BYTES: usize = 6;
+    pub fn decode(payload: &[u8]) -> io::Result<Self> {
+        if payload.len() != Self::BYTES {
+            return Err(invalid("client auth result payload must be 6 bytes"));
+        }
+        Ok(Self {
+            status: payload[0],
+            reason: payload[1],
+            expires_at_unix_seconds: u32::from_le_bytes(payload[2..6].try_into().unwrap()),
+        })
+    }
+    pub fn encode(&self) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(Self::BYTES);
+        payload.push(self.status);
+        payload.push(self.reason);
+        payload.extend_from_slice(&self.expires_at_unix_seconds.to_le_bytes());
+        payload
+    }
+}
+
 impl Epoch {
     pub const BYTES: usize = 8;
     pub fn decode(payload: &[u8]) -> io::Result<Self> {
@@ -406,6 +550,89 @@ mod tests {
 
     /// The canonical golden fixture both languages read. Pins the type
     /// number, the field order and the counted list layout.
+    /// The per-PC authorization frames are canonical: both languages decode this
+    /// fixture, assert every field, and re-encode to the identical bytes, so the
+    /// type numbers, field order and counted label cannot drift.
+    #[test]
+    fn client_auth_frames_match_the_golden_fixture() {
+        let fixture: &[u8] = include_bytes!("../../protocol/fixtures/client-auth-v1.bin");
+
+        let mut offset = 0;
+        let challenge_len = HEADER_SIZE + 33;
+        let challenge_header = Header::decode(&fixture[offset..offset + HEADER_SIZE]).unwrap();
+        assert_eq!(challenge_header.kind, CLIENT_CHALLENGE);
+        let challenge =
+            ClientChallenge::decode(&fixture[offset + HEADER_SIZE..offset + challenge_len])
+                .unwrap();
+        assert_eq!(challenge.version, 1);
+        assert_eq!(challenge.nonce, (0..32).collect::<Vec<_>>());
+        let mut encoded = challenge_header.encode().unwrap().to_vec();
+        encoded.extend_from_slice(&challenge.encode());
+        assert_eq!(
+            encoded,
+            &fixture[offset..offset + challenge_len],
+            "client challenge"
+        );
+        offset += challenge_len;
+
+        let auth_len = HEADER_SIZE + 91;
+        let auth_header = Header::decode(&fixture[offset..offset + HEADER_SIZE]).unwrap();
+        assert_eq!(auth_header.kind, CLIENT_AUTH);
+        let auth = ClientAuth::decode(&fixture[offset + HEADER_SIZE..offset + auth_len]).unwrap();
+        assert_eq!(auth.version, 1);
+        assert_eq!(auth.client_id, (0..16).collect::<Vec<_>>());
+        assert_eq!(auth.label, "studio-pc");
+        assert_eq!(auth.signature.len(), SIGNATURE_BYTES);
+        let mut encoded = auth_header.encode().unwrap().to_vec();
+        encoded.extend_from_slice(&auth.encode());
+        assert_eq!(encoded, &fixture[offset..offset + auth_len], "client auth");
+        offset += auth_len;
+
+        let result_len = HEADER_SIZE + 6;
+        let result_header = Header::decode(&fixture[offset..offset + HEADER_SIZE]).unwrap();
+        assert_eq!(result_header.kind, CLIENT_AUTH_RESULT);
+        let result =
+            ClientAuthResult::decode(&fixture[offset + HEADER_SIZE..offset + result_len]).unwrap();
+        assert_eq!(
+            (result.status, result.reason),
+            (AUTH_AUTHORIZED, AUTH_REASON_NONE)
+        );
+        assert_eq!(result.expires_at_unix_seconds, 1_800_000_000);
+        let mut encoded = result_header.encode().unwrap().to_vec();
+        encoded.extend_from_slice(&result.encode());
+        assert_eq!(
+            encoded,
+            &fixture[offset..offset + result_len],
+            "client auth result"
+        );
+        offset += result_len;
+
+        assert_eq!(offset, fixture.len(), "the fixture has no trailing bytes");
+    }
+
+    /// A counted label is validated before anything is allocated, and a length
+    /// that disagrees with the payload is refused rather than truncated.
+    #[test]
+    fn client_auth_label_length_is_validated_before_allocation() {
+        let mut payload = ClientAuth {
+            version: 1,
+            client_id: vec![0; CLIENT_ID_BYTES],
+            label: "ok".into(),
+            signature: vec![0; SIGNATURE_BYTES],
+        }
+        .encode();
+        // Claim a label far longer than the payload carries.
+        payload[1 + CLIENT_ID_BYTES] = 200;
+        let error = ClientAuth::decode(&payload).unwrap_err();
+        assert!(error.to_string().contains("exceeds the limit"), "{error}");
+
+        // A length that fits the ceiling but not the payload is refused too.
+        let mut short = payload.clone();
+        short[1 + CLIENT_ID_BYTES] = MAX_CLIENT_LABEL as u8;
+        let error = ClientAuth::decode(&short).unwrap_err();
+        assert!(error.to_string().contains("does not match"), "{error}");
+    }
+
     #[test]
     fn quality_capabilities_match_the_golden_fixture() {
         let fixture = include_bytes!("../../protocol/fixtures/quality-capabilities-v1.bin");

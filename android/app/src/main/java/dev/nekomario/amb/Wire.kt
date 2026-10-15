@@ -22,6 +22,12 @@ object Wire {
     const val TYPE_QUALITY_RESULT: Byte = 0x07
     const val TYPE_PAUSED: Byte = 0x08
     const val TYPE_COMMIT_QUALITY: Byte = 0x09
+    /** Per-PC authorization (designed, not yet wired). The phone challenges,
+     * the PC proves possession of its key, the phone answers. */
+    const val TYPE_CLIENT_CHALLENGE: Byte = 0x0a
+    const val TYPE_CLIENT_AUTH: Byte = 0x0b
+    const val TYPE_CLIENT_AUTH_RESULT: Byte = 0x0c
+
     const val TYPE_VIDEO_CONFIG: Byte = 0x10
     const val TYPE_VIDEO_AU: Byte = 0x11
     const val TYPE_VIDEO_IDR_REQUEST: Byte = 0x12
@@ -53,6 +59,23 @@ object Wire {
     const val REASON_UNSUPPORTED_MODE = 3
     const val REASON_STALE_REVISION = 4
 
+    /** ClientAuthResult states and reasons. */
+    const val AUTH_AUTHORIZED = 0
+    const val AUTH_PENDING = 1
+    const val AUTH_REJECTED = 2
+    const val AUTH_REASON_NONE = 0
+    const val AUTH_REASON_UNKNOWN = 1
+    const val AUTH_REASON_REVOKED = 2
+    const val AUTH_REASON_EXPIRED = 3
+    const val AUTH_REASON_TOO_MANY = 4
+    const val AUTH_REASON_BAD_SIGNATURE = 5
+
+    /** A PC-proposed label. Attacker-chosen: never an identity. */
+    const val MAX_CLIENT_LABEL = 32
+    const val CLIENT_ID_BYTES = 16
+    const val SIGNATURE_BYTES = 64
+    const val NONCE_BYTES = 32
+
     data class QualityMode(val width: Int, val height: Int, val targetFps: Int, val bitrate: Int)
 
     data class Capabilities(
@@ -79,6 +102,103 @@ object Wire {
         val appliedHeight: Int,
         val appliedFps: Int,
     )
+
+/** The phone's fresh nonce, sent before the PC proves anything. */
+    data class ClientChallenge(val version: Int, val nonce: ByteArray) {
+        override fun equals(other: Any?) = other is ClientChallenge &&
+            version == other.version && nonce.contentEquals(other.nonce)
+        override fun hashCode() = 31 * version + nonce.contentHashCode()
+    }
+
+    /** The PC proves possession of its key over clientId, nonce and label. */
+    data class ClientAuth(
+        val version: Int,
+        val clientId: ByteArray,
+        val label: String,
+        val signature: ByteArray,
+    ) {
+        override fun equals(other: Any?) = other is ClientAuth &&
+            version == other.version && clientId.contentEquals(other.clientId) &&
+            label == other.label && signature.contentEquals(other.signature)
+        override fun hashCode() =
+            31 * (31 * (31 * version + clientId.contentHashCode()) + label.hashCode()) +
+                signature.contentHashCode()
+    }
+
+    data class ClientAuthResult(
+        val status: Int,
+        val reason: Int,
+        val expiresAtUnixSeconds: Long,
+    )
+
+    fun encodeClientChallenge(challenge: ClientChallenge): ByteArray {
+        require(challenge.version == 1) { "unsupported client challenge version" }
+        require(challenge.nonce.size == NONCE_BYTES) { "client challenge nonce must be 32 bytes" }
+        val buffer = ByteBuffer.allocate(1 + NONCE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+        buffer.put(challenge.version.toByte())
+        buffer.put(challenge.nonce)
+        return buffer.array()
+    }
+
+    fun decodeClientChallenge(payload: ByteArray): ClientChallenge {
+        require(payload.size == 1 + NONCE_BYTES) { "client challenge payload must be 33 bytes" }
+        require(payload[0].toInt() == 1) { "unsupported client challenge version" }
+        return ClientChallenge(payload[0].toInt(), payload.copyOfRange(1, payload.size))
+    }
+
+    fun encodeClientAuth(auth: ClientAuth): ByteArray {
+        require(auth.version == 1) { "unsupported client auth version" }
+        require(auth.clientId.size == CLIENT_ID_BYTES) { "client id must be 16 bytes" }
+        require(auth.signature.size == SIGNATURE_BYTES) { "signature must be 64 bytes" }
+        val label = auth.label.toByteArray(Charsets.UTF_8)
+        require(label.size <= MAX_CLIENT_LABEL) { "client label exceeds $MAX_CLIENT_LABEL bytes" }
+        val buffer = ByteBuffer.allocate(1 + CLIENT_ID_BYTES + 1 + label.size + SIGNATURE_BYTES)
+            .order(ByteOrder.LITTLE_ENDIAN)
+        buffer.put(auth.version.toByte())
+        buffer.put(auth.clientId)
+        buffer.put(label.size.toByte())
+        buffer.put(label)
+        buffer.put(auth.signature)
+        return buffer.array()
+    }
+
+    fun decodeClientAuth(payload: ByteArray): ClientAuth {
+        require(payload.size >= 1 + CLIENT_ID_BYTES + 1 + SIGNATURE_BYTES) {
+            "client auth payload is too short"
+        }
+        require(payload[0].toInt() == 1) { "unsupported client auth version" }
+        var offset = 1
+        val clientId = payload.copyOfRange(offset, offset + CLIENT_ID_BYTES)
+        offset += CLIENT_ID_BYTES
+        val labelLength = payload[offset].toInt() and 0xff
+        offset += 1
+        require(labelLength <= MAX_CLIENT_LABEL) { "client label exceeds $MAX_CLIENT_LABEL bytes" }
+        require(payload.size == offset + labelLength + SIGNATURE_BYTES) {
+            "client auth payload length does not match its label"
+        }
+        val label = String(payload, offset, labelLength, Charsets.UTF_8)
+        offset += labelLength
+        val signature = payload.copyOfRange(offset, offset + SIGNATURE_BYTES)
+        return ClientAuth(payload[0].toInt(), clientId, label, signature)
+    }
+
+    fun encodeClientAuthResult(result: ClientAuthResult): ByteArray {
+        val buffer = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
+        buffer.put(result.status.toByte())
+        buffer.put(result.reason.toByte())
+        buffer.putInt(result.expiresAtUnixSeconds.toInt())
+        return buffer.array()
+    }
+
+    fun decodeClientAuthResult(payload: ByteArray): ClientAuthResult {
+        require(payload.size == 6) { "client auth result payload must be 6 bytes" }
+        val buffer = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+        return ClientAuthResult(
+            buffer.get().toInt() and 0xff,
+            buffer.get().toInt() and 0xff,
+            buffer.int.toLong() and 0xffffffffL,
+        )
+    }
 
     data class Epoch(val requestId: Long, val streamEpoch: Long)
 

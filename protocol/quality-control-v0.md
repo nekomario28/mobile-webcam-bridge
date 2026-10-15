@@ -24,6 +24,14 @@ Control space, after the session types; video types (0x10+) untouched.
 | 0x07 | `QUALITY_RESULT` | phone → PC |
 | 0x08 | `PAUSED` | phone → PC |
 | 0x09 | `COMMIT_QUALITY` | PC → phone |
+| 0x0a | `CLIENT_CHALLENGE` | phone → PC |
+| 0x0b | `CLIENT_AUTH` | PC → phone |
+| 0x0c | `CLIENT_AUTH_RESULT` | phone → PC |
+
+The client-authorization types are **designed, not wired**. No peer sends them
+yet, and nothing in the handshake changes until they do. They are specified and
+fixture-tested so the contract exists before the implementation; see
+[per-PC authorization](../docs/per-pc-authorization.md).
 
 Old peers ignore unknown received types (existing behavior); a new PC sends
 no new command before the capability notification arrives. A phone without
@@ -43,6 +51,14 @@ the extension keeps serving legacy video; no connection error.
   (0 none, 1 permission, 2 foreground, 3 unsupported-mode, 4 stale-revision,
   5 busy, 6 deadline, 7 capture-failed), `u16 appliedWidth`,
   `u16 appliedHeight`, `u16 appliedFps`, `u16 reserved` (14 bytes).
+- `CLIENT_CHALLENGE`: `u8 version`, 32-byte nonce (33 bytes).
+- `CLIENT_AUTH`: `u8 version`, 16-byte clientId, `u8 labelLength`,
+  `labelLength` label bytes (UTF-8, at most 32), 64-byte signature.
+  The signature covers `clientId || nonce || label`, so a registration cannot be
+  replayed into another session, moved to another PC, or relabelled.
+- `CLIENT_AUTH_RESULT`: `u8 status` (0 authorized, 1 pending, 2 rejected),
+  `u8 reason` (0 none, 1 unknown, 2 revoked, 3 expired, 4 too many,
+  5 bad signature), `u32 expiresAtUnixSeconds` (6 bytes).
 - `PAUSED` / `COMMIT_QUALITY`: `u32 requestId`, `u32 streamEpoch` (8 bytes).
 
 ## Limits
