@@ -7,7 +7,7 @@ interface MediaSession : AutoCloseable {
     fun beginCapture(): Long
     fun stopVideo()
     fun onCodecConfig(config: H264Encoder.CodecConfig, generation: Long)
-    fun onCameraStarted(config: CameraEncoderSession.ActiveConfig, generation: Long)
+    fun onVideoConfig(width: Int, height: Int, fps: Int, bitrate: Int, generation: Long)
     fun onAccessUnit(unit: H264Encoder.AccessUnit, generation: Long)
     fun sendQualityResult(result: Wire.QualityResult)
     fun pauseQuality(epoch: Wire.Epoch)

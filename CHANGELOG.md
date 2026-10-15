@@ -27,7 +27,10 @@
 - Extend emulator conformance with production-Activity pointer actions, persisted
   approval/renew/revoke effects and narrow/scaled captures. Runtime/visual results
   must be checked at the exact revision; tests do not replace independent review
-  or physical USB/camera/native-consumer acceptance.
+  or physical USB/camera/native-consumer acceptance. Match Android's transformed
+  dialog button text in the pointer driver, and keep Android dimension getters
+  out of the shared media boundary so the retained socket case runs in Gradle's
+  plain JVM suite rather than only with android-all utilities.
 - Upgrade the Android app and Rust host together: older clients, including the
   classic Qt host on USB, do not implement mandatory v2 authorization.
 

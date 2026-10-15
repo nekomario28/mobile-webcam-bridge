@@ -2,8 +2,9 @@
 
 Requested scope: real identity/list persistence, phone approval/revocation UI,
 and mandatory camera/control authorization over both USB and pinned TLS Wi-Fi.
-All three are implemented in the integration worktree. Local mechanical gates
-pass; the new production-Activity/emulator gate still needs runtime evidence.
+All three are committed on the integration branch. Local mechanical gates pass;
+the production-Activity/emulator attempt has partial runtime evidence but is
+not yet a passing conformance or visual-acceptance gate.
 No merge or release is authorized by tests alone. The earlier independent static
 transport review does not cover this protocol, stores or UI. Do not launch another
 independent model review under the exhausted one-review authorization.
@@ -89,8 +90,27 @@ accepted supplementary invisible tags and Rust accepted format controls. An
 abandoned-prompt cooldown regression also failed before repair. Omitting the
 phone binding from the Rust transcript failed its wrong-phone signature check;
 bypassing the common Android permission check failed three socket/capture cases.
-Both injected mutations were restored; rerun positive gates on the restored tree. These
-checks do not establish native Android UI behavior or native Windows consumer use.
+Both injected mutations were restored and the positive local matrix was rerun.
+These checks do not establish native Android UI behavior or native Windows
+consumer use.
+
+### First integrated CI attempt
+
+At `153a73a`, Android CI built the APKs but failed one of 93 JVM cases:
+`Size.getWidth()` is not implemented by Gradle's mockable Android jar, whereas
+the local android-all probe executed it. Keep Android dimensions at the Camera2
+producer edge; the shared media/authorization boundary accepts plain numbers.
+The retained socket case also checks the emitted dimensions, rate and bitrate.
+The cache-only probe now warns about direct Android references rather than
+presenting itself as Gradle-equivalent.
+
+Emulator run `38781385547` passed the independent OpenSSL TLS/v2/quality exchange
+and reached real EN reject, pending, stale-action, approve and reconnect effects.
+It stopped at the renewal button lookup: Android exposes transformed uppercase
+button text. Six PNG/metadata pairs were collected before shutdown. The pointer
+driver now matches that transformation; renew/revoke, JA/scaled and storage-failed
+startup still require a passing rerun. This partial attempt is not conformance
+success or independent visual acceptance.
 
 ## Remaining acceptance and follow-through
 

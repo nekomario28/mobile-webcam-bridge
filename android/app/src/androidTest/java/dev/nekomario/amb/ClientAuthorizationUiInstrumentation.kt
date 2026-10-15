@@ -275,13 +275,19 @@ internal class ClientAuthorizationUiInstrumentation(private val test: Instrument
     private fun tapText(text: String) {
         val deadline = SystemClock.elapsedRealtime() + 8000
         while (true) {
-            val node = test.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(text)
-                ?.firstOrNull { it.text?.toString() == text || it.text?.toString()?.startsWith("$text\n") == true }
+            val candidates = test.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(text).orEmpty()
+            // Android exposes transformed button text (e.g. RENEW 90 DAYS).
+            val node = candidates.firstOrNull {
+                it.text?.toString()?.equals(text, ignoreCase = true) == true ||
+                    it.text?.toString()?.startsWith("$text\n", ignoreCase = true) == true
+            }
             if (node != null) {
                 val rect = Rect(); node.getBoundsInScreen(rect); check(!rect.isEmpty)
                 tap(rect); return
             }
-            check(SystemClock.elapsedRealtime() < deadline) { "dialog action missing: $text" }
+            check(SystemClock.elapsedRealtime() < deadline) {
+                "dialog action missing: $text; candidate text=${candidates.map { it.text }}"
+            }
             Thread.sleep(50)
         }
     }

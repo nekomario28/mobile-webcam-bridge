@@ -55,8 +55,8 @@ abstract class AuthorizedMediaSession(
     override fun onCodecConfig(config: H264Encoder.CodecConfig, generation: Long) {
         if (permitted()) outbound.setCodecConfig(config, generation)
     }
-    override fun onCameraStarted(config: CameraEncoderSession.ActiveConfig, generation: Long) {
-        if (permitted()) outbound.sendVideoConfig(config.size.width, config.size.height, config.fps, config.bitrate, generation)
+    override fun onVideoConfig(width: Int, height: Int, fps: Int, bitrate: Int, generation: Long) {
+        if (permitted()) outbound.sendVideoConfig(width, height, fps, bitrate, generation)
     }
     override fun onAccessUnit(unit: H264Encoder.AccessUnit, generation: Long) {
         if (permitted()) outbound.sendAccessUnit(unit, generation)

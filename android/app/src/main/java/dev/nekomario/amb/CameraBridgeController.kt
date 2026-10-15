@@ -34,7 +34,10 @@ class CameraBridgeController(
 
             override fun onCameraStarted(config: CameraEncoderSession.ActiveConfig) {
                 if (closed.get()) return
-                session.onCameraStarted(config, generation)
+                // Android dimensions stop at the camera boundary; transport
+                // authorization/framing does not depend on framework objects.
+                session.onVideoConfig(width = config.size.width, height = config.size.height,
+                    fps = config.fps, bitrate = config.bitrate, generation = generation)
                 onStarted(config)
                 onStatus(
                     "Camera ${config.cameraId}: ${config.size.width}x${config.size.height}" +
