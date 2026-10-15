@@ -630,7 +630,7 @@ impl eframe::App for App {
                         });
                         ui.add_space(18.0);
                         let running = self.session.running();
-                        let label = if running && matches!(self.session.state, State::Connecting) {
+                        let label = if running && matches!(self.session.state, State::Connecting | State::ApprovalPending(_)) {
                             self.text("Cancel", "キャンセル")
                         } else if running {
                             self.text("Disconnect", "切断")
@@ -699,6 +699,7 @@ impl eframe::App for App {
                         let status = match &self.session.state {
                             State::Idle => "",
                             State::Connecting => self.text("Connecting…", "接続中…"),
+                            State::ApprovalPending(_) => self.text("Approve this PC on your phone", "スマホでこのPCの接続を許可してください"),
                             State::Waiting => {
                                 if self.settings.transport == "lan" {
                                     self.text(
@@ -734,6 +735,13 @@ impl eframe::App for App {
                             } else {
                                 ui.label(egui::RichText::new(status).strong());
                             }
+                        }
+                        if let State::ApprovalPending(client_id) = &self.session.state {
+                            let grouped = client_id.as_bytes().chunks(4)
+                                .map(|part| std::str::from_utf8(part).expect("validated ASCII PC ID"))
+                                .collect::<Vec<_>>().join(" ");
+                            ui.label(self.text("Match this PC ID before allowing. Approval does not start the camera.", "許可する前にPC IDを照合してください。許可だけでは撮影を開始しません。"));
+                            ui.add(egui::Label::new(egui::RichText::new(grouped).monospace()).wrap());
                         }
                         if let State::Failed(error) = &self.session.state {
                             let next = if error.contains("v4l2loopback") || error.contains("host setup is not included") {

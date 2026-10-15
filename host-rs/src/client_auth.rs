@@ -2,27 +2,48 @@
 //! ([design](../../docs/per-pc-authorization.md)).
 //!
 //! The phone sends a fresh nonce; this PC proves possession of its own key over
-//! `clientId || nonce || label`; the phone answers. Nothing here decides
-//! anything — the phone owns the list — and nothing retries: a rejection is
-//! reported and the user decides.
-//!
-//! Not wired into the connect path yet. It is implemented and tested against a
-//! peer that plays the phone, so the exchange is proven before it is trusted.
+//! a domain-separated v2 transcript including transport, phone binding, nonce,
+//! point and label. The phone owns grants; a rejection is terminal, not retried.
+//! Both production connection paths call this before opening video/output.
+//! Pending notifies the UI but never substitutes for a separate Authorized
+//! outcome. Tests exercise mechanics, not independent security approval.
 
 use crate::{
     identity::Identity,
-    transport::{SocketTransport, remaining},
+    transport::remaining,
     wire::{self, Frame},
 };
 use std::time::{Duration, Instant};
+
+/// LAN proofs must name the certificate this connection actually pinned.
+/// USB has no cryptographic phone attestation; zero binding is explicit.
+#[derive(Clone, Copy, Debug)]
+pub enum Route {
+    Usb,
+    Lan {
+        phone_sha256: [u8; wire::PHONE_BINDING_BYTES],
+    },
+}
+impl Route {
+    fn transport(self) -> u8 {
+        match self {
+            Self::Usb => wire::AUTH_USB,
+            Self::Lan { .. } => wire::AUTH_LAN,
+        }
+    }
+    fn phone_binding(self) -> [u8; wire::PHONE_BINDING_BYTES] {
+        match self {
+            Self::Usb => [0; wire::PHONE_BINDING_BYTES],
+            Self::Lan { phone_sha256 } => phone_sha256,
+        }
+    }
+}
 
 /// What the phone said.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// Authorized until this Unix second.
     Authorized { expires_at_unix_seconds: u32 },
-    /// Registered but not yet approved by a tap on the phone.
-    Pending,
     /// Rejected, with the phone's own reason as text.
     Rejected(String),
 }
@@ -33,7 +54,13 @@ pub fn proposed_label() -> String {
     for variable in ["HOSTNAME", "COMPUTERNAME", "USER"] {
         if let Ok(value) = std::env::var(variable) {
             let trimmed = value.trim();
-            if !trimmed.is_empty() && trimmed.len() <= wire::MAX_CLIENT_LABEL {
+            // OS names can contain invisible formatting. The automatic label
+            // stays printable ASCII; a future editable name can use the phone's
+            // stricter Unicode policy instead of signing ambiguous UI text.
+            if !trimmed.is_empty()
+                && trimmed.len() <= wire::MAX_CLIENT_LABEL
+                && trimmed.bytes().all(|c| (0x20..=0x7e).contains(&c))
+            {
                 return trimmed.to_string();
             }
         }
@@ -52,65 +79,93 @@ fn reason_text(reason: u8) -> String {
     }
 }
 
-/// Run the exchange over an already-paired transport.
+/// Run the mandatory exchange over TLS-paired LAN or a physical USB stream.
 ///
 /// `timeout` is one budget for the whole exchange, not per frame: a peer that
-/// trickles a challenge must not be able to extend it.
+/// trickles a challenge must not be able to extend it. One Pending outcome
+/// starts a separate bounded human-decision interval; polls remain stoppable.
 pub fn exchange(
-    transport: &mut impl SocketTransport,
+    transport: &mut dyn crate::transport::Transport,
     identity: &Identity,
+    route: Route,
     timeout: Duration,
+    stop: &std::sync::atomic::AtomicBool,
+    mut on_pending: impl FnMut() -> crate::Result<()>,
 ) -> crate::Result<Outcome> {
-    let deadline = Instant::now() + timeout;
-    let challenge = transport.receive_until(deadline)?;
+    let mut deadline = Instant::now() + timeout;
+    let challenge = receive_until(transport, stop, deadline)?;
     if challenge.header.kind != wire::CLIENT_CHALLENGE {
-        return Err(format!(
-            "expected a client challenge, received type 0x{:02x}",
-            challenge.header.kind
-        )
-        .into());
+        return Err("phone does not support required per-PC authorization v2".into());
     }
     let challenge = wire::ClientChallenge::decode(&challenge.payload)?;
+    if challenge.transport != route.transport() {
+        return Err("authorization transport binding mismatch".into());
+    }
+    if challenge.phone_binding != route.phone_binding() {
+        return Err("authorization phone certificate binding mismatch".into());
+    }
     let label = proposed_label();
-    let client_id = identity.client_id().to_vec();
-    let nonce = challenge.nonce.clone();
-    let message: Vec<u8> = client_id
-        .iter()
-        .chain(nonce.iter())
-        .chain(label.as_bytes())
-        .copied()
-        .collect();
+    let message = wire::client_auth_message(
+        route.transport(),
+        &route.phone_binding(),
+        &challenge.nonce,
+        identity.public_key(),
+        &label,
+    )?;
     let signature = identity.sign(&message)?;
-    transport.send_until(
+    transport.send(
         &Frame::new(
             wire::CLIENT_AUTH,
             0,
             wire::ClientAuth {
-                version: 1,
-                client_id,
+                version: wire::CLIENT_AUTH_VERSION,
+                public_key: identity.public_key().to_vec(),
                 label,
                 signature: signature.to_vec(),
             }
             .encode(),
         )?,
-        deadline,
+        remaining_until(deadline)?.min(Duration::from_secs(2)),
     )?;
-    let result = transport.receive_until(deadline)?;
-    if result.header.kind != wire::CLIENT_AUTH_RESULT {
-        return Err(format!(
-            "expected a client auth result, received type 0x{:02x}",
-            result.header.kind
-        )
-        .into());
+
+    let mut pending = false;
+    loop {
+        let frame = receive_until(transport, stop, deadline)?;
+        if frame.header.kind != wire::CLIENT_AUTH_RESULT {
+            return Err("expected authorization outcome before capabilities/media".into());
+        }
+        let result = wire::ClientAuthResult::decode(&frame.payload)?;
+        match result.status {
+            wire::AUTH_AUTHORIZED => {
+                return Ok(Outcome::Authorized {
+                    expires_at_unix_seconds: result.expires_at_unix_seconds,
+                });
+            }
+            wire::AUTH_REJECTED => return Ok(Outcome::Rejected(reason_text(result.reason))),
+            wire::AUTH_PENDING if !pending => {
+                pending = true;
+                // One human-decision interval, never renewed by another frame.
+                deadline = Instant::now() + Duration::from_secs(60);
+                on_pending()?;
+            }
+            _ => return Err("repeated pending authorization outcome".into()),
+        }
     }
-    let result = wire::ClientAuthResult::decode(&result.payload)?;
-    Ok(match result.status {
-        wire::AUTH_AUTHORIZED => Outcome::Authorized {
-            expires_at_unix_seconds: result.expires_at_unix_seconds,
-        },
-        wire::AUTH_PENDING => Outcome::Pending,
-        _ => Outcome::Rejected(reason_text(result.reason)),
-    })
+}
+
+fn receive_until(
+    transport: &mut dyn crate::transport::Transport,
+    stop: &std::sync::atomic::AtomicBool,
+    deadline: Instant,
+) -> crate::Result<Frame> {
+    while !stop.load(std::sync::atomic::Ordering::Acquire) {
+        if let Some(frame) =
+            transport.poll_receive(remaining_until(deadline)?.min(Duration::from_millis(100)))?
+        {
+            return Ok(frame);
+        }
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "authorization stopped").into())
 }
 
 /// The deadline rule is the shared one: an expired budget fails the next

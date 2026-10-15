@@ -4,6 +4,7 @@ on:
     paths:
       - 'android/**'
       - 'protocol/fixtures/client-signature*'
+      - 'protocol/fixtures/client-auth*'
       - '.github/workflows/secure-wifi-android-emulator.yml'
   workflow_dispatch:
 
@@ -22,6 +23,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Bind clean source provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p build/secure-wifi
+          git rev-parse HEAD > build/secure-wifi/source-head.txt
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -34,8 +43,12 @@ jobs:
           gradle-version: '8.9'
       - name: Build Android app and instrumented smoke test
         working-directory: android
-        run: gradle --no-daemon assembleDebug assembleDebugAndroidTest
+        run: |
+          set -euo pipefail
+          gradle --no-daemon assembleDebug assembleDebugAndroidTest
+          sha256sum app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk > ../build/secure-wifi/apk-sha256.txt
       - name: Verify Android Keystore and TLS 1.3 on API 35 emulator
+        id: conformance
         shell: bash
         run: |
           set -euo pipefail
@@ -48,7 +61,7 @@ jobs:
           # Collect the Android-side failure even when the external TLS client
           # aborts before the instrumentation process returns.
           dump_android_failure() {
-            result=$?
+            local result="$1"
             if [ "$result" -ne 0 ]; then
               echo "--- Android instrumentation ---"
               if [ -n "${instrument_pid:-}" ]; then
@@ -61,7 +74,7 @@ jobs:
               fi
               cat build/secure-wifi/instrumentation.log 2>/dev/null || true
               echo "--- TLS app/platform logcat ---"
-              adb logcat -d SecureWifiGate:I Conscrypt:V AndroidKeyStore:V '*:S' 2>/dev/null | tail -130 || true
+              timeout 10 adb logcat -d SecureWifiGate:I Conscrypt:V AndroidKeyStore:V AndroidRuntime:E '*:S' 2>/dev/null | tail -130 || true
             fi
           }
           "$ANDROID_HOME/emulator/emulator" -avd secure-wifi -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 > build/secure-wifi/emulator.log 2>&1 &
@@ -69,8 +82,17 @@ jobs:
           # A second EXIT trap previously replaced dump_android_failure,
           # hiding the Android-side exception behind OpenSSL EOF.
           on_exit() {
-            dump_android_failure
+            local result=$?
+            dump_android_failure "$result"
+            # Pull while the emulator is still alive; the next workflow step
+            # must not try to read a device this EXIT trap already stopped.
+            timeout 10 adb logcat -d -t 500 > build/secure-wifi/logcat.txt 2>&1 || true
+            if ! timeout 30 adb pull /sdcard/Android/data/dev.nekomario.amb/files/authorization-ui build/secure-wifi/authorization-ui; then
+              echo "Authorization UI artifact pull failed" >&2
+            fi
             kill "$emulator_pid" 2>/dev/null || true
+            trap - EXIT
+            exit "$result"
           }
           trap on_exit EXIT
           boot_completed() { [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; }
@@ -81,9 +103,13 @@ jobs:
           # ADB forwards the Linux runner's TCP connection to the emulator's
           # real Android SSLServerSocket; this does not exercise another
           # Android Conscrypt client inside the same instrumentation process.
+          # This freshly created AVD has no user state. Keep the actual pointer
+          # scenarios awake through the real 30-second approval cooldowns.
+          adb shell settings put system screen_off_timeout 600000
+          adb shell input keyevent 82
           adb logcat -c
           adb forward tcp:48527 tcp:48527
-          adb shell am instrument -w dev.nekomario.amb.test/dev.nekomario.amb.UsbPermissionInstrumentation > build/secure-wifi/instrumentation.log 2>&1 &
+          adb shell am instrument -w -e disposableUi true dev.nekomario.amb.test/dev.nekomario.amb.UsbPermissionInstrumentation > build/secure-wifi/instrumentation.log 2>&1 &
           instrument_pid=$!
           phone_pin=""
           phone_key=""
@@ -107,7 +133,7 @@ jobs:
           export PHONE_SHA256="$phone_pin"
           export PHONE_KEY="$phone_key"
           python3 - <<'PY_TLS'
-          import hashlib, os, socket, ssl, struct, time
+          import hashlib, os, socket, ssl, struct, subprocess, tempfile, time
           context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
           context.check_hostname = False
           context.verify_mode = ssl.CERT_NONE  # TEST CLIENT ONLY: pin is checked explicitly below
@@ -162,6 +188,38 @@ jobs:
                                       return payload
                                   assert time.monotonic() < deadline, \
                                       f"{what}: never arrived, last type {seen}"
+                          kind, challenge = frame()
+                          assert kind == 0x0a and len(challenge) == 66 and challenge[:2] == bytes([2, 1]), (kind, challenge)
+                          binding = bytes.fromhex(os.environ["PHONE_SHA256"])
+                          assert challenge[2:34] == binding, "challenge is for a different phone certificate"
+                          # Independent OpenSSL PC key and v2 transcript. This
+                          # ephemeral private key never enters uploaded artifacts.
+                          with tempfile.TemporaryDirectory(prefix="amb-proof-") as directory:
+                              key = os.path.join(directory, "client.pem")
+                              subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256", "-out", key], check=True, capture_output=True)
+                              public = subprocess.check_output(["openssl", "pkey", "-in", key, "-pubout", "-outform", "DER"])[-65:]
+                              assert len(public) == 65 and public[0] == 4
+                              label_bytes = b"ci-openssl-pc"
+                              transcript = b"AMB1 PC authorization\x00v2\x00" + bytes([1]) + binding + challenge[34:] + public + bytes([len(label_bytes)]) + label_bytes
+                              der = subprocess.run(["openssl", "dgst", "-sha256", "-sign", key], input=transcript, check=True, capture_output=True).stdout
+                              assert der[0] == 0x30 and der[1] == len(der) - 2
+                              offset = 2
+                              raw_signature = b""
+                              for _ in range(2):
+                                  assert der[offset] == 2
+                                  size = der[offset + 1]
+                                  integer = int.from_bytes(der[offset + 2:offset + 2 + size], "big")
+                                  raw_signature += integer.to_bytes(32, "big")
+                                  offset += 2 + size
+                              assert offset == len(der)
+                              proof = bytes([2]) + public + bytes([len(label_bytes)]) + label_bytes + raw_signature
+                              connection.sendall(struct.pack("<4sBBHIIQ", b"AMB1", 1, 0x0b, 0, 2, len(proof), 0) + proof)
+                          kind, outcome = frame()
+                          assert kind == 0x0c and struct.unpack("<BBI", outcome) == (1, 0, 0), (kind, outcome)
+                          kind, outcome = frame()
+                          status, reason, expiry = struct.unpack("<BBI", outcome)
+                          assert kind == 0x0c and status == 0 and reason == 0 and expiry > int(time.time()), (kind, outcome)
+                          print("authorization: signed v2 enrollment, pending then explicit phone-fixture approval")
                           capabilities = wait_for_kind(0x05, "quality capabilities")
                           # u8 version, u8 permission, u16 revision,
                           # u32 epoch, u16 mode count, then 12-byte modes.
@@ -203,10 +261,40 @@ jobs:
           # The custom instrumentation writes a PASS marker via finish(stream)
           # but Android's am instrument -w does not necessarily print a final
           # INSTRUMENTATION_CODE line. Require the authenticated result itself.
-          grep -q "PASS USB permission, encrypted client storage, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection and host handshake" build/secure-wifi/instrumentation.log
+          grep -q "PASS USB permission, encrypted client storage, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection, host handshake, approval UI and live revocation" build/secure-wifi/instrumentation.log
           if grep -q '^FAIL:' build/secure-wifi/instrumentation.log; then
             echo "Instrumentation reported a failure" >&2
             exit 1
+          fi
+      - name: Verify collected authorization UI artifacts
+        if: always()
+        env:
+          CONFORMANCE_OUTCOME: ${{ steps.conformance.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFORMANCE_OUTCOME" = success ]; then
+            python3 - <<'PY_ARTIFACTS'
+          import json, os, pathlib, re, struct
+          root = pathlib.Path('build/secure-wifi')
+          directory = root / 'authorization-ui'
+          suffixes = ('reject-request', 'pending', 'stale-safe', 'allowed', 'reconnected', 'client-details', 'revoked')
+          expected = {f'{lang}-{suffix}' for lang in ('en', 'ja') for suffix in suffixes} | {'storage-failed'}
+          assert {p.stem for p in directory.glob('*.png')} == expected, 'missing or stale capture membership'
+          assert {p.stem for p in directory.glob('*.json')} == expected, 'missing or stale capture metadata'
+          for name in sorted(expected):
+              data = (directory / f'{name}.png').read_bytes()
+              assert data[:8] == b'\x89PNG\r\n\x1a\n' and data[12:16] == b'IHDR', name
+              width, height = struct.unpack('>II', data[16:24])
+              meta = json.loads((directory / f'{name}.json').read_text())
+              assert meta['scenario'] == name and (width, height) == (meta['width'], meta['height']) == (840, 1400), (name, meta)
+              assert 0 < meta['widthDp'] <= 360, (name, meta)
+              assert meta['locale'].split('-')[0] == ('ja' if name.startswith('ja-') else 'en'), (name, meta)
+              assert abs(meta['fontScale'] - (1.0 if name.startswith('en-') else 1.3)) < .02, (name, meta)
+          assert (root / 'source-head.txt').read_text().strip() == os.environ['GITHUB_SHA']
+          receipts = (root / 'apk-sha256.txt').read_text().splitlines()
+          assert len(receipts) == 2 and all(re.match(r'^[0-9a-f]{64}  .+\.apk$', line) for line in receipts)
+          print(f'PASS {len(expected)} scenario PNG/metadata pairs and source/APK provenance; visual acceptance is separate')
+          PY_ARTIFACTS
           fi
       - name: Upload emulator diagnostics
         if: always()

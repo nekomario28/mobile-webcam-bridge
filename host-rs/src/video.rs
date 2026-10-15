@@ -155,7 +155,10 @@ fn receive(
     quality_request: &Mutex<Option<(u16, u16, u16)>>,
     event: impl FnMut(Event) -> crate::Result<()>,
 ) -> crate::Result<()> {
-    let transport: Box<dyn Transport> = if settings.transport == "lan" {
+    let mut event = event;
+    // Fail before opening a transport if its stable identity cannot be loaded.
+    let identity = crate::identity::Identity::load_or_create()?;
+    let mut transport: Box<dyn Transport> = if settings.transport == "lan" {
         Box::new(SecureTcp::connect(
             &settings.lan_host,
             48527,
@@ -166,6 +169,34 @@ fn receive(
     } else {
         Box::new(Usb::connect(&device.ok_or("select a USB device")?)?)
     };
+    let client_id = identity
+        .client_id()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    match crate::client_auth::exchange(
+        transport.as_mut(),
+        &identity,
+        if settings.transport == "lan" {
+            crate::client_auth::Route::Lan {
+                phone_sha256: crate::secure::parse_hex(&settings.lan_fingerprint, 32)?
+                    .as_slice()
+                    .try_into()?,
+            }
+        } else {
+            crate::client_auth::Route::Usb
+        },
+        Duration::from_secs(5),
+        stop,
+        || {
+            event(Event::AuthorizationPending {
+                client_id: client_id.clone(),
+            })
+        },
+    )? {
+        crate::client_auth::Outcome::Authorized { .. } => {}
+        crate::client_auth::Outcome::Rejected(reason) => return Err(reason.into()),
+    }
     let output_path = settings.output.trim().to_string();
     receive_stream(
         settings,

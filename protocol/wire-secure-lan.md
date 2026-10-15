@@ -14,18 +14,22 @@ Status: Android and Rust client implementation, physical device acceptance pendi
 4. Under TLS, Rust sends an AMB1 HELLO frame (24-byte header; sequence=1;
    payload length=16) with the decoded random key. Phone performs a
    constant-time comparison before establishing the single-client session.
-5. Android sends empty HELLO_ACK with sequence=1 on success. It never sends
-   camera frames or accepts IDR control for an unauthorized client.
-   All subsequent AMB1 frames and H.264 access units run *inside TLS*.
-6. **Revoke Wi-Fi access key** on the phone rotates the random key, closes
-   the server and established session and restarts a secure-only listener.
+5. Android sends empty HELLO_ACK with sequence=1 on success. The integration
+   branch then requires [per-PC authorization v2](client-authorization-v2.md),
+   including binding the signature to this pinned certificate. HELLO_ACK alone
+   permits neither camera output nor controls. All subsequent AMB1 frames and
+   H.264 access units run *inside TLS*.
+6. **Rotate Wi-Fi access key** changes the random bootstrap key, closes the
+   server/session and restarts a secure listener. Individual grants remain;
+   revoke them separately in **Authorized PCs**.
 
 The protocol intentionally does not permit the pre-TLS plaintext AMB1 greeting.
 The old C++/Qt host cannot connect until a separately reviewed secure update
-is available. USB/AOA framing is unchanged.
+is available. AMB1 frame layout is unchanged, but the integration branch also
+requires v2 authorization over USB: older USB clients are not compatible.
 
-**Known gaps:** native device acceptance, separate per-PC credentials and
-revocation, desktop credential-store hardening, and anti-phishing UI for the
+**Known gaps:** native device acceptance, independent review of the new per-PC
+protocol/store/UI, explicit identity recovery, and safer pairing UX for the
 full out-of-band pin. The handshake wall-clock cap and the concurrent-handshake
 bound are implemented (see `LanServer`). Never treat a manually
 typed access key as protected if an attacker can view the phone screen or

@@ -103,105 +103,141 @@ object Wire {
         val appliedFps: Int,
     )
 
-/** The phone's fresh nonce, sent before the PC proves anything. */
-    data class ClientChallenge(val version: Int, val nonce: ByteArray) {
+    /** Unreleased hard cutover: v2 carries the enrollment public key. */
+    const val CLIENT_AUTH_VERSION = 2
+    const val CLIENT_PUBLIC_KEY_BYTES = 65
+    const val PHONE_BINDING_BYTES = 32
+    const val AUTH_USB = 0
+    const val AUTH_LAN = 1
+    const val CLIENT_AUTH_MIN_BYTES = 1 + CLIENT_PUBLIC_KEY_BYTES + 1 + SIGNATURE_BYTES
+    const val CLIENT_AUTH_MAX_BYTES = CLIENT_AUTH_MIN_BYTES + MAX_CLIENT_LABEL
+
+    data class ClientChallenge(val version: Int, val transport: Int, val phoneBinding: ByteArray, val nonce: ByteArray) {
         override fun equals(other: Any?) = other is ClientChallenge &&
-            version == other.version && nonce.contentEquals(other.nonce)
-        override fun hashCode() = 31 * version + nonce.contentHashCode()
+            version == other.version && transport == other.transport && phoneBinding.contentEquals(other.phoneBinding) && nonce.contentEquals(other.nonce)
+        override fun hashCode() = 31 * (31 * (31 * version + transport) + phoneBinding.contentHashCode()) + nonce.contentHashCode()
     }
 
-    /** The PC proves possession of its key over clientId, nonce and label. */
+    /** The ID is derived from the transferred point, not trusted peer input. */
     data class ClientAuth(
         val version: Int,
-        val clientId: ByteArray,
+        val publicKey: ByteArray,
         val label: String,
         val signature: ByteArray,
     ) {
         override fun equals(other: Any?) = other is ClientAuth &&
-            version == other.version && clientId.contentEquals(other.clientId) &&
+            version == other.version && publicKey.contentEquals(other.publicKey) &&
             label == other.label && signature.contentEquals(other.signature)
         override fun hashCode() =
-            31 * (31 * (31 * version + clientId.contentHashCode()) + label.hashCode()) +
+            31 * (31 * (31 * version + publicKey.contentHashCode()) + label.hashCode()) +
                 signature.contentHashCode()
     }
 
-    data class ClientAuthResult(
-        val status: Int,
-        val reason: Int,
-        val expiresAtUnixSeconds: Long,
-    )
+    data class ClientAuthResult(val status: Int, val reason: Int, val expiresAtUnixSeconds: Long)
 
-/** SHA-256, for deriving a client ID from its public key. */
     fun sha256(bytes: ByteArray): ByteArray =
         java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
 
+    private fun requireTransport(transport: Int) {
+        require(transport == AUTH_USB || transport == AUTH_LAN) { "unknown authorization transport" }
+    }
+
+    private fun requirePhoneBinding(transport: Int, binding: ByteArray) {
+        require(binding.size == PHONE_BINDING_BYTES)
+        require(if (transport == AUTH_USB) binding.all { it == 0.toByte() } else binding.any { it != 0.toByte() }) {
+            "invalid phone certificate binding"
+        }
+    }
+
+    private fun strictLabel(bytes: ByteArray): String {
+        val label = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(bytes)).toString()
+        require(bytes.size <= MAX_CLIENT_LABEL && label.isNotBlank() && label.none { it.isISOControl() }) {
+            "invalid client label"
+        }
+        return label
+    }
+
+    /** Domain separation, then the phone-owned channel/nonce and exact point/label.
+     * A random nonce belongs to one live session and is consumed once by its owner. */
+    fun clientAuthMessage(transport: Int, phoneBinding: ByteArray, nonce: ByteArray, publicKey: ByteArray, label: String): ByteArray {
+        requireTransport(transport)
+        requirePhoneBinding(transport, phoneBinding)
+        require(nonce.size == NONCE_BYTES)
+        require(publicKey.size == CLIENT_PUBLIC_KEY_BYTES && publicKey[0] == 4.toByte())
+        val text = label.toByteArray(Charsets.UTF_8)
+        require(strictLabel(text) == label) { "client label is not lossless UTF-8" }
+        return "AMB1 PC authorization\u0000v2\u0000".toByteArray(Charsets.US_ASCII) +
+            byteArrayOf(transport.toByte()) + phoneBinding + nonce + publicKey + byteArrayOf(text.size.toByte()) + text
+    }
+
     fun encodeClientChallenge(challenge: ClientChallenge): ByteArray {
-        require(challenge.version == 1) { "unsupported client challenge version" }
-        require(challenge.nonce.size == NONCE_BYTES) { "client challenge nonce must be 32 bytes" }
-        val buffer = ByteBuffer.allocate(1 + NONCE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
-        buffer.put(challenge.version.toByte())
-        buffer.put(challenge.nonce)
-        return buffer.array()
+        require(challenge.version == CLIENT_AUTH_VERSION) { "unsupported client challenge version" }
+        requireTransport(challenge.transport)
+        requirePhoneBinding(challenge.transport, challenge.phoneBinding)
+        require(challenge.nonce.size == NONCE_BYTES)
+        return byteArrayOf(challenge.version.toByte(), challenge.transport.toByte()) + challenge.phoneBinding + challenge.nonce
     }
 
     fun decodeClientChallenge(payload: ByteArray): ClientChallenge {
-        require(payload.size == 1 + NONCE_BYTES) { "client challenge payload must be 33 bytes" }
-        require(payload[0].toInt() == 1) { "unsupported client challenge version" }
-        return ClientChallenge(payload[0].toInt(), payload.copyOfRange(1, payload.size))
+        require(payload.size == 2 + PHONE_BINDING_BYTES + NONCE_BYTES) { "client challenge payload must be 66 bytes" }
+        require(payload[0].toInt() == CLIENT_AUTH_VERSION) { "unsupported client challenge version" }
+        val transport = payload[1].toInt() and 0xff
+        requireTransport(transport)
+        val binding = payload.copyOfRange(2, 2 + PHONE_BINDING_BYTES)
+        requirePhoneBinding(transport, binding)
+        return ClientChallenge(CLIENT_AUTH_VERSION, transport, binding, payload.copyOfRange(2 + PHONE_BINDING_BYTES, payload.size))
     }
 
     fun encodeClientAuth(auth: ClientAuth): ByteArray {
-        require(auth.version == 1) { "unsupported client auth version" }
-        require(auth.clientId.size == CLIENT_ID_BYTES) { "client id must be 16 bytes" }
-        require(auth.signature.size == SIGNATURE_BYTES) { "signature must be 64 bytes" }
+        require(auth.version == CLIENT_AUTH_VERSION) { "unsupported client auth version" }
+        require(auth.publicKey.size == CLIENT_PUBLIC_KEY_BYTES && auth.publicKey[0] == 4.toByte())
+        require(auth.signature.size == SIGNATURE_BYTES)
         val label = auth.label.toByteArray(Charsets.UTF_8)
-        require(label.size <= MAX_CLIENT_LABEL) { "client label exceeds $MAX_CLIENT_LABEL bytes" }
-        val buffer = ByteBuffer.allocate(1 + CLIENT_ID_BYTES + 1 + label.size + SIGNATURE_BYTES)
-            .order(ByteOrder.LITTLE_ENDIAN)
-        buffer.put(auth.version.toByte())
-        buffer.put(auth.clientId)
-        buffer.put(label.size.toByte())
-        buffer.put(label)
-        buffer.put(auth.signature)
-        return buffer.array()
+        require(strictLabel(label) == auth.label) { "client label is not lossless UTF-8" }
+        return byteArrayOf(auth.version.toByte()) + auth.publicKey +
+            byteArrayOf(label.size.toByte()) + label + auth.signature
     }
 
     fun decodeClientAuth(payload: ByteArray): ClientAuth {
-        require(payload.size >= 1 + CLIENT_ID_BYTES + 1 + SIGNATURE_BYTES) {
-            "client auth payload is too short"
-        }
-        require(payload[0].toInt() == 1) { "unsupported client auth version" }
-        var offset = 1
-        val clientId = payload.copyOfRange(offset, offset + CLIENT_ID_BYTES)
-        offset += CLIENT_ID_BYTES
+        require(payload.size in CLIENT_AUTH_MIN_BYTES..CLIENT_AUTH_MAX_BYTES) { "invalid client auth length" }
+        require(payload[0].toInt() == CLIENT_AUTH_VERSION) { "unsupported client auth version" }
+        val offset = 1 + CLIENT_PUBLIC_KEY_BYTES
         val labelLength = payload[offset].toInt() and 0xff
-        offset += 1
         require(labelLength <= MAX_CLIENT_LABEL) { "client label exceeds $MAX_CLIENT_LABEL bytes" }
-        require(payload.size == offset + labelLength + SIGNATURE_BYTES) {
-            "client auth payload length does not match its label"
-        }
-        val label = String(payload, offset, labelLength, Charsets.UTF_8)
-        offset += labelLength
-        val signature = payload.copyOfRange(offset, offset + SIGNATURE_BYTES)
-        return ClientAuth(payload[0].toInt(), clientId, label, signature)
+        require(payload.size == CLIENT_AUTH_MIN_BYTES + labelLength) { "client auth length does not match label" }
+        val key = payload.copyOfRange(1, offset)
+        require(key[0] == 4.toByte()) { "client key must be uncompressed P-256" }
+        return ClientAuth(CLIENT_AUTH_VERSION, key,
+            strictLabel(payload.copyOfRange(offset + 1, offset + 1 + labelLength)),
+            payload.copyOfRange(payload.size - SIGNATURE_BYTES, payload.size))
+    }
+
+    private fun validateAuthResult(result: ClientAuthResult) {
+        require(result.expiresAtUnixSeconds in 0..0xffff_ffffL)
+        require(when (result.status) {
+            AUTH_AUTHORIZED -> result.reason == AUTH_REASON_NONE && result.expiresAtUnixSeconds > 0
+            AUTH_PENDING -> result.reason == AUTH_REASON_NONE && result.expiresAtUnixSeconds == 0L
+            AUTH_REJECTED -> result.reason in AUTH_REASON_UNKNOWN..AUTH_REASON_BAD_SIGNATURE &&
+                (result.reason == AUTH_REASON_EXPIRED || result.expiresAtUnixSeconds == 0L)
+            else -> false
+        }) { "invalid client authorization outcome" }
     }
 
     fun encodeClientAuthResult(result: ClientAuthResult): ByteArray {
-        val buffer = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
-        buffer.put(result.status.toByte())
-        buffer.put(result.reason.toByte())
-        buffer.putInt(result.expiresAtUnixSeconds.toInt())
-        return buffer.array()
+        validateAuthResult(result)
+        return ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
+            .put(result.status.toByte()).put(result.reason.toByte())
+            .putInt(result.expiresAtUnixSeconds.toInt()).array()
     }
 
     fun decodeClientAuthResult(payload: ByteArray): ClientAuthResult {
         require(payload.size == 6) { "client auth result payload must be 6 bytes" }
         val buffer = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
-        return ClientAuthResult(
-            buffer.get().toInt() and 0xff,
-            buffer.get().toInt() and 0xff,
-            buffer.int.toLong() and 0xffffffffL,
-        )
+        return ClientAuthResult(buffer.get().toInt() and 0xff, buffer.get().toInt() and 0xff,
+            buffer.int.toLong() and 0xffff_ffffL).also { validateAuthResult(it) }
     }
 
     data class Epoch(val requestId: Long, val streamEpoch: Long)
@@ -339,17 +375,18 @@ object Wire {
     )
 
     /** Both transport readers share exact type-specific limits BEFORE allocation. */
-    fun readHostFrame(input: InputStream): Pair<Header, ByteArray> = readFrame(input, 14) { type ->
+    fun readHostFrame(input: InputStream): Pair<Header, ByteArray> = readFrame(input, CLIENT_AUTH_MAX_BYTES) { type ->
         when (type) {
-            TYPE_PING -> 8
-            TYPE_VIDEO_IDR_REQUEST -> 0
-            TYPE_PREPARE_QUALITY -> 14
-            TYPE_COMMIT_QUALITY -> 8
+            TYPE_PING -> 8..8
+            TYPE_VIDEO_IDR_REQUEST -> 0..0
+            TYPE_PREPARE_QUALITY -> 14..14
+            TYPE_COMMIT_QUALITY -> 8..8
+            TYPE_CLIENT_AUTH -> CLIENT_AUTH_MIN_BYTES..CLIENT_AUTH_MAX_BYTES
             else -> error("unexpected host message type 0x%02x".format(type))
         }
     }
 
-    fun readFrame(input: InputStream, maxPayloadLength: Int = MAX_PAYLOAD, expectedLength: ((Byte) -> Int)? = null): Pair<Header, ByteArray> {
+    fun readFrame(input: InputStream, maxPayloadLength: Int = MAX_PAYLOAD, payloadBounds: ((Byte) -> IntRange)? = null): Pair<Header, ByteArray> {
         require(maxPayloadLength in 0..MAX_PAYLOAD) { "invalid caller payload limit" }
         val headerBytes = ByteArray(HEADER_SIZE)
         readExact(input, headerBytes)
@@ -362,7 +399,7 @@ object Wire {
         val payloadLength = b.int
         val ptsUs = b.long
         require(payloadLength in 0..maxPayloadLength) { "invalid payload length: $payloadLength" }
-        expectedLength?.let { require(payloadLength == it(type)) { "unexpected control payload length: $payloadLength" } }
+        payloadBounds?.let { require(payloadLength in it(type)) { "unexpected control payload length: $payloadLength" } }
         val payload = ByteArray(payloadLength)
         readExact(input, payload)
         return Header(type, flags, sequence, payloadLength, ptsUs) to payload

@@ -5,6 +5,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import dev.nekomario.amb.ClientCryptoFixture.keyPair
+import dev.nekomario.amb.ClientCryptoFixture.derToRaw
 
 /**
  * The phone's authorization list. No device and no PC: the list transitions and
@@ -14,16 +16,6 @@ import org.junit.Test
 class ClientAuthorizationTest {
     private val now = 1_800_000_000L
 
-    private fun keyPair(): Pair<ByteArray, java.security.PrivateKey> {
-        val generator = java.security.KeyPairGenerator.getInstance("EC")
-        generator.initialize(java.security.spec.ECGenParameterSpec("secp256r1"))
-        val pair = generator.generateKeyPair()
-        val point = (pair.public as java.security.interfaces.ECPublicKey).w
-        fun fixed32(value: java.math.BigInteger): ByteArray =
-            value.toByteArray().takeLast(32).toByteArray().let { ByteArray(32 - it.size) + it }
-        return (byteArrayOf(0x04) + fixed32(point.affineX) + fixed32(point.affineY)) to pair.private
-    }
-
     private fun signed(
         publicKey: ByteArray,
         privateKey: java.security.PrivateKey,
@@ -31,7 +23,7 @@ class ClientAuthorizationTest {
         nonce: ByteArray = ByteArray(32) { 7 },
     ): Triple<ByteArray, ByteArray, ByteArray> {
         val clientId = ClientAuthorization.deriveClientId(publicKey)
-        val message = ClientAuthorization.signedMessage(clientId, nonce, label)
+        val message = Wire.clientAuthMessage(Wire.AUTH_LAN, ClientCryptoFixture.phoneBinding(), nonce, publicKey, label)
         val der = java.security.Signature.getInstance("SHA256withECDSA").run {
             initSign(privateKey)
             update(message)
@@ -77,8 +69,8 @@ class ClientAuthorizationTest {
     fun a_relabelled_message_is_rejected() {
         val (publicKey, privateKey) = keyPair()
         val (clientId, message, signature) = signed(publicKey, privateKey)
-        val relabelled = ClientAuthorization.signedMessage(
-            clientId, ByteArray(32) { 7 }, "other-name",
+        val relabelled = Wire.clientAuthMessage(
+            Wire.AUTH_LAN, ClientCryptoFixture.phoneBinding(), ByteArray(32) { 7 }, publicKey, "other-name",
         )
         val result = ClientAuthorization.evaluate(
             clientId, publicKey, relabelled, signature, listOf(client(clientId, publicKey)), now,
@@ -348,35 +340,6 @@ class ClientAuthorizationTest {
 
     /** The platform signs DER; the wire carries raw r||s. This converts back so
      * a test can produce a signature the way a Rust PC does. */
-    private fun derToRaw(der: ByteArray): ByteArray {
-        var offset = 0
-        fun integer(): ByteArray {
-            assertEquals(0x02.toByte(), der[offset]); offset += 1
-            val length = der[offset].toInt() and 0xff; offset += 1
-            val body = der.copyOfRange(offset, offset + length); offset += length
-            return body
-        }
-        assertEquals(0x30.toByte(), der[offset]); offset += 1
-        der[offset].toInt(); offset += 1
-        val r = integer()
-        val s = integer()
-        assertEquals(der.size, offset)
-        fun fixed32(value: ByteArray): ByteArray {
-            // DER adds a sign byte to keep the unsigned scalar positive;
-            // raw encoding restores the fixed 32-byte width with zero padding.
-            val body = if (value.size == 33 && value[0] == 0.toByte()) {
-                value.copyOfRange(1, 33)
-            } else {
-                value
-            }
-            require(body.size <= 32) { "integer wider than 32 bytes" }
-            val out = ByteArray(32)
-            body.copyInto(out, 32 - body.size)
-            return out
-        }
-        return fixed32(r) + fixed32(s)
-    }
-
     private fun locateFixture(relative: String): java.io.File {
         var dir: java.io.File? = java.io.File("").absoluteFile
         repeat(5) {

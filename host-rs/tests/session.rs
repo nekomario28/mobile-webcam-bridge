@@ -5,6 +5,7 @@ use common::{ACCESS_KEY, PHONE_SHA256, phone_tls};
 use mobile_webcam::{
     session::{Session, State},
     settings::Settings,
+    wire,
 };
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -25,7 +26,7 @@ fn paired_settings() -> Settings {
     }
 }
 
-fn peer(listener: TcpListener) {
+fn peer(listener: TcpListener, approval_pending: bool) {
     let mut socket = phone_tls(listener.accept().expect("accept").0);
     let mut header = [0; 24];
     socket.read_exact(&mut header).unwrap();
@@ -42,8 +43,11 @@ fn peer(listener: TcpListener) {
     header[12..16].copy_from_slice(&0u32.to_le_bytes());
     socket.write_all(&header).unwrap();
     socket.flush().unwrap();
-    socket.read_exact(&mut header).unwrap();
-    assert_eq!(header[5], 0x12);
+    common::authorize_tls(&mut socket, !approval_pending);
+    if !approval_pending {
+        socket.read_exact(&mut header).unwrap();
+        assert_eq!(header[5], 0x12);
+    }
     let mut byte = [0];
     // Forced process termination can close TCP abortively on Windows.
     // Both terminal outcomes prove the peer closed; data/timeouts still fail.
@@ -67,12 +71,17 @@ fn real_worker_disconnect_and_parent_death() {
     let ctx = eframe::egui::Context::default();
     let mut session = Session::new(executable.clone());
     let settings = paired_settings();
-    for _ in 0..2 {
+    // Include a real child waiting indefinitely for phone approval: pending
+    // must not open the pipeline or make parent Stop wait for the 60s deadline.
+    for approval_pending in [false, false, true] {
         let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
-        let server = thread::spawn(move || peer(listener));
+        let server = thread::spawn(move || peer(listener, approval_pending));
         session.start(settings.clone(), None, ctx.clone()).unwrap();
         let started = Instant::now();
-        while !matches!(session.state, State::Waiting) {
+        while !matches!(
+            (&session.state, approval_pending),
+            (State::Waiting, false) | (State::ApprovalPending(_), true)
+        ) {
             session.poll(&ctx);
             assert!(
                 started.elapsed() < Duration::from_secs(3),
@@ -92,7 +101,7 @@ fn real_worker_disconnect_and_parent_death() {
         server.join().unwrap();
     }
     let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
-    let server = thread::spawn(move || peer(listener));
+    let server = thread::spawn(move || peer(listener, false));
     let mut parent = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "abrupt_parent_fixture", "--nocapture"])
         .env("MW_TEST_PARENT_EXECUTABLE", &executable)

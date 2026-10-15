@@ -34,7 +34,16 @@ class ClientStore(context: Context, namespace: String = "client_authorization") 
     }
 
     private fun load(): ByteArray? {
-        if (!prefs.contains(RECORD)) return null
+        if (!prefs.contains(RECORD)) {
+            // SharedPreferences can report missing after XML loss. An existing
+            // namespace key proves this was not a pristine, never-written list.
+            synchronized(keyLock) {
+                check(!KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.containsAlias(alias)) {
+                    "authorization record is missing but its encryption key remains; recovery required"
+                }
+            }
+            return null
+        }
         val encoded = checkNotNull(prefs.getString(RECORD, null)) { "invalid stored authorization type" }
         require(encoded.length <= 2048) { "encrypted authorization list exceeds limit" }
         val bytes = Base64.decode(encoded, Base64.NO_WRAP)

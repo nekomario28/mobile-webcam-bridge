@@ -2,8 +2,11 @@
 
 Scope: the transition from published releases that used unauthenticated
 plaintext Wi-Fi (Android APK 0.1.4 and desktop 0.2.0) to the secure Wi-Fi
-implementation. USB/AOA framing is unchanged by this migration. The
-protocol detail lives in [wire-secure-lan.md](../protocol/wire-secure-lan.md);
+implementation. The TLS-only migration left USB behavior unchanged; the
+**current integration build additionally requires per-PC authorization v2 on
+both transports**. Older clients, including classic Qt on USB, cannot use that
+build. See [per-PC authorization](per-pc-authorization.md) before mixing APKs
+and hosts. The TLS protocol detail lives in [wire-secure-lan.md](../protocol/wire-secure-lan.md);
 the security posture and its open gates live in [security.md](security.md).
 
 ## What changes on the wire
@@ -21,20 +24,24 @@ Wi-Fi path.
 | Android app | Desktop host | Wi-Fi | USB |
 | --- | --- | --- | --- |
 | 0.1.4 and earlier (plaintext listener) | published 0.2.0 Rust host (plaintext) | works, unauthenticated | works |
-| 0.1.4 and earlier | secure Rust host | **no** — the host requires TLS | works |
-| secure build | any plaintext host (0.2.0 Rust, classic C++/Qt) | **no** — the phone is TLS-only | works |
-| secure build | secure Rust host | works, pairing required | works |
+| 0.1.4 and earlier | TLS-only Rust host | **no** — the host requires TLS | works |
+| TLS-only build | any plaintext host (0.2.0 Rust, classic C++/Qt) | **no** — the phone is TLS-only | works |
+| TLS-only build | TLS-only Rust host | works, pairing required | works |
+| authorization-v2 build | any pre-auth host | **no** | **no** |
+| any pre-auth Android build | authorization-v2 Rust host | **no** | **no** |
+| authorization-v2 build | authorization-v2 Rust host | TLS pairing + PC approval | PC approval, no QR |
 
 The classic C++/Qt host cannot connect to the TLS-only Android listener
-until a separately reviewed secure update exists.
+until a separately reviewed update exists; it also lacks the new USB authorization
+exchange.
 
 ## Upgrade order
 
 There is no interop window between the plaintext and TLS Wi-Fi protocols:
 
 1. Update the Android app and the desktop host together.
-2. If one side ships first, keep the other on its last working version
-   and use USB until both are updated.
+2. Keep both on a matching generation until both are available. USB is only an
+   interim option for the TLS-only migration, not across the mandatory v2 gate.
 3. The first Wi-Fi connection after both sides are updated requires
    pairing (below).
 
@@ -49,15 +56,17 @@ specifically in the desktop UI with the matching next step.
 
 ## Credential rotation
 
-**Revoke all paired PCs** on the phone rotates the access key and
-disconnects every desktop; all desktops must re-pair. Per-PC revocation
-is future work, so one lost key means global rotation.
+**Rotate Wi-Fi access key** changes the shared key and disconnects Wi-Fi
+clients. All need the new key. In v2, their per-PC grants remain separately
+managed under **Authorized PCs**; use that surface to revoke an individual PC.
+A leaked bootstrap key still needs rotation even after individual revocation.
 
 ## Rollback
 
 Downgrading either side alone breaks Wi-Fi. To roll back, downgrade both
 the Android app and the desktop host to the same plaintext generation.
-USB keeps working in every combination.
+USB works across the older TLS-only migration, but does **not** bypass v2
+compatibility or approval requirements.
 
 ## Wire protocol versioning rules
 

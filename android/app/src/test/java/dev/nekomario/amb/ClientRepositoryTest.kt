@@ -119,7 +119,8 @@ class ClientRepositoryTest {
         val id = ClientAuthorization.deriveClientId(publicKey)
         val allowed = "日".repeat(10)
         assertEquals(allowed, ClientAuthorization.approve(emptyList(), id, publicKey, allowed, now)!!.single().label)
-        for (label in listOf("日".repeat(11), "a".repeat(33), "", "\nAdmin", "\u202eAdmin", "\ud800")) {
+        assertTrue(ClientAuthorization.validLabel("camera-猫\uD83D\uDE3A"))
+        for (label in listOf("日".repeat(11), "a".repeat(33), "", "\nAdmin", "\u202eAdmin", "pc\uDB40\uDC01", "pc\uDB40\uDC20", "pc\u2028", "pc\u2029", "\ud800")) {
             assertNull("reject unsafe/oversize label", ClientAuthorization.approve(emptyList(), id, publicKey, label, now))
         }
     }

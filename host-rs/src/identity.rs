@@ -1,8 +1,8 @@
 //! This PC's own identity, for the per-PC authorization in
 //! [per-PC authorization](../../docs/per-pc-authorization.md).
 //!
-//! The pairing key is a bearer token: whoever holds it connects. A PC identity
-//! is the opposite — the phone stores the *public* half and can revoke one PC
+//! The Wi-Fi bearer key only admits a peer to the mandatory proof gate. A PC identity
+//! proves possession of a separately stored signing key — the phone stores the *public* half and can revoke one PC
 //! without touching the others. This module owns the private half.
 //!
 //! Signing uses `ring`, already in the dependency tree through rustls. The

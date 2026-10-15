@@ -66,6 +66,11 @@ class FramedOutbound(
         Frame(request.copy(type = Wire.TYPE_PONG, payloadLength = payload.size), payload),
     )
 
+    fun sendAuthorization(type: Byte, payload: ByteArray) {
+        require(type == Wire.TYPE_CLIENT_CHALLENGE || type == Wire.TYPE_CLIENT_AUTH_RESULT)
+        sendControl(type, payload)
+    }
+
     fun sendCapabilities(capabilities: Wire.Capabilities) = sendControl(
         Wire.TYPE_QUALITY_CAPABILITIES, Wire.encodeCapabilities(capabilities),
     )

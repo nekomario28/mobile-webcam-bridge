@@ -8,16 +8,22 @@ with a pinned phone certificate and 128-bit access key. The latest published
 release may still use **unauthenticated plaintext Wi-Fi**; do not expose it to
 untrusted networks. See [security details](docs/security.md) and
 [migrating to secure Wi-Fi](docs/migration-tls-wifi.md) before upgrading.
+Integration development builds also require [per-PC approval](docs/per-pc-authorization.md)
+on both transports. Upgrade Android and the Rust host together; older hosts,
+including classic Qt on USB, do not implement that gate. This auth work remains
+unreviewed and is not a release-readiness claim.
 
 [Download](https://github.com/nekomario28/mobile-webcam-bridge/releases/latest)
 the Android APK and the desktop app for your OS.
 
 1. Open Mobile Webcam on your phone and PC.
 2. Choose USB or Wi-Fi on both. For a TLS-capable development build, tap
-   **Show Wi-Fi pairing details** on the phone and enter its certificate SHA-256
+   **Show pairing key** on the phone and enter its certificate SHA-256
    fingerprint and 128-bit access key in the desktop Wi-Fi fields. Verify the
    fingerprint directly on the phone before pressing **Connect**.
-3. Press **Start camera** on the phone and allow camera access.
+3. In authorization-v2 development builds, match the PC ID and approve that PC
+   on the phone first (USB needs no QR). Then press **Start camera** on the phone
+   and allow camera access. Approval alone never starts capture.
 4. Select **Mobile Webcam** in your camera application.
 
 Windows: run **Setup.exe** once to install the virtual camera. The ZIP is

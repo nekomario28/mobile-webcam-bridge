@@ -136,6 +136,7 @@ fn peer(case: Case) -> (String, Peer) {
         let mut stream = phone_tls(stream);
         assert_eq!(read(&mut stream).0, wire::HELLO);
         stream.write_all(&bytes(wire::HELLO_ACK, &[], 1)).unwrap();
+        common::authorize_tls(&mut stream, true);
         assert_eq!(read(&mut stream).0, wire::IDR_REQUEST);
         // The stream is configured before advertising: Apply cannot hide
         // behind the previous 120-second established-stream receive.

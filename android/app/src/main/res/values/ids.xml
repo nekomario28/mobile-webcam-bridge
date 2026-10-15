@@ -5,4 +5,8 @@
     <item name="lan_mode" type="id" />
     <item name="camera_action" type="id" />
     <item name="details_action" type="id" />
+    <item name="client_request" type="id" />
+    <item name="allow_client" type="id" />
+    <item name="deny_client" type="id" />
+    <item name="authorized_clients" type="id" />
 </resources>

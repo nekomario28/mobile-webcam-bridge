@@ -2,104 +2,107 @@
 
 Requested scope: real identity/list persistence, phone approval/revocation UI,
 and mandatory camera/control authorization over both USB and pinned TLS Wi-Fi.
-This is not complete until all three slices below are integrated. No merge or
-release is authorized by tests alone; the earlier independent static transport
-review does not cover this protocol. Do not launch another independent model
-review under the previously exhausted one-review authorization.
+All three are implemented in the integration worktree. Local mechanical gates
+pass; the new production-Activity/emulator gate still needs runtime evidence.
+No merge or release is authorized by tests alone. The earlier independent static
+transport review does not cover this protocol, stores or UI. Do not launch another
+independent model review under the exhausted one-review authorization.
 
 ## Preserved contracts
 
 - Phone owns approval and first camera start; PC owns quality selection.
 - No auto-approval or bearer-key fallback, including an empty phone list.
-- USB bootstrap needs no QR. USB descriptor strings are claimed metadata, not
-  identities and not a reason to inherit camera consent.
-- Retain pinned TLS and its access key for Wi-Fi bootstrap. Do not invent short
-  comparison codes or weaken pin verification.
-- One owner for approval state, shared by USB and Wi-Fi. One bounded pending
-  request tied to its live session; stale UI actions must not approve a new one.
-- Persist before granting. Corruption/read/write failure must never create a new
-  identity or an empty successful authorization list. Report errors explicitly.
-- Preserve quality transaction deadlines, Stop responsiveness and output-based
-  Applied confirmation. No automatic retry or recovery.
+- USB needs no QR. Descriptors are claimed metadata, not identity or camera
+  consent; USB has no cryptographic phone attestation or active-relay guarantee.
+- Retain pinned TLS and its access key for Wi-Fi bootstrap. LAN proofs also bind
+  that pinned phone certificate. Do not invent short-code security or weaken pins.
+- One approval owner across both transports. A bounded pending request belongs
+  to its exact live session; stale UI actions cannot approve a replacement.
+- Persist before granting. Corrupt/read/write-failed storage must not silently
+  rotate identity or publish an empty successful list. Failures stop access.
+- Preserve quality deadlines, responsive Stop and output-based Applied. A grant
+  never starts the camera; no automatic proof retry, renewal or recovery.
 
-## Slices and acceptance
+## Implemented slices and their gates
 
-### 1. Persistence boundary — implemented, platform runtime checks pending
+### 1. Persistence — platform checkpoint verified
 
-Host: stable P-256 identity stored beside user settings. Unix uses restrictive
-files and atomic no-replace publication; Windows stores only user-scope DPAPI
-ciphertext. Concurrent first-use processes must return the same identity.
-Missing, corrupt, unreadable and write-failed are different outcomes; no silent
-rotation. Reuse existing DPAPI rather than creating another FFI owner.
+The host stores a stable per-user P-256 identity beside settings, with Unix
+private-file checks and atomic no-replace publication. Windows reuses the
+existing user-scope DPAPI owner. Concurrent first-use processes return the same
+published key. Phone records are bounded, immutable and validated, protected by
+separate Keystore AES-GCM storage. Failed writes latch the repository closed;
+failed revocation is not represented as durable success.
 
-Phone: bounded, validated versioned list codec and a transactional repository,
-with Android Keystore AES-GCM persistence. Derive client ID from stored public
-key; preserve immutable key bytes. Enforce UTF-8 byte bounds and approval/expiry
-limits. Failed writes latch the repository closed rather than publishing grants.
-Use instrumentation to check real Keystore round trips and tamper rejection;
-pure JVM tests alone do not verify the Android storage provider.
+At `99a8e8a5a9c885143c7aa5b5546e73de99573448`, all six workflows succeeded.
+Rust run `38764092374` executed native Windows identity reload, concurrency,
+corruption and invalid-destination tests. Emulator run `38764092451` reported the
+semantic storage/TLS/signature PASS marker. Those results belong to that storage
+checkpoint, not to the later integrated gate/UI revision.
 
-Done when real filesystem/DPAPI tests, pure repository/codec tests and Android
-storage instrumentation exist and their executed/unexecuted evidence is named.
-Persistence is not startup integration until slice 3 consumes it.
+The newer adapter also refuses a lost record when its Keystore alias survives;
+that native conformance case requires the new emulator run, not inference from
+previous storage CI.
 
-### 2. Approval and revocation surface — not started
+### 2. Approval and revocation — implemented, runtime/visual gate pending
 
-Phone lists trusted IDs and explicitly untrusted labels, status/expiry, revoke
-and explicit renew actions. Pending approve/reject controls belong to one
-session, with storage errors shown in-place. Never show success if persistence
-failed. PC reports pending/authorized/expired/rejected and permits Stop while
-waiting. Approval does not itself start the camera.
+The real Activity displays explicitly unverified names and full PC IDs, allows
+or rejects the exact pending session, and lists saved IDs/expiry with confirmed
+renew/revoke actions. A storage failure stops connections and is not shown as
+successful revocation. The desktop displays its full ID while pending and keeps
+Stop independent of phone interaction.
 
-Gate: EN/JA, narrow/scaled screenshots and real control actions that change the
-persisted state. Discover the available gxkit/browser/Android capture tools;
-compilation or state fixtures alone are not visual acceptance. If an unbiased
-screenshot check cannot be run under the current review authorization, name that
-unverified boundary rather than declaring UI acceptance.
+The API 35 conformance harness uses independent Java keys, the real Activity /
+LanServer / ClientStore, injected pointer events, persisted-state assertions,
+live socket effects and screenshots. It covers EN/JA, narrow/scaled layouts,
+approve/reconnect/renew/revoke/reject, camera remaining stopped, and storage-failed
+startup. It requires an explicitly disposable fresh emulator profile, restores
+locale/font/window/mode settings and removes its own temporary grants.
 
-### 3. Wire proof and shared session gate — not started
+`gxkit` is installed and its tool inventory was inspected. It checks declared
+artifacts; it is not an Android interaction/capture driver. This gate instead
+uses Android instrumentation and UiAutomation. Executing the harness and
+inspecting its screenshots are separate from compiling it. Any unavailable
+unbiased visual review remains named, not silently replaced by implementer
+inspection or fixture snapshots.
 
-Hard cutover for the unreleased auth scaffolding: no v1-auth compatibility
-wrapper, no timeout-based feature detection. Keep quality's own wire contract
-independent. Define public-key transfer plus a domain-separated transcript bound
-to a fresh single-use per-session challenge, transport and label. Check exact
-header bounds before allocation and strict UTF-8/result combinations in both
-languages; pin one canonical fixture consumed by both.
+### 3. Wire proof and shared gate — implemented, local checks pass
 
-Phone session state owns challenge, proof, pending and granted state. Both
-inbound capture commands and outbound video submission check it, including stale
-callbacks, expiry and live revocation. The Activity cannot bypass it. Reject old
-clients instead of falling back. Describe USB's lack of protection from an active
-physical intermediary honestly.
+[Authorization v2](../../protocol/client-authorization-v2.md) is the wire owner:
+public-point enrollment and a domain-separated proof bound to transport, phone
+binding, one-use nonce, point and label. The unshipped v1 prototype is removed;
+older peers fail rather than downgrade. Shared binary frames and transcript
+fixtures are consumed by Rust, Kotlin and native instrumentation.
 
-Gate: real TLS/socket peer tests for pending approval, explicit approval/reject,
-wrong key/ID, changed transcript, replay, storage failure, expiry while streaming,
-live revoke, old-peer rejection and Stop during pending/partial frames. Exercise
-production entry points, not just the pure model. Android emulator verifies
-actual server dispatch/storage; physical USB and native consumers remain separate
-acceptance gates.
+`PhoneAuthorization` owns challenge/proof/pending/authorized state and deadlines;
+`AuthorizedMediaSession` enforces inbound and outbound access for both transports.
+The Activity cannot grant access by starting Camera2. Revoke/expiry/clock reversal
+and repository failure close active access independently of UI/reader ticks.
+Host startup loads its identity and finishes proof before opening decoder/output.
 
-## Evidence and continuation
+Local checks for this integration include the Kotlin suite (with Activity and
+instrumentation artifact checks), Rust default/no-default/capture suites,
+TLS/socket/subprocess peers, strict clippy in all three configurations, formatting,
+diff checks and Windows no-default all-target cross-compilation. A label-policy
+regression went red on both implementations before scalar-based repair: Kotlin
+accepted supplementary invisible tags and Rust accepted format controls. An
+abandoned-prompt cooldown regression also failed before repair. Omitting the
+phone binding from the Rust transcript failed its wrong-phone signature check;
+bypassing the common Android permission check failed three socket/capture cases.
+Both injected mutations were restored; rerun positive gates on the restored tree. These
+checks do not establish native Android UI behavior or native Windows consumer use.
 
-Base: `1b94c803982bfcedf8404b4945deb491258d3133`. Its crypto regression checks
-are not evidence for this feature's new persistence or session enforcement.
+## Remaining acceptance and follow-through
 
-Storage pass: local Kotlin suite (including instrumentation source compilation),
-Rust default/no-default/capture suites and strict clippy, fmt, diff checks, and
-Windows no-default cross-target compilation pass. Real Unix file tests exercise
-concurrent creation and protected reads. Substituting an overwriting rename for
-no-replace publication fails the concurrency test; exposing mutable key bytes
-or disabling label checks fails the Kotlin repository tests. Android Keystore
-storage and Windows DPAPI runtime checks have been added to existing CI but are
-not yet confirmed for this pass.
+- Run the new exact-revision Android/Windows workflows; require semantic outcomes
+  and source/APK provenance, not green icons alone. Publish exact evidence on
+  Draft PR #11 and tracking issue #10.
+- Inspect EN/JA narrow/scaled captures and the action/storage/socket assertions.
+  Do not call screenshots independent visual acceptance without that review.
+- Keep independent authorization-design review and physical USB/Camera2/native
+  consumer acceptance as separate, unpassed merge/release gates.
+- Explicit identity recovery UX is follow-up work. Preserve failed records and
+  report unavailable storage rather than automatically reset or rotate keys.
 
-### Next Agent Prompt
-
-Continue with the public-key transfer and phone-owned transcript/session state
-from slice 3, then wire the slice 2 approval surface and both production
-transports together. A usable pending request depends on that session owner;
-do not add a disconnected list UI or enable a gate without a way to approve.
-Use the new stores instead of reintroducing callback-only persistence. Verify
-slice 1's native CI results as they arrive, and keep the PR Draft. The requested
-feature is unfinished until UI, live revocation and mandatory gates consume the
-stores in both transports. See [choices](choices.md) for current trade-offs.
+See [choices](choices.md) for design trade-offs and
+[the user/security contract](../../docs/per-pc-authorization.md) for behavior.

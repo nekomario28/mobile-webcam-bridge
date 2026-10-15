@@ -27,7 +27,7 @@ class QualitySessionTest {
                     listOf(CaptureModes.SizeFps(1920, 1080, null)), listOf(CaptureModes.FpsRange(30, 30)))).single()
                 val caps = Wire.Capabilities(1, Wire.PERMISSION_READY, 7, 40, listOf(Wire.QualityMode(1920, 1080, 30, mode.bitrate)))
                 lateinit var controller: PhoneQualityController
-                val session = LanSession(listener.accept(), { _, _ -> }, { caps }, { _, command -> controller.handle(command) })
+                val session = ClientWireFixture.session(listener.accept(), { caps }, { _, command -> controller.handle(command) })
                 controller = PhoneQualityController(session, { 7 }, { listOf(mode) }, { true }, { true }, { true },
                     stopCapture = { stops.incrementAndGet() },
                     startCapture = { actual ->
@@ -37,6 +37,7 @@ class QualitySessionTest {
                     }, startingEpoch = 40)
                 try {
                     session.start()
+                    ClientWireFixture.authorize(client)
                     assertEquals(Wire.TYPE_QUALITY_CAPABILITIES, Wire.readFrame(client.getInputStream()).first.type)
                     val prepare = Wire.encodePrepareQuality(Wire.PrepareQuality(1, 7, 1920, 1080, 30))
                     send(client, Wire.TYPE_PREPARE_QUALITY, prepare)
@@ -80,11 +81,12 @@ class QualitySessionTest {
                 val mode = CaptureModes.supported(CaptureModes.Capabilities("0", "fixture",
                     listOf(CaptureModes.SizeFps(1280, 720, null)), listOf(CaptureModes.FpsRange(30, 30)))).single()
                 lateinit var controller: PhoneQualityController
-                val session = LanSession(listener.accept(), { _, _ -> }, onQuality = { _, command -> controller.handle(command) })
+                val session = ClientWireFixture.session(listener.accept(), onQuality = { _, command -> controller.handle(command) })
                 controller = PhoneQualityController(session, { 7 }, { listOf(mode) }, { allowed }, { true }, { false },
                     stopCapture = {}, startCapture = { starts.incrementAndGet() }, nowMillis = { now })
                 try {
                     session.start()
+                    ClientWireFixture.authorize(client)
                     send(client, Wire.TYPE_PREPARE_QUALITY, Wire.encodePrepareQuality(Wire.PrepareQuality(1, 7, 1280, 720, 30)))
                     assertEquals(QualitySwitch.REASON_PERMISSION, Wire.decodeQualityResult(Wire.readFrame(client.getInputStream()).second).reason)
                     assertEquals(0, starts.get())
@@ -160,11 +162,12 @@ class QualitySessionTest {
                 val mode = CaptureModes.supported(CaptureModes.Capabilities("0", "fixture",
                     listOf(CaptureModes.SizeFps(1280, 720, null)), listOf(CaptureModes.FpsRange(30, 30)))).single()
                 lateinit var controller: PhoneQualityController
-                val session = LanSession(listener.accept(), { _, _ -> }, onQuality = { _, command -> controller.handle(command) })
+                val session = ClientWireFixture.session(listener.accept(), onQuality = { _, command -> controller.handle(command) })
                 controller = PhoneQualityController(session, { 7 }, { listOf(mode) }, { true }, { true }, { false },
                     stopCapture = { clear -> cleared = clear }, startCapture = { error("PC started idle camera") }, nowMillis = { now })
                 try {
                     session.start()
+                    ClientWireFixture.authorize(client)
                     send(client, Wire.TYPE_PREPARE_QUALITY, Wire.encodePrepareQuality(Wire.PrepareQuality(1, 7, 1280, 720, 30)))
                     assertEquals(Wire.RESULT_STAGED, Wire.decodeQualityResult(Wire.readFrame(client.getInputStream()).second).status)
                     now = 600000; controller.tick(); assertEquals(mode, controller.stagedMode)

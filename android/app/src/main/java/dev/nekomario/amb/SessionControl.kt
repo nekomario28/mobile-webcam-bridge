@@ -14,6 +14,10 @@ class SessionControl(
 
     fun readAndDispatch(input: InputStream) {
         val (header, payload) = Wire.readHostFrame(input)
+        dispatch(header, payload)
+    }
+
+    fun dispatch(header: Wire.Header, payload: ByteArray) {
         when (header.type) {
             Wire.TYPE_PING -> {
                 val now = System.nanoTime()
@@ -28,6 +32,7 @@ class SessionControl(
             Wire.TYPE_VIDEO_IDR_REQUEST -> outbound.forceRecovery()
             Wire.TYPE_PREPARE_QUALITY -> onQuality(Wire.HostCommand.Prepare(Wire.decodePrepareQuality(payload)))
             Wire.TYPE_COMMIT_QUALITY -> onQuality(Wire.HostCommand.Commit(Wire.decodeEpoch(payload)))
+            else -> error("unexpected authenticated host command")
         }
     }
 }

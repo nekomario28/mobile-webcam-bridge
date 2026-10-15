@@ -41,6 +41,8 @@ class MainActivity : Activity() {
     private var connectionMode = ConnectionMode.USB
     private var accessoryFd: ParcelFileDescriptor? = null
     private var session: MediaSession? = null
+    private var authorizationOwner: PhoneAuthorization? = null
+    private lateinit var approvalUi: ClientApprovalUi
     private var lanServer: LanServer? = null
     private var capabilityRevision = 0
     @Volatile private var advertisedCapabilities: Wire.Capabilities? = null
@@ -199,18 +201,18 @@ class MainActivity : Activity() {
             }
         }
         rotateAction = Button(this).apply {
-            text = ui("Revoke all paired PCs", "登録PCをすべて失効")
+            text = ui("Rotate Wi-Fi access key", "Wi-Fi接続キーを変更")
             setAllCaps(false)
             visibility = View.GONE
             setOnClickListener {
                 AlertDialog.Builder(this@MainActivity)
-                    .setTitle(ui("Revoke all Wi-Fi connections?", "すべてのWi-Fi接続を失効しますか？"))
+                    .setTitle(ui("Rotate the Wi-Fi access key?", "Wi-Fi接続キーを変更しますか？"))
                     .setMessage(ui(
-                        "Every PC using the current key will disconnect and must be paired again.",
-                        "現在のキーを使うPCはすべて切断され、再ペアリングが必要になります。"
+                        "Wi-Fi clients will disconnect and need the new key. Per-PC grants remain; remove them under Authorized PCs.",
+                        "Wi-Fi接続を切断し、新しいキーが必要になります。PCの許可は残ります。取り消すには「許可したPC」を開いてください。"
                     ))
                     .setNegativeButton(ui("Cancel", "キャンセル"), null)
-                    .setPositiveButton(ui("Revoke", "失効")) { _, _ ->
+                    .setPositiveButton(ui("Rotate key", "キーを変更")) { _, _ ->
                         runCatching {
                             lanIdentity?.rotate()
                             lanServer?.close()
@@ -225,6 +227,11 @@ class MainActivity : Activity() {
                     .show()
             }
         }
+        approvalUi = ClientApprovalUi(this, { authorizationOwner }, { session }, {
+            stopConnections()
+            show(ui("Approval action failed. Connection stopped; changes may not have been saved.",
+                "承認操作に失敗しました。接続を停止しました。変更は保存されていない可能性があります。"))
+        }, ::ui)
         val root = ScrollView(this).apply {
             setBackgroundColor(getColor(R.color.app_background))
             isFillViewport = true
@@ -237,6 +244,7 @@ class MainActivity : Activity() {
                     addView(usbMode, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginEnd = dp(4) })
                     addView(lanMode, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginStart = dp(4) })
                 })
+                addView(approvalUi.root, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(cameraButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(12) })
                 addView(cameras, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(pairAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
@@ -275,6 +283,14 @@ class MainActivity : Activity() {
             registerReceiver(permissionReceiver, filter)
         }
         receiverRegistered = true
+        authorizationOwner = try {
+            PhoneAuthorization(ClientStore(this).repository, onStorageFailure = {
+                handler.post { authorizationStorageFailed() }
+            })
+        } catch (_: Exception) {
+            authorizationStorageFailed()
+            return
+        }
         if (getSharedPreferences("settings", MODE_PRIVATE).getString("connectionMode", "USB") == "LAN") {
             startLanMode()
         } else {
@@ -356,15 +372,37 @@ class MainActivity : Activity() {
     }
 
     private fun onQualityCommand(origin: MediaSession, command: Wire.HostCommand) {
-        runOnUiThread {
-            if (session !== origin) return@runOnUiThread
+        handler.post {
+            if (session !== origin || origin.clientAuthorization?.isAuthorized() != true) return@post
             qualityController?.handle(command)
             handler.removeCallbacks(qualityDeadlineRunnable)
             if (qualityController?.pending == true) handler.postDelayed(qualityDeadlineRunnable, 250)
         }
     }
 
+    private fun onAuthorizationChanged(origin: MediaSession) {
+        handler.post {
+            if (session !== origin || isFinishing || isDestroyed) return@post
+            if (origin.clientAuthorization?.isAuthorized() == true) {
+                show(ui("PC authorized\nPress Start camera", "PCを許可しました\n「カメラ開始」を押してください"))
+            } else {
+                stopCamera()
+                show(ui("PC authorization required", "PCの接続許可が必要です"))
+            }
+        }
+    }
+
+    private fun authorizationStorageFailed() {
+        stopConnections()
+        val previous = authorizationOwner
+        authorizationOwner = null
+        previous?.close()
+        show(ui("Authorization storage unavailable. Access stopped; no data was reset.",
+            "承認データを読み書きできません。接続を停止しました。データの初期化はしていません。"))
+    }
+
     private fun startUsbMode() {
+        if (authorizationOwner == null) return
         if (connectionMode == ConnectionMode.USB && (session != null || usbPermissionRequest != null || cameraStartRequested)) return
         handler.removeCallbacks(rediscoverRunnable)
         stopCamera()
@@ -385,6 +423,7 @@ class MainActivity : Activity() {
     }
 
     private fun startLanMode() {
+        val authorization = authorizationOwner ?: return
         if (connectionMode == ConnectionMode.LAN && lanServer != null) return
         handler.removeCallbacks(rediscoverRunnable)
         stopCamera()
@@ -401,11 +440,13 @@ class MainActivity : Activity() {
         lateinit var server: LanServer
         server = LanServer(
             identity = identity,
+            authorization = authorization,
+            onAuthorization = ::onAuthorizationChanged,
             onSession = { lanSession, connected ->
-                runOnUiThread {
+                handler.post {
                     if (lanServer !== server) {
                         if (connected) lanSession.close()
-                        return@runOnUiThread
+                        return@post
                     }
                     if (!connected) {
                         // Only the currently displayed session may clear the UI.
@@ -416,19 +457,18 @@ class MainActivity : Activity() {
                         }
                     } else if (lanSession.isActive()) {
                         // Ignore a late connect event after that client disconnected.
-                        closeSession(clearStartRequest = false)
+                        closeSession()
                         session = lanSession
                         bindQualitySession(lanSession)
-                        show(ui("PC connected\nPress Start camera", "PC接続済み\n「カメラ開始」を押してください"))
-                        if (cameraStartRequested) startCamera()
+                        show(ui("PC connected\nWaiting for authorization", "PC接続済み\n接続許可を確認しています"))
                     }
                 }
             },
             onStatus = {
-                runOnUiThread { if (lanServer === server && session == null) showLanWaiting() }
+                handler.post { if (lanServer === server && session == null) showLanWaiting() }
             },
             onError = { error ->
-                runOnUiThread { if (lanServer === server && session == null) showLanWaiting(error) }
+                handler.post { if (lanServer === server && session == null) showLanWaiting(error) }
             },
             capabilities = { advertisedCapabilities },
             onQuality = ::onQualityCommand,
@@ -460,7 +500,7 @@ class MainActivity : Activity() {
 
     private fun discoverUsb() {
         handler.removeCallbacks(rediscoverRunnable)
-        if (connectionMode != ConnectionMode.USB || session != null) return
+        if (authorizationOwner == null || connectionMode != ConnectionMode.USB || session != null) return
 
         val accessory = usb.accessoryList?.firstOrNull()
         if (accessory == null) {
@@ -510,13 +550,10 @@ class MainActivity : Activity() {
 
     private fun openAccessory(accessory: UsbAccessory) {
         if (connectionMode != ConnectionMode.USB) return
-        // A *reconnected* accessory must not inherit the previous session's start
-        // consent: the accessory descriptor is a string the PC application sets,
-        // so a different PC can claim the same identity and be granted the same
-        // permission. An initial open keeps a pending intent, because the user
-        // pressed Start before the accessory was ready.
-        val reconnecting = session != null
-        closeSession(clearStartRequest = reconnecting)
+        val authorization = authorizationOwner ?: return
+        // Every physical connection is a fresh consent boundary. A prior Start
+        // intent is never inherited, even after the old session became null.
+        closeSession()
         val pfd = usb.openAccessory(accessory)
         if (pfd == null) {
             show(ui("Could not open USB accessory. Retrying…", "USB accessoryを開けません。再試行します…"))
@@ -529,17 +566,19 @@ class MainActivity : Activity() {
         lateinit var active: AccessorySession
         active = AccessorySession(
             pfd = pfd,
+            authorization = authorization,
+            onAuthorization = ::onAuthorizationChanged,
             capabilities = { advertisedCapabilities },
             onQuality = ::onQualityCommand,
             onProgress = { count ->
-                runOnUiThread {
+                handler.post {
                     if (session === active) {
                         details.text = "USB · control=$count · dropped=${active.droppedVideoFrames()}"
                     }
                 }
             },
             onError = { error ->
-                runOnUiThread {
+                handler.post {
                     if (session === active) {
                         closeSession()
                         show(ui("USB disconnected: $error\nWaiting to reconnect…",
@@ -552,9 +591,7 @@ class MainActivity : Activity() {
         session = active
         bindQualitySession(active)
         active.start()
-        show(ui("USB connected · ${accessory.manufacturer} ${accessory.model}\nPress Start camera",
-               "USB接続済み · ${accessory.manufacturer} ${accessory.model}\nカメラ開始を押してください"))
-        if (cameraStartRequested) startCamera()
+        show(ui("USB attached\nWaiting for PC authorization", "USB接続済み\nPCの接続許可を確認しています"))
     }
 
     private fun showCameras() {
@@ -577,7 +614,7 @@ class MainActivity : Activity() {
 
     private fun startCamera(requestedMode: CaptureModes.CaptureMode? = qualityController?.stagedMode) {
         if (!cameraStartRequested || cameraBridge != null || !foreground) return
-        if (session == null) {
+        if (session?.clientAuthorization?.isAuthorized() != true) {
             cameraStartRequested = false
             showConnectionStatus(ui("Connect the PC, then press Start camera", "PCを接続してからカメラ開始を押してください"))
             return
@@ -636,7 +673,7 @@ class MainActivity : Activity() {
             context = this,
             session = activeSession,
             onStatus = { message ->
-                runOnUiThread {
+                handler.post {
                     if (cameraBridge === bridge) {
                         details.text = message
                         showConnectionStatus(ui("Camera running", "カメラ配信中"))
@@ -644,7 +681,7 @@ class MainActivity : Activity() {
                 }
             },
             onStarted = { config ->
-                runOnUiThread {
+                handler.post {
                     if (cameraBridge === bridge && session === activeSession) {
                         qualityController?.captureStarted(config.size.width, config.size.height, config.fps)
                         advertisedCapabilities = advertisedCapabilities?.copy(streamEpoch = qualityController?.epoch ?: 0)
@@ -652,7 +689,7 @@ class MainActivity : Activity() {
                 }
             },
             onError = { message ->
-                runOnUiThread {
+                handler.post {
                     if (cameraBridge === bridge) {
                         qualityController?.captureFailed()
                         stopCamera()
@@ -687,6 +724,7 @@ class MainActivity : Activity() {
 
     private fun updateControls() {
         for ((button, mode) in listOf(usbMode to ConnectionMode.USB, lanMode to ConnectionMode.LAN)) {
+            button.isEnabled = authorizationOwner != null
             val selected = connectionMode == mode
             button.isSelected = selected
             button.backgroundTintList = ColorStateList.valueOf(getColor(if (selected) R.color.app_accent else R.color.app_inactive))
@@ -700,7 +738,8 @@ class MainActivity : Activity() {
             pairAction.text = ui("Show pairing key", "接続キーを表示")
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
-        cameraButton.isEnabled = session != null || cameraStartRequested
+        cameraButton.isEnabled = session?.clientAuthorization?.isAuthorized() == true || cameraBridge != null || cameraStartRequested
+        if (::approvalUi.isInitialized) approvalUi.refresh()
         cameraButton.backgroundTintList = ColorStateList.valueOf(getColor(if (cameraButton.isEnabled) R.color.app_accent else R.color.app_inactive))
         cameraButton.setTextColor(if (cameraButton.isEnabled) Color.WHITE else getColor(R.color.app_muted))
         cameraButton.text = when {
@@ -777,6 +816,8 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         stopConnections()
+        authorizationOwner?.close()
+        authorizationOwner = null
         if (receiverRegistered) unregisterReceiver(permissionReceiver)
         super.onDestroy()
     }

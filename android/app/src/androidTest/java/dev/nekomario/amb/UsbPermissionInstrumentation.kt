@@ -17,8 +17,11 @@ import java.util.concurrent.TimeUnit
 
 /** Exercises the platform notification boundary without pretending a USB device is attached. */
 class UsbPermissionInstrumentation : Instrumentation() {
+    private var disposableUi = false
+
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
+        disposableUi = arguments?.getString("disposableUi") == "true"
         start()
     }
 
@@ -63,8 +66,13 @@ class UsbPermissionInstrumentation : Instrumentation() {
             modes = listOf(Wire.QualityMode(1280, 720, 30, 6_000_000)),
         )
         var controller: PhoneQualityController? = null
+        // This fixture explicitly approves a valid pending proof. The real
+        // Activity's approval UI is exercised separately; no app bypass flag.
+        val authorization = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = { error("fixture storage failed") })
         val server = LanServer(
             identity = identity,
+            authorization = authorization,
+            onAuthorization = { it.clientAuthorization?.takeIf { gate -> gate.pending() != null }?.approve() },
             port = 48_527,
             onSession = { session, connected ->
                 if (connected) {
@@ -136,6 +144,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
             )
         } finally {
             server.close()
+            authorization.close()
         }
     }
 
@@ -168,6 +177,15 @@ class UsbPermissionInstrumentation : Instrumentation() {
             check(ClientStore(targetContext, namespace).repository.snapshot().isEmpty())
             reloaded.approve(id, publicKey, "studio-pc", now)
             val valid = checkNotNull(prefs.getString(ClientStore.RECORD, null))
+            check(prefs.edit().remove(ClientStore.RECORD).commit())
+            check(runCatching { ClientStore(targetContext, namespace) }.isFailure) {
+                "lost authorization record with a surviving key was treated as first use"
+            }
+            check(keystore.containsAlias(alias) && !prefs.contains(ClientStore.RECORD)) {
+                "lost record/key state was silently repaired"
+            }
+            check(prefs.edit().putString(ClientStore.RECORD, valid).commit())
+            check(ClientStore(targetContext, namespace).repository.snapshot() == reloaded.snapshot())
             val changed = android.util.Base64.decode(valid, android.util.Base64.NO_WRAP)
             changed[changed.lastIndex] = (changed.last().toInt() xor 1).toByte()
             check(prefs.edit().putString(ClientStore.RECORD,
@@ -211,7 +229,12 @@ class UsbPermissionInstrumentation : Instrumentation() {
                 }
             }
         }
-        android.util.Log.i("SecureWifiGate", "PASS Android EC provider signature fixtures")
+        val point = context.assets.open("client-signature-v1.bin").use { it.readBytes() }.copyOfRange(0, 65)
+        val transcript = context.assets.open("client-auth-transcript-v2.bin").use { it.readBytes() }
+        check(Wire.clientAuthMessage(Wire.AUTH_LAN, ByteArray(32) { (it + 32).toByte() }, ByteArray(32) { it.toByte() }, point, "studio-pc").contentEquals(transcript))
+        val usbTranscript = context.assets.open("client-auth-transcript-usb-v2.bin").use { it.readBytes() }
+        check(Wire.clientAuthMessage(Wire.AUTH_USB, ByteArray(32), ByteArray(32) { it.toByte() }, point, "studio-pc").contentEquals(usbTranscript))
+        android.util.Log.i("SecureWifiGate", "PASS Android EC provider signature fixtures and LAN/USB v2 transcripts")
     }
 
     override fun onStart() {
@@ -230,6 +253,12 @@ class UsbPermissionInstrumentation : Instrumentation() {
             context.registerReceiver(receiver, filter)
         }
         try {
+            check(disposableUi && Build.VERSION.SDK_INT >= 35 &&
+                (Build.HARDWARE.contains("ranchu") || Build.PRODUCT.startsWith("sdk_gphone"))) {
+                "Conformance requires an explicitly disposable API 35 emulator (-e disposableUi true)"
+            }
+            check(context.getSharedPreferences("secure_wifi", Context.MODE_PRIVATE).all.isEmpty() &&
+                ClientStore(context).repository.snapshot().isEmpty()) { "Refusing to use an existing app profile" }
             val stale = MainActivity.createUsbPermissionRequest(context, "old-activity")
             val replacement = MainActivity.createUsbPermissionRequest(context, "new-activity")
             check(runCatching { stale.send() }.exceptionOrNull() is PendingIntent.CanceledException) {
@@ -248,11 +277,13 @@ class UsbPermissionInstrumentation : Instrumentation() {
             smokeClientStorage()
             smokeClientSignatures()
             if (Build.VERSION.SDK_INT >= 29) smokeSecureWifi(context)
+            ClientAuthorizationUiInstrumentation(this).run()
             finish(Activity.RESULT_OK, Bundle().apply {
-                putString("stream", "PASS USB permission, encrypted client storage, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection and host handshake\n")
+                putString("stream", "PASS USB permission, encrypted client storage, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection, host handshake, approval UI and live revocation\n")
             })
         } catch (error: Throwable) {
-            finish(Activity.RESULT_CANCELED, Bundle().apply { putString("stream", "FAIL: $error\n") })
+            android.util.Log.e("SecureWifiGate", "Instrumentation failure", error)
+            finish(Activity.RESULT_CANCELED, Bundle().apply { putString("stream", "FAIL: $error\n${error.stackTraceToString()}\n") })
         } finally {
             context.unregisterReceiver(receiver)
         }

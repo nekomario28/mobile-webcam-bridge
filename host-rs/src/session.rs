@@ -19,6 +19,7 @@ use std::{
 pub enum State {
     Idle,
     Connecting,
+    ApprovalPending(String),
     Waiting,
     Streaming,
     Stopping,
@@ -323,6 +324,16 @@ impl Session {
                 match &event {
                     Event::Connecting {} if !stopping => self.state = State::Connecting,
                     Event::Waiting {} if !stopping => self.state = State::Waiting,
+                    Event::AuthorizationPending { client_id } if !stopping => {
+                        if client_id.len() == 32
+                            && client_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                        {
+                            self.state = State::ApprovalPending(client_id.clone());
+                        } else {
+                            self.state = State::Failed("receiver reported an invalid PC ID".into());
+                            finished = true;
+                        }
+                    }
                     Event::Stats {
                         active,
                         submitted,

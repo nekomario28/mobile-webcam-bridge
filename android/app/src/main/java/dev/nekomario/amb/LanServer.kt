@@ -19,67 +19,40 @@ import java.util.concurrent.atomic.AtomicReference
 class LanSession(
     private val socket: Socket,
     private val onClosed: (LanSession, String?) -> Unit,
-    private val capabilities: (() -> Wire.Capabilities?)? = null,
-    private val onQuality: (MediaSession, Wire.HostCommand) -> Unit = { _, _ -> },
-) : MediaSession {
+    authorization: PhoneAuthorization,
+    phoneBinding: ByteArray,
+    onAuthorization: (MediaSession) -> Unit,
+    capabilities: (() -> Wire.Capabilities?)? = null,
+    onQuality: (MediaSession, Wire.HostCommand) -> Unit = { _, _ -> },
+) : AuthorizedMediaSession(socket.getOutputStream(), authorization, Wire.AUTH_LAN, phoneBinding,
+    capabilities, onQuality, onAuthorization, "mwb-lan-writer") {
     private val running = AtomicBoolean(false)
     private val input = socket.getInputStream()
-    private val output = socket.getOutputStream()
-    private val idrRequester = AtomicReference<(() -> Unit)?>(null)
-    private val outbound = FramedOutbound(
-        output = output,
-        onNeedIdr = { idrRequester.get()?.invoke() },
-        onError = { finish(it) },
-        threadName = "mwb-lan-writer",
-    )
     private var readerThread: Thread? = null
 
     fun isActive(): Boolean = running.get()
 
     fun start(onStarted: () -> Unit = {}) {
         if (!running.compareAndSet(false, true)) return
-        outbound.start()
-        // The new APK advertises its capabilities right after pairing; an old
-        // PC ignores the unknown type (spec slice 02).
-        capabilities?.invoke()?.let { outbound.sendCapabilities(it) }
-        onStarted()
-        readerThread = Thread({ readLoop() }, "mwb-lan-reader").also { it.start() }
-    }
-
-    /** Re-advertise after the capability list changes (e.g. permission granted). */
-    override fun updateCapabilities() {
-        capabilities?.invoke()?.let { outbound.sendCapabilities(it) }
-    }
-
-    override fun attachIdrRequester(requester: (() -> Unit)?) {
-        idrRequester.set(requester)
-    }
-
-    override fun beginCapture() = outbound.beginCapture()
-    override fun stopVideo() = outbound.stopVideo()
-    override fun onCodecConfig(config: H264Encoder.CodecConfig, generation: Long) = outbound.setCodecConfig(config, generation)
-    override fun onCameraStarted(config: CameraEncoderSession.ActiveConfig, generation: Long) = outbound.sendVideoConfig(config.size.width, config.size.height, config.fps, config.bitrate, generation)
-    override fun onAccessUnit(unit: H264Encoder.AccessUnit, generation: Long) = outbound.sendAccessUnit(unit, generation)
-    override fun sendQualityResult(result: Wire.QualityResult) = outbound.sendQualityResult(result)
-    override fun pauseQuality(epoch: Wire.Epoch) = outbound.pauseQuality(epoch)
-    override fun droppedVideoFrames(): Long = outbound.droppedVideoFrames.get()
-
-    private fun readLoop() {
         try {
-            val control = SessionControl(outbound, onQuality = { onQuality(this, it) })
-            while (running.get()) control.readAndDispatch(input)
-        } catch (t: Throwable) {
-            if (running.get()) finish(if (t is EOFException) null else t.message ?: t.javaClass.simpleName)
-        } finally {
-            finish(null)
-        }
+            onStarted()
+            startMedia()
+            readerThread = Thread({
+                try {
+                    while (running.get()) readMedia(input)
+                } catch (t: Exception) {
+                    if (running.get()) finish(if (t is EOFException) null else t.message ?: t.javaClass.simpleName)
+                } finally { finish(null) }
+            }, "mwb-lan-reader").also { it.start() }
+        } catch (e: Exception) { finish(e.message ?: "Wi-Fi authorization startup failed") }
     }
+
+    override fun failMedia(reason: String) = finish(reason)
 
     private fun finish(error: String?) {
         if (!running.compareAndSet(true, false)) return
-        idrRequester.set(null)
-        outbound.close()
         runCatching { socket.close() }
+        closeMedia()
         onClosed(this, error)
     }
 
@@ -93,6 +66,8 @@ class LanSession(
 
 class LanServer(
     private val identity: SecureLanIdentity,
+    private val authorization: PhoneAuthorization,
+    private val onAuthorization: (MediaSession) -> Unit,
     private val port: Int = DEFAULT_PORT,
     private val onSession: (LanSession, Boolean) -> Unit,
     private val onStatus: (String) -> Unit,
@@ -171,7 +146,8 @@ class LanServer(
                             onSession(closed, false)
                         }
                         if (!error.isNullOrBlank()) onError(error)
-                    }, capabilities, onQuality)
+                    }, authorization, identity.fingerprint().chunked(2).map { it.toInt(16).toByte() }.toByteArray(),
+                        onAuthorization, capabilities, onQuality)
                     // Parallel handshakes must never seize the same receiver slot.
                     if (!active.compareAndSet(null, session)) {
                         runCatching { socket.close() }

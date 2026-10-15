@@ -35,6 +35,10 @@ pub enum Event {
     },
     Connecting {},
     Waiting {},
+    /// This exact local key is awaiting an explicit tap on the phone.
+    AuthorizationPending {
+        client_id: String,
+    },
     Stats {
         decoded: u64,
         submitted: u64,

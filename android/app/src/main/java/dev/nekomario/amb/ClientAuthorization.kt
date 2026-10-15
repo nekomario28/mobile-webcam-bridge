@@ -7,15 +7,13 @@ import java.security.spec.X509EncodedKeySpec
 /**
  * Which PCs may use this phone's camera, and until when.
  *
- * The phone keeps a list of authorized clients. The physical plug or the
- * pairing bootstrap gets a client *registered*; only an explicit tap on this
- * screen grants it the camera. Nothing here decides on the PC's word: the
- * client ID is derived from the public key the phone stores, and a label the PC
- * proposes is never an identity.
+ * A plug or Wi-Fi bootstrap credential only reaches the proof gate; neither
+ * registers a grant. The stored public key is the identity, never the proposed
+ * label. Explicit phone approval grants connection access, not camera start.
  *
- * The list itself is the security boundary, so the transitions are small and
- * total: every input produces exactly one decision, and every decision is
- * expressible as a new list.
+ * This policy verifies proof/expiry and produces immutable records. Live
+ * challenges belong to PhoneAuthorization; durable publication belongs to
+ * ClientRepository.
  */
 object ClientAuthorization {
     /** Bounds both the phone's storage and the user's review burden. */
@@ -42,7 +40,7 @@ object ClientAuthorization {
     }
 
     /** One authorized PC. The public key is the identity; the label is a
-     * convenience string the PC proposed and the user may edit. */
+     * unverified convenience string proposed by the PC, never an authority. */
     class Client(
         clientId: ByteArray,
         publicKey: ByteArray,
@@ -181,7 +179,14 @@ object ClientAuthorization {
     fun validLabel(label: String): Boolean = label.isNotBlank() &&
         label.toByteArray(Charsets.UTF_8).size <= MAX_LABEL_BYTES &&
         String(label.toByteArray(Charsets.UTF_8), Charsets.UTF_8) == label &&
-        label.none { Character.isISOControl(it) || Character.getType(it) == Character.FORMAT.toInt() }
+        // Iterate Unicode scalars, not UTF-16 halves: supplementary tags are Cf too.
+        label.codePoints().noneMatch {
+            when (Character.getType(it)) {
+                Character.CONTROL.toInt(), Character.FORMAT.toInt(),
+                Character.LINE_SEPARATOR.toInt(), Character.PARAGRAPH_SEPARATOR.toInt() -> true
+                else -> false
+            }
+        }
 
     private fun publicKey(point: ByteArray): java.security.interfaces.ECPublicKey {
         require(point.size == PUBLIC_KEY_BYTES && point[0] == 0x04.toByte()) { "invalid P-256 point encoding" }
@@ -243,10 +248,6 @@ object ClientAuthorization {
             integer(signature.copyOfRange(32, 64))
         return byteArrayOf(0x30, contents.size.toByte()) + contents
     }
-
-    /** The message the wire contract signs: clientId, then nonce, then label. */
-    fun signedMessage(clientId: ByteArray, nonce: ByteArray, label: String): ByteArray =
-        clientId + nonce + label.toByteArray(Charsets.UTF_8)
 
     const val MAX_LABEL_BYTES = Wire.MAX_CLIENT_LABEL
 

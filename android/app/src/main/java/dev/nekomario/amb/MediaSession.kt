@@ -1,6 +1,8 @@
 package dev.nekomario.amb
 
 interface MediaSession : AutoCloseable {
+    /** Absent on a test sink, never an authorization grant. */
+    val clientAuthorization: PhoneAuthorization.Session? get() = null
     fun attachIdrRequester(requester: (() -> Unit)?)
     fun beginCapture(): Long
     fun stopVideo()

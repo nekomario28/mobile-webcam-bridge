@@ -2,8 +2,9 @@
 
 The published v0.2.0 releases used unauthenticated plaintext Wi-Fi. The
 secure-Wi-Fi source branch implements TLS 1.3 with explicit certificate pinning
-and a 128-bit access key. USB/AOA remains unchanged. This feature must not be
-declared fully validated until end-to-end device/Windows/Linux tests pass.
+and a 128-bit access key. The integration branch additionally requires per-PC
+authorization on both USB and Wi-Fi. It is unreviewed and not release-approved;
+end-to-end device/Windows/Linux acceptance still has separate gates.
 The two transports are not interoperable; see
 [migrating to secure Wi-Fi](migration-tls-wifi.md) for the upgrade path.
 
@@ -16,12 +17,12 @@ the handshake signature, the desktop sends an independent random 16-byte
 shared access key inside the TLS-encrypted AMB1 HELLO. The server rejects
 wrong keys before creating a camera session or returning HELLO_ACK.
 
-Use **Show Wi-Fi pairing details** on the phone to obtain the fingerprint and
-secret. Use **Revoke Wi-Fi access key** to rotate the 128-bit access key and
-disconnect an existing session. All desktops using the previous key are
-revoked together. Per-PC identity/signature scaffolding exists, but expiry and
-per-PC revocation are not enforced by either transport; see
-[per-PC authorization](per-pc-authorization.md).
+Use **Show pairing key** on the phone to obtain the fingerprint and secret.
+**Rotate Wi-Fi access key** changes that shared bootstrap credential and
+disconnects Wi-Fi clients; it does not remove per-PC grants. **Authorized PCs**
+provides individual approval expiry, renewal and revocation. Both transports
+require a fresh signed proof; see [per-PC authorization](per-pc-authorization.md)
+and its explicit verification/review boundary.
 No plaintext fallback is provided on the Rust production Wi-Fi path.
 Android 10 (API 29) or newer is required for secure Wi-Fi; USB still works
 on earlier supported Android releases.
@@ -29,8 +30,9 @@ on earlier supported Android releases.
 ## Implemented protections
 
 - The Android reader validates control frame payload length **before**
-  allocation: secure Wi-Fi HELLO carries the 16-byte credential; USB HELLO
-  and IDR_REQUEST carry zero bytes; PING carries eight bytes.
+  allocation, including bounded public-key proofs. USB has no credential HELLO;
+  its per-PC gate precedes any camera/quality control. The exact layout and
+  direction/order rules live in [authorization v2](../protocol/client-authorization-v2.md).
 - The Android outbound writer caps the control queue at 32 frames (the video
   queue already has an independent two-frame bound). On control overflow, the
   active LAN session reports an error and closes.
@@ -50,13 +52,12 @@ on earlier supported Android releases.
 
 ## Outstanding security requirements
 
-This first implementation still has limitations: a single bearer key is
-shared by any PCs that the owner provisions, so one lost key forces global
-rotation rather than per-PC revocation. The design that closes this is in
-[per-PC authorization](per-pc-authorization.md). Isolated identity, signature and
-exchange tests exist, along with host identity and encrypted phone-list storage
-adapters. Enforcement, approval UI and connecting those stores to the transport
-are not implemented, and the authorization design is unreviewed.
+The per-PC protocol and its new persistence/UI/gate have not received an
+independent security review. Test coverage and emulator interaction do not
+replace that review or physical-device/native-consumer acceptance. The shared
+Wi-Fi bootstrap key still needs rotation if disclosed even when individual PC
+grants are revoked. Explicit identity recovery UX and a reviewed, safer pairing
+bootstrap remain follow-up work, not implicit guarantees of these stores.
 
 Desktop settings enforce mode 0600 for Linux files containing a Wi-Fi key
 and store the Windows credential as per-user DPAPI ciphertext in the
@@ -65,12 +66,14 @@ migration and removed once the protected value is successfully saved.
 **Linux mode 0600 is access control, not encryption at rest**; application-
 level encryption or desktop Secret Service integration remains open.
 
-There is no
-client certificate or authenticated device label. The deprecated classic C++
-host cannot connect to the TLS-only Android Wi-Fi listener. A leaked pairing
-key alone does not defeat phone-certificate pinning, but it does authorize an
-attacker who can reach the real TLS server. Remote network flooding, local
-compromise and traffic metadata remain out of scope of TLS guarantees.
+There is no TLS client certificate or authenticated hardware/process label.
+PC identity is a per-user application key, not hardware attestation. LAN proofs
+bind the pinned phone certificate; USB has no cryptographic phone attestation
+and does not claim to defeat an active physical relay. The deprecated classic
+C++ host does not implement v2 authorization, including on USB: upgrade Android
+and the Rust host together. A leaked Wi-Fi pairing key can reach the proof gate
+but alone cannot satisfy it. Remote network flooding, local compromise and
+traffic metadata remain outside TLS guarantees.
 
 **Release gate:** verify AndroidKeyStore TLS signing on physical Android 10+
 devices, Linux and Windows end-to-end consumer frames, incorrect pin, incorrect

@@ -24,19 +24,13 @@ Control space, after the session types; video types (0x10+) untouched.
 | 0x07 | `QUALITY_RESULT` | phone → PC |
 | 0x08 | `PAUSED` | phone → PC |
 | 0x09 | `COMMIT_QUALITY` | PC → phone |
-| 0x0a | `CLIENT_CHALLENGE` | phone → PC |
-| 0x0b | `CLIENT_AUTH` | PC → phone |
-| 0x0c | `CLIENT_AUTH_RESULT` | phone → PC |
 
-The client-authorization types are **prototype codecs, not a complete protocol**.
-A standalone PC exchange is tested against a synthetic TLS peer but is not
-called by connection startup; the production phone sends no challenge.
-Enrollment public-key transfer, transcript binding and allocation limits remain
-unresolved; see [per-PC authorization](../docs/per-pc-authorization.md).
-
-Old peers ignore unknown received types (existing behavior); a new PC sends
-no new command before the capability notification arrives. A phone without
-the extension keeps serving legacy video; no connection error.
+Authorization types `0x0a`–`0x0c` are defined in
+[the mandatory v2 authorization contract](client-authorization-v2.md), not this
+quality extension. Current USB/LAN connections complete that gate first; an
+older pre-auth peer is not compatible. After authorization, the PC waits for
+capabilities before sending any quality command. Lack of quality advertisement
+must never be used as an authorization fallback.
 
 ## Payloads (little-endian)
 
@@ -52,15 +46,6 @@ the extension keeps serving legacy video; no connection error.
   (0 none, 1 permission, 2 foreground, 3 unsupported-mode, 4 stale-revision,
   5 busy, 6 deadline, 7 capture-failed), `u16 appliedWidth`,
   `u16 appliedHeight`, `u16 appliedFps`, `u16 reserved` (14 bytes).
-- `CLIENT_CHALLENGE`: `u8 version`, 32-byte nonce (33 bytes).
-- `CLIENT_AUTH`: `u8 version`, 16-byte clientId, `u8 labelLength`,
-  `labelLength` label bytes (UTF-8, at most 32), 64-byte signature.
-  The prototype signature covers `clientId || nonce || label`. This binds those
-  bytes only; replay resistance requires phone-owned fresh, single-use nonces
-  and session/transcript binding, which are not implemented yet.
-- `CLIENT_AUTH_RESULT`: `u8 status` (0 authorized, 1 pending, 2 rejected),
-  `u8 reason` (0 none, 1 unknown, 2 revoked, 3 expired, 4 too many,
-  5 bad signature), `u32 expiresAtUnixSeconds` (6 bytes).
 - `PAUSED` / `COMMIT_QUALITY`: `u32 requestId`, `u32 streamEpoch` (8 bytes).
 
 ## Limits
@@ -71,7 +56,8 @@ refuses it and the phone answers with a feature-unavailable capability
 notification, disabling only the quality controls while legacy streaming
 continues. Payload length is validated against the count before the list is
 allocated. USB and LAN host-control readers validate the exact quality-command
-length before allocation; those limits do not yet support the auth prototype.
+length before allocation; the same reader also enforces the separate bounded
+authorization payloads.
 A duplicate prepare replays only its reply, never
 capture actions; a pending request cannot be replaced. A commit must name the
 same request and advance the ending epoch by exactly one.
