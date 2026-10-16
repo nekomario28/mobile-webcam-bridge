@@ -8,29 +8,30 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.os.Handler
 import android.os.HandlerThread
-import android.util.Range
 import android.util.Size
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Owns Camera2 -> MediaCodec Surface for one video session. */
+/** Owns Camera2 -> MediaCodec Surface for one resolved video session. */
 class CameraEncoderSession(
     private val context: Context,
     private val requested: Request,
     private val listener: Listener,
+    /**
+     * The producer's own view of whether capture is still permitted, checked on
+     * the camera thread. A Camera2 callback that arrives after authorization
+     * ended must not install repeating capture (AUTHREV-001).
+     */
+    private val authorized: () -> Boolean = { true },
 ) : AutoCloseable {
     data class Request(
-        val cameraId: String,
-        val width: Int = 1280,
-        val height: Int = 720,
-        val fps: Int = 30,
-        val bitrate: Int = 6_000_000,
+        val mode: CaptureModes.CaptureMode,
     )
 
     data class ActiveConfig(
         val cameraId: String,
         val size: Size,
         val fps: Int,
-        val aeFpsRange: Range<Int>?,
+        val aeFpsRange: CaptureModes.FpsRange?,
         val bitrate: Int,
     )
 
@@ -54,17 +55,15 @@ class CameraEncoderSession(
         check(!closed.get()) { "camera session already closed" }
 
         val info = CameraCatalog.enumerate(context)
-            .firstOrNull { it.id == requested.cameraId }
-            ?: error("unknown Camera2 id: ${requested.cameraId}")
-        val size = CameraCatalog.chooseSize(info, requested.width, requested.height)
-            ?: error("camera ${requested.cameraId} exposes no MediaCodec output size")
-        val fpsRange = CameraCatalog.chooseFpsRange(info, requested.fps)
+            .firstOrNull { it.id == requested.mode.cameraId }
+            ?: error("unknown Camera2 id: ${requested.mode.cameraId}")
+        val mode = requested.mode
         activeConfig = ActiveConfig(
-            cameraId = requested.cameraId,
-            size = size,
-            fps = requested.fps,
-            aeFpsRange = fpsRange,
-            bitrate = requested.bitrate,
+            cameraId = mode.cameraId,
+            size = Size(mode.width, mode.height),
+            fps = mode.targetFps,
+            aeFpsRange = mode.aeRange,
+            bitrate = mode.bitrate,
         )
 
         cameraThread.start()
@@ -72,10 +71,11 @@ class CameraEncoderSession(
 
         val newEncoder = H264Encoder(
             H264Encoder.Config(
-                width = size.width,
-                height = size.height,
-                fps = requested.fps,
-                bitrate = requested.bitrate,
+                codecName = mode.codecName,
+                width = mode.width,
+                height = mode.height,
+                fps = mode.targetFps,
+                bitrate = mode.bitrate,
             ),
             listener,
         )
@@ -87,13 +87,14 @@ class CameraEncoderSession(
         }
         encoder = newEncoder
 
-        val manager = context.getSystemService(CameraManager::class.java)
+        val manager = requireNotNull(context.getSystemService(CameraManager::class.java)) { "Camera2 service unavailable" }
         manager.openCamera(
-            requested.cameraId,
+            mode.cameraId,
             object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
-                    if (closed.get()) {
+                    if (closed.get() || !authorized()) {
                         device.close()
+                        if (!closed.get()) close()
                         return
                     }
                     camera = device
@@ -101,13 +102,13 @@ class CameraEncoderSession(
                 }
 
                 override fun onDisconnected(device: CameraDevice) {
-                    listener.onCameraError("camera disconnected: ${requested.cameraId}")
+                    listener.onCameraError("camera disconnected: ${mode.cameraId}")
                     device.close()
                     close()
                 }
 
                 override fun onError(device: CameraDevice, error: Int) {
-                    listener.onCameraError("Camera2 error=$error on ${requested.cameraId}")
+                    listener.onCameraError("Camera2 error=$error on ${mode.cameraId}")
                     device.close()
                     close()
                 }
@@ -125,8 +126,9 @@ class CameraEncoderSession(
             listOf(surface),
             object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
-                    if (closed.get()) {
+                    if (closed.get() || !authorized()) {
                         session.close()
+                        if (!closed.get()) close()
                         return
                     }
                     captureSession = session
@@ -136,7 +138,10 @@ class CameraEncoderSession(
                             set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                             set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                             activeConfig?.aeFpsRange?.let {
-                                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it)
+                                set(
+                                    CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                                    android.util.Range(it.lower, it.upper),
+                                )
                             }
                             if (continuousVideoAf) {
                                 set(

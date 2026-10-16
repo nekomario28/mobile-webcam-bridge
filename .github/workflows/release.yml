@@ -108,3 +108,10 @@ jobs:
             --verify-tag \
             --title "Mobile Webcam $version" \
             --generate-notes
+
+      # The self-hosted runner persists between jobs: never leave the signing
+      # key on its disk after a release, successful or not.
+      - name: Remove the release signing key from the runner
+        if: always()
+        shell: bash
+        run: rm -f build/release.keystore

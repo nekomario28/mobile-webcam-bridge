@@ -4,8 +4,10 @@ mod pixels;
 pub mod transform;
 use crate::{
     control::{self, Command, Event},
+    quality::Action,
+    secure::SecureTcp,
     settings::Settings,
-    transport::{Tcp, Transport},
+    transport::Transport,
     usb::{DeviceId, Usb},
     wire,
 };
@@ -69,11 +71,14 @@ pub fn worker(parent: u32) -> crate::Result<()> {
     let Command::Start { settings, device } = first else {
         return Err("first command must start a session".into());
     };
+    let settings = *settings;
     settings.validate()?;
     let stop = Arc::new(AtomicBool::new(false));
     let changes = Arc::new(Mutex::new(None));
+    let quality_request = Arc::new(Mutex::new(None));
     let thread_stop = stop.clone();
     let thread_changes = changes.clone();
+    let thread_quality = quality_request.clone();
     std::thread::spawn(move || {
         let mut reader = io::stdin().lock();
         loop {
@@ -89,6 +94,9 @@ pub fn worker(parent: u32) -> crate::Result<()> {
                         vertical: vertical_flip,
                     });
                 }
+                Ok(Some(Command::PrepareQuality { width, height, fps })) => {
+                    *thread_quality.lock().unwrap() = Some((width, height, fps));
+                }
                 _ => {
                     thread_stop.store(true, Ordering::Release);
                     break;
@@ -98,9 +106,14 @@ pub fn worker(parent: u32) -> crate::Result<()> {
     });
     let mut stdout = io::stdout().lock();
     control::write(&mut stdout, &Event::Connecting {})?;
-    let result = receive(settings, device, &stop, &changes, |event| {
-        control::write(&mut stdout, &event).map_err(Into::into)
-    });
+    let result = receive(
+        settings,
+        device,
+        &stop,
+        &changes,
+        &quality_request,
+        |event| control::write(&mut stdout, &event).map_err(Into::into),
+    );
     if let Err(error) = &result {
         #[cfg(target_os = "linux")]
         if let Some(denied) = error.downcast_ref::<crate::usb::PermissionDenied>() {
@@ -114,7 +127,9 @@ pub fn worker(parent: u32) -> crate::Result<()> {
         control::write(
             &mut stdout,
             &Event::Error {
-                message: error.to_string().chars().take(2048).collect(),
+                // The frame reader is shared with any protocol, so its message
+                // says "frame"; a user of this app needs to know it was AMB1.
+                message: describe_receive_failure(error.as_ref()),
             },
         )?;
     }
@@ -122,23 +137,87 @@ pub fn worker(parent: u32) -> crate::Result<()> {
     result
 }
 
+/// Put the protocol back into a transport error the user will read.
+fn describe_receive_failure(error: &(dyn std::error::Error + Send + Sync)) -> String {
+    let message = error.to_string();
+    let named = message.replace(
+        "incomplete frame deadline expired",
+        "incomplete AMB1 frame deadline expired",
+    );
+    named.chars().take(2048).collect()
+}
+
 fn receive(
     settings: Settings,
     device: Option<DeviceId>,
     stop: &AtomicBool,
     changes: &Mutex<Option<Transform>>,
-    mut event: impl FnMut(Event) -> crate::Result<()>,
+    quality_request: &Mutex<Option<(u16, u16, u16)>>,
+    event: impl FnMut(Event) -> crate::Result<()>,
 ) -> crate::Result<()> {
-    let mut decoder = decoder::Decoder::open(&settings.decode)?;
+    let mut event = event;
+    // Fail before opening a transport if its stable identity cannot be loaded.
+    let identity = crate::identity::Identity::load_or_create()?;
     let mut transport: Box<dyn Transport> = if settings.transport == "lan" {
-        Box::new(Tcp::connect(
+        Box::new(SecureTcp::connect(
             &settings.lan_host,
             48527,
+            &settings.lan_fingerprint,
+            &settings.lan_key,
             Duration::from_secs(5),
         )?)
     } else {
         Box::new(Usb::connect(&device.ok_or("select a USB device")?)?)
     };
+    let client_id = identity
+        .client_id()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    match crate::client_auth::exchange(
+        transport.as_mut(),
+        &identity,
+        if settings.transport == "lan" {
+            crate::client_auth::Route::Lan {
+                phone_sha256: crate::secure::parse_hex(&settings.lan_fingerprint, 32)?
+                    .as_slice()
+                    .try_into()?,
+            }
+        } else {
+            crate::client_auth::Route::Usb
+        },
+        Duration::from_secs(5),
+        stop,
+        || {
+            event(Event::AuthorizationPending {
+                client_id: client_id.clone(),
+            })
+        },
+    )? {
+        crate::client_auth::Outcome::Authorized { .. } => {}
+        crate::client_auth::Outcome::Rejected(reason) => return Err(reason.into()),
+    }
+    let output_path = settings.output.trim().to_string();
+    receive_stream(
+        settings,
+        transport,
+        stop,
+        changes,
+        quality_request,
+        event,
+        |c| crate::output::Camera::open(&output_path, c.width, c.height, c.fps),
+    )
+}
+fn receive_stream<S: crate::output::Sink>(
+    settings: Settings,
+    mut transport: Box<dyn Transport>,
+    stop: &AtomicBool,
+    changes: &Mutex<Option<Transform>>,
+    quality_request: &Mutex<Option<(u16, u16, u16)>>,
+    mut event: impl FnMut(Event) -> crate::Result<()>,
+    mut create_output: impl FnMut(Config) -> crate::Result<S>,
+) -> crate::Result<()> {
+    let mut decoder = Some(decoder::Decoder::open(&settings.decode)?);
     let idr = transport.send(
         &wire::Frame::new(wire::IDR_REQUEST, 2, Vec::new())?,
         Duration::from_secs(2),
@@ -153,6 +232,15 @@ fn receive(
         }
     }
     event(Event::Waiting {})?;
+    let mut switch = crate::quality::Switch::default();
+    let clock = Instant::now();
+    let now_ms = || clock.elapsed().as_millis() as u64;
+    let mut modes: Vec<crate::quality::Mode> = Vec::new();
+    let mut catalog_revision = 0u16;
+    // A new PC sends no quality command before the advertisement; frames
+    // between PAUSED and the new config are stale by contract.
+    let mut advertised = false;
+    let mut permission = wire::PERMISSION_UNAVAILABLE;
     let mut config = None;
     let mut output = None;
     let mut pixels = pixels::Pixels::default();
@@ -164,13 +252,206 @@ fn receive(
     let mut submitted = 0;
     let mut report = Instant::now() - Duration::from_secs(1);
     while !stop.load(Ordering::Acquire) {
-        let incoming = transport.receive(Duration::from_secs(120))?;
-        if let Some(next) = changes.lock().unwrap().take() {
-            transform = next;
+        // The GUI's apply request; the machine owns one-at-a-time, and the
+        // advertisement gates it (spec slice 02).
+        if let Some((width, height, fps)) = quality_request.lock().unwrap().take() {
+            let rejection = if !advertised {
+                Some("the phone has not advertised its capabilities yet")
+            } else if permission != wire::PERMISSION_READY {
+                Some("camera permission or camera availability is not ready")
+            } else if !modes
+                .iter()
+                .any(|mode| mode.tuple() == (width, height, fps))
+            {
+                Some("the requested quality is not in the advertised camera modes")
+            } else {
+                None
+            };
+            if let Some(reason) = rejection {
+                event(Event::QualityFailed {
+                    reason: reason.into(),
+                    terminal: false,
+                })?;
+                continue;
+            }
+            for action in switch.step(
+                now_ms(),
+                crate::quality::Event::Prepare {
+                    revision: catalog_revision,
+                    width,
+                    height,
+                    fps,
+                },
+            ) {
+                if let Action::SendPrepareQuality {
+                    request_id,
+                    revision,
+                    width,
+                    height,
+                    fps,
+                } = action
+                {
+                    let payload = wire::PrepareQuality {
+                        request_id,
+                        catalog_revision: revision,
+                        width,
+                        height,
+                        target_fps: fps,
+                    }
+                    .encode();
+                    transport.send(
+                        &wire::Frame::new(wire::PREPARE_QUALITY, 0, payload)?,
+                        Duration::from_secs(2),
+                    )?;
+                }
+            }
+        }
+        // The apply deadline fires on the poll/frame cadence even when the
+        // phone stalls (spec slice 02).
+        if switch.busy() {
+            for action in switch.step(now_ms(), crate::quality::Event::DeadlineExceeded) {
+                match action {
+                    Action::ReportFailed { reason } => {
+                        event(Event::QualityFailed {
+                            reason: reason.to_string(),
+                            terminal: true,
+                        })?;
+                    }
+                    Action::StopCapture | Action::CloseConnection => {
+                        return Err(reason_of_expiry());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Poll every stream state, retaining partial frames in the transport.
+        // No long receive can hide Apply, Stop or the monotonic apply deadline.
+        let Some(incoming) = transport.poll_receive(Duration::from_millis(100))? else {
+            continue;
+        };
+        // The quality control plane (slice 02); unknown types keep being
+        // ignored by the VIDEO_AU guard below.
+        let quality_event = match incoming.header.kind {
+            wire::QUALITY_CAPABILITIES => {
+                if incoming.payload.first() != Some(&1) {
+                    continue;
+                }
+                let caps = wire::Capabilities::decode(&incoming.payload)?;
+                switch.step(
+                    now_ms(),
+                    crate::quality::Event::EpochObserved(caps.stream_epoch),
+                );
+                catalog_revision = caps.catalog_revision;
+                advertised = true;
+                permission = caps.permission;
+                modes = caps
+                    .modes
+                    .into_iter()
+                    .map(crate::quality::Mode::from)
+                    .filter(|mode| mode.usable())
+                    .collect();
+                event(Event::QualityCapabilities {
+                    permission: caps.permission,
+                    revision: caps.catalog_revision,
+                    epoch: caps.stream_epoch,
+                    modes: modes.clone(),
+                })?;
+                continue;
+            }
+            wire::QUALITY_RESULT => {
+                let result = wire::QualityResult::decode(&incoming.payload)?;
+                Some(match result.status {
+                    wire::RESULT_SWITCHING | wire::RESULT_STAGED => {
+                        crate::quality::Event::PrepareAccepted {
+                            request_id: result.request_id,
+                            // Only the phone knows whether it is waiting for its
+                            // user. A retained VIDEO_CONFIG cannot answer this.
+                            streaming: result.status == wire::RESULT_SWITCHING,
+                        }
+                    }
+                    wire::RESULT_REJECTED => crate::quality::Event::Rejected {
+                        request_id: result.request_id,
+                        reason: result.reason,
+                    },
+                    wire::RESULT_APPLIED => crate::quality::Event::CaptureStarted {
+                        request_id: result.request_id,
+                        width: result.applied_width,
+                        height: result.applied_height,
+                        fps: result.applied_fps,
+                    },
+                    _ => continue,
+                })
+            }
+            wire::PAUSED => {
+                let paused = wire::Epoch::decode(&incoming.payload)?;
+                Some(crate::quality::Event::Paused {
+                    request_id: paused.request_id,
+                    epoch: paused.stream_epoch,
+                })
+            }
+            _ => None,
+        };
+        if let Some(quality_event) = quality_event {
+            let was_staged = switch.staged();
+            let actions = switch.step(now_ms(), quality_event);
+            report_quality(actions.clone(), &mut event)?;
+            let boundary = actions.contains(&Action::ReleaseOutputs);
+            for action in actions {
+                match action {
+                    Action::ReleaseOutputs => {
+                        // The phone writer fenced old media before its reply.
+                        // Drop all old resources before Commit or staged wait.
+                        output = None;
+                        event(Event::Waiting {})?;
+                        decoder = None;
+                        pixels = pixels::Pixels::default();
+                        frame = ffmpeg::Frame::empty()?;
+                        config = None;
+                        started = false;
+                        decoded = 0;
+                        submitted = 0;
+                        last_pts = 0;
+                    }
+                    Action::SendCommitQuality { request_id, epoch } => {
+                        let payload = wire::Epoch {
+                            request_id,
+                            stream_epoch: epoch,
+                        }
+                        .encode();
+                        transport.send(
+                            &wire::Frame::new(wire::COMMIT_QUALITY, 0, payload)?,
+                            Duration::from_secs(2),
+                        )?;
+                    }
+                    _ => {}
+                }
+            }
+            if boundary || switch.staged() != was_staged {
+                event(Event::QualityProgress {
+                    staged: switch.staged(),
+                })?;
+            }
+            continue;
         }
         if incoming.header.kind == wire::VIDEO_CONFIG {
             let next = Config::parse(&incoming.payload)?;
-            if config.is_some_and(|c| c != next) {
+            if switch.awaiting_video() {
+                let was_staged = switch.staged();
+                report_quality(
+                    switch.step(
+                        now_ms(),
+                        crate::quality::Event::VideoConfig {
+                            width: next.width as u16,
+                            height: next.height as u16,
+                            fps: next.fps as u16,
+                        },
+                    ),
+                    &mut event,
+                )?;
+                if was_staged {
+                    event(Event::QualityProgress { staged: false })?;
+                }
+            } else if config.is_some_and(|c| c != next) {
                 return Err("VIDEO_CONFIG changed during active output".into());
             }
             config = Some(next);
@@ -187,6 +468,10 @@ fn receive(
         if started && incoming.header.pts_us <= last_pts {
             return Err("non-monotonic VIDEO_AU PTS".into());
         }
+        if decoder.is_none() {
+            decoder = Some(decoder::Decoder::open(&settings.decode)?);
+        }
+        let decoder = decoder.as_mut().unwrap();
         if incoming.header.flags & wire::DISCONTINUITY != 0 {
             decoder.flush();
         }
@@ -208,19 +493,19 @@ fn receive(
             decoded += 1;
             started = true;
             if output.is_none() {
-                output = Some(crate::output::Camera::open(
-                    settings.output.trim(),
-                    c.width,
-                    c.height,
-                    c.fps,
-                )?);
+                output = Some(create_output(c)?);
             }
             let camera = output.as_mut().unwrap();
             let active = camera.ready()?;
             if active {
-                let bytes = pixels.convert(&frame, c, camera.stride, camera.size, transform)?;
+                let (stride, size) = camera.layout();
+                let bytes = pixels.convert(&frame, c, stride, size, transform)?;
                 camera.submit(bytes, c.width, c.height)?;
                 submitted += 1;
+                report_quality(
+                    switch.step(now_ms(), crate::quality::Event::OutputReady),
+                    &mut event,
+                )?;
             }
             if report.elapsed() >= Duration::from_secs(1) {
                 event(Event::Stats {
@@ -229,15 +514,51 @@ fn receive(
                     active,
                     width: c.width,
                     height: c.height,
+                    target_fps: c.fps,
                     decoder: decoder.active().into(),
                 })?;
                 report = Instant::now();
             }
         }
     }
+    for action in switch.step(now_ms(), crate::quality::Event::UserStop) {
+        if let Action::ReportFailed { reason } = action {
+            event(Event::QualityFailed {
+                reason: reason.into(),
+                terminal: false,
+            })?;
+        }
+    }
     Ok(())
 }
+fn report_quality(
+    actions: Vec<Action>,
+    event: &mut impl FnMut(Event) -> crate::Result<()>,
+) -> crate::Result<()> {
+    let terminal = actions.contains(&Action::CloseConnection);
+    for action in actions {
+        match action {
+            Action::ReportApplied { width, height, fps } => {
+                event(Event::QualityApplied { width, height, fps })?
+            }
+            Action::ReportFailed { reason } => event(Event::QualityFailed {
+                reason: reason.into(),
+                terminal,
+            })?,
+            Action::StopCapture | Action::CloseConnection => {
+                return Err("quality apply failed".into());
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+fn reason_of_expiry() -> Box<dyn std::error::Error + Send + Sync> {
+    "the apply deadline expired".into()
+}
 
+#[cfg(test)]
+mod quality_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

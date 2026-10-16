@@ -22,10 +22,28 @@ fn japanese() -> bool {
     })
 }
 pub fn run() -> eframe::Result {
+    // The only mutation is the capture-only position pin below.
+    #[cfg_attr(not(feature = "capture"), allow(unused_mut))]
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([420.0, 440.0])
+        .with_min_inner_size([360.0, 360.0]);
+    // Without a window manager the server places the window wherever it likes,
+    // which on a headless display can be off-screen entirely. A capture pins
+    // the position so the screenshot is reproducible.
+    #[cfg(feature = "capture")]
+    if std::env::var_os("MW_CAPTURE_DETAILS").is_some() {
+        let (x, y) = std::env::var("MW_CAPTURE_POSITION")
+            .ok()
+            .and_then(|value| {
+                value
+                    .split_once(',')
+                    .map(|(x, y)| (x.to_owned(), y.to_owned()))
+            })
+            .unwrap_or_else(|| ("0".into(), "0".into()));
+        viewport = viewport.with_position([x.trim().parse().unwrap(), y.trim().parse().unwrap()]);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([420.0, 440.0])
-            .with_min_inner_size([360.0, 360.0]),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
@@ -38,6 +56,7 @@ struct App {
     settings: Settings,
     store: Option<Store>,
     save_error: Option<String>,
+    load_error: Option<String>,
     dirty: Option<Instant>,
     session: Session,
     ja: bool,
@@ -49,23 +68,46 @@ struct App {
     usb_thread: std::thread::Thread,
     usb_events: mpsc::Receiver<crate::Result<Vec<Candidate>>>,
     usb_error: Option<String>,
+    /// The quality draft; 0 fields mean auto (slice 03).
+    quality_draft: (u16, u16, u16),
+    confirm_forget_phone: bool,
     #[cfg(feature = "capture")]
     capture_requested: bool,
 }
+/// The native capture entry point: replay a recorded event list through the
+/// real session so a screenshot shows what those events produce.
+#[cfg(feature = "capture")]
+fn capture_session() -> Session {
+    let Some(path) = std::env::var_os("MW_CAPTURE_FIXTURE") else {
+        return Session::default();
+    };
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("capture fixture {}: {error}", path.to_string_lossy()));
+    let events: Vec<crate::control::Event> = serde_json::from_str(&text)
+        .unwrap_or_else(|error| panic!("capture fixture {}: {error}", path.to_string_lossy()));
+    Session::for_capture(events)
+}
+
+#[cfg(not(feature = "capture"))]
+fn capture_session() -> Session {
+    Session::default()
+}
+
 impl App {
     fn new(ctx: &egui::Context) -> Self {
         let store = Store::native();
-        let mut error = None;
+        let mut save_error = None;
+        let mut load_error = None;
         let (store, settings) = match store {
             Ok(store) => {
                 let s = store.load().unwrap_or_else(|e| {
-                    error = Some(e.to_string());
+                    load_error = Some(e.to_string());
                     Settings::default()
                 });
                 (Some(store), s)
             }
             Err(e) => {
-                error = Some(e.to_string());
+                save_error = Some(e.to_string());
                 (None, Settings::default())
             }
         };
@@ -132,12 +174,18 @@ impl App {
                 }
             }
         });
+        let quality_wish = (
+            settings.quality_width,
+            settings.quality_height,
+            settings.quality_fps,
+        );
         Self {
             settings,
             store,
-            save_error: error,
+            save_error,
+            load_error,
             dirty: None,
-            session: Session::default(),
+            session: capture_session(),
             ja: japanese(),
             devices: Vec::new(),
             selected: None,
@@ -147,6 +195,8 @@ impl App {
             usb_thread: inventory.thread().clone(),
             usb_events: receiver,
             usb_error: None,
+            quality_draft: quality_wish,
+            confirm_forget_phone: false,
             #[cfg(feature = "capture")]
             capture_requested: false,
         }
@@ -159,6 +209,165 @@ impl App {
             "auto" => self.text("Auto", "自動"),
             "off" => self.text("Software", "ソフトウェア"),
             _ => mode,
+        }
+    }
+
+    fn quality_controls(&mut self, ui: &mut egui::Ui, running: bool) {
+        let busy = self.session.quality.pending.is_some();
+        let stopping = matches!(self.session.state, State::Stopping);
+        let modes = self.session.quality.modes.clone().unwrap_or_default();
+        let mut sizes: Vec<_> = modes.iter().map(|mode| (mode.width, mode.height)).collect();
+        sizes.sort_unstable();
+        sizes.dedup();
+        let old_size = (self.quality_draft.0, self.quality_draft.1);
+        ui.add_enabled_ui(!busy && !stopping, |ui| {
+            ui.label(self.text("Resolution", "解像度"));
+            egui::ComboBox::from_id_salt("quality-size")
+                .selected_text(if self.quality_draft.0 == 0 {
+                    self.text("Auto", "自動").to_owned()
+                } else {
+                    format!("{}×{}", self.quality_draft.0, self.quality_draft.1)
+                })
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(self.quality_draft.0 == 0, self.text("Auto", "自動"))
+                        .clicked()
+                    {
+                        self.quality_draft.0 = 0;
+                        self.quality_draft.1 = 0;
+                    }
+                    for (width, height) in &sizes {
+                        if ui
+                            .selectable_label(
+                                (self.quality_draft.0, self.quality_draft.1) == (*width, *height),
+                                format!("{width}×{height}"),
+                            )
+                            .clicked()
+                        {
+                            self.quality_draft.0 = *width;
+                            self.quality_draft.1 = *height;
+                        }
+                    }
+                });
+            let mut rates: Vec<_> = modes
+                .iter()
+                .filter(|mode| {
+                    self.quality_draft.0 == 0
+                        || (mode.width, mode.height) == (self.quality_draft.0, self.quality_draft.1)
+                })
+                .map(|mode| mode.fps)
+                .collect();
+            rates.sort_unstable();
+            rates.dedup();
+            // Only a user's size edit resets an incompatible draft fps.
+            // A different phone must not silently rewrite the saved wish.
+            if old_size != (self.quality_draft.0, self.quality_draft.1)
+                && !modes.is_empty()
+                && self.quality_draft.2 != 0
+                && !rates.contains(&self.quality_draft.2)
+            {
+                self.quality_draft.2 = 0;
+            }
+            ui.label(self.text("Frame rate", "フレームレート"));
+            egui::ComboBox::from_id_salt("quality-fps")
+                .selected_text(if self.quality_draft.2 == 0 {
+                    self.text("Auto", "自動").to_owned()
+                } else {
+                    format!("{} fps", self.quality_draft.2)
+                })
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(self.quality_draft.2 == 0, self.text("Auto", "自動"))
+                        .clicked()
+                    {
+                        self.quality_draft.2 = 0;
+                    }
+                    for fps in rates {
+                        if ui
+                            .selectable_label(self.quality_draft.2 == fps, format!("{fps} fps"))
+                            .clicked()
+                        {
+                            self.quality_draft.2 = fps;
+                        }
+                    }
+                });
+        });
+        let draft = crate::quality::Wish::from(self.quality_draft);
+        if !running && draft != self.settings.quality_wish() {
+            self.settings.set_quality_wish(draft);
+        }
+        let resolved = self.session.quality.resolve(draft);
+        let changed = draft != self.settings.quality_wish()
+            || self.session.quality.error.is_some()
+            || resolved.is_some_and(|mode| self.session.quality.applied != Some(mode.tuple()));
+        if running && changed && !busy {
+            let enabled = !stopping && self.session.quality.ready() && resolved.is_some();
+            if ui
+                .add_enabled(enabled, egui::Button::new(self.text("Apply", "適用")))
+                .clicked()
+                && self
+                    .session
+                    .prepare_quality(draft.width, draft.height, draft.fps)
+            {
+                self.settings.set_quality_wish(draft);
+            }
+        }
+        if self.session.quality.pending.is_some() {
+            ui.weak(if self.session.quality.staged {
+                self.text("Start the camera on your phone", "スマホでカメラを開始")
+            } else {
+                self.text("Applying", "切替中")
+            });
+        } else if !running {
+            ui.weak(self.text("Connect a phone", "スマホを接続"));
+        } else if self.session.quality.permission == Some(crate::wire::PERMISSION_PENDING) {
+            ui.weak(self.text("Allow camera on the phone", "スマホでカメラを許可"));
+        } else if self.session.quality.permission == Some(crate::wire::PERMISSION_UNAVAILABLE)
+            || self
+                .session
+                .quality
+                .modes
+                .as_ref()
+                .is_some_and(|modes| modes.is_empty())
+        {
+            ui.weak(self.text("Quality controls unavailable", "品質設定は利用できません"));
+        } else if self.session.quality.modes.is_none() {
+            ui.weak(if self.session.stats.is_some() {
+                self.text("Update the phone app", "スマホアプリを更新")
+            } else {
+                self.text(
+                    "Waiting for phone modes",
+                    "スマホの対応モードを待っています",
+                )
+            });
+        }
+        if let Some((width, height, fps)) = self.session.quality.applied {
+            ui.weak(format!(
+                "{}: {width}×{height}, {fps} fps",
+                self.text("Applied capture target", "適用済み撮影目標")
+            ));
+        }
+        if let Some(error) = &self.session.quality.error {
+            ui.colored_label(egui::Color32::LIGHT_RED, error);
+        }
+        if let Some(warning) = &self.settings.quality_warning {
+            ui.colored_label(egui::Color32::LIGHT_RED, warning);
+        }
+        let unsupported = self.session.quality.ready() && resolved.is_none();
+        if unsupported || self.settings.quality_warning.is_some() {
+            let enabled = !busy && !stopping && (!running || self.session.quality.ready());
+            if ui
+                .add_enabled(
+                    enabled,
+                    egui::Button::new(self.text("Use auto", "自動に戻す")),
+                )
+                .clicked()
+                && (!running || self.session.prepare_quality(0, 0, 0))
+            {
+                self.quality_draft = (0, 0, 0);
+                self.settings
+                    .set_quality_wish(crate::quality::Wish::default());
+            }
         }
     }
     fn save(&mut self) {
@@ -187,7 +396,11 @@ impl eframe::App for App {
                 }
             }
         }
+        let was_running = self.session.running();
         self.session.poll(ctx);
+        if was_running && !self.session.running() {
+            self.quality_draft = self.settings.quality_wish().tuple();
+        }
         while let Ok(result) = self.usb_events.try_recv() {
             match result {
                 Ok(devices) => {
@@ -239,6 +452,19 @@ impl eframe::App for App {
             .inner_margin(24.0)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        if let Some(error) = &self.load_error {
+                            ui.colored_label(
+                                egui::Color32::LIGHT_RED,
+                                format!(
+                                    "{}: {error}",
+                                    self.text(
+                                        "Settings could not be loaded",
+                                        "設定を読み込めませんでした"
+                                    )
+                                ),
+                            );
+                            ui.add_space(8.0);
+                        }
                         ui.add_enabled_ui(!self.session.running(), |ui| {
                             ui.horizontal(|ui| {
                                 let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
@@ -283,6 +509,72 @@ impl eframe::App for App {
                                 .min_size(egui::vec2(0.0, 28.0))
                                         .desired_width(f32::INFINITY),
                                 );
+                                ui.label(self.text(
+                                    "Phone certificate SHA-256 (verify on phone)",
+                                    "スマホの証明書SHA-256（端末画面で確認）",
+                                ));
+                                ui.add_enabled(
+                                    !self.session.running(),
+                                    egui::TextEdit::singleline(&mut self.settings.lan_fingerprint)
+                                        .hint_text("64 hexadecimal characters")
+                                        .desired_width(f32::INFINITY),
+                                );
+                                ui.label(self.text("128-bit Wi-Fi pairing key", "128ビットWi-Fi接続キー"));
+                                ui.add_enabled(
+                                    !self.session.running(),
+                                    egui::TextEdit::singleline(&mut self.settings.lan_key)
+                                        .password(true)
+                                        .hint_text("32 hexadecimal characters")
+                                        .desired_width(f32::INFINITY),
+                                );
+                                let valid_fingerprint =
+                                    crate::secure::is_hex(&self.settings.lan_fingerprint, 32);
+                                let valid_key =
+                                    crate::secure::is_hex(&self.settings.lan_key, 16);
+                                if !valid_fingerprint || !valid_key {
+                                    ui.colored_label(
+                                        egui::Color32::YELLOW,
+                                        self.text(
+                                            "Pairing required: enter the 64-digit phone fingerprint and 32-digit access key.",
+                                            "ペアリングが必要です：端末の64桁の指紋と32桁の接続キーを入力してください。",
+                                        ),
+                                    );
+                                }
+                                ui.weak(self.text(
+                                    "Wi-Fi requires TLS 1.3. No plaintext fallback.",
+                                    "Wi-FiはTLS 1.3必須。平文接続への切替なし。",
+                                ));
+                                if !self.session.running()
+                                    && (!self.settings.lan_key.is_empty()
+                                        || !self.settings.lan_fingerprint.is_empty())
+                                {
+                                    if self.confirm_forget_phone {
+                                        ui.horizontal(|ui| {
+                                            ui.label(self.text(
+                                                "Remove stored pairing details?",
+                                                "保存したペアリング情報を削除しますか？",
+                                            ));
+                                            if ui.button(self.text("Remove", "削除")).clicked() {
+                                                self.settings.lan_host.clear();
+                                                self.settings.lan_fingerprint.clear();
+                                                self.settings.lan_key.clear();
+                                                self.confirm_forget_phone = false;
+                                                self.save();
+                                            }
+                                            if ui.button(self.text("Cancel", "キャンセル")).clicked() {
+                                                self.confirm_forget_phone = false;
+                                            }
+                                        });
+                                    } else if ui
+                                        .small_button(self.text(
+                                            "Forget paired phone",
+                                            "登録済みスマホの情報を削除",
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.confirm_forget_phone = true;
+                                    }
+                                }
                             } else {
                                 if matches!(self.session.state, State::Idle) {
                                     ui.label(self.text(
@@ -338,7 +630,7 @@ impl eframe::App for App {
                         });
                         ui.add_space(18.0);
                         let running = self.session.running();
-                        let label = if running && matches!(self.session.state, State::Connecting) {
+                        let label = if running && matches!(self.session.state, State::Connecting | State::ApprovalPending(_)) {
                             self.text("Cancel", "キャンセル")
                         } else if running {
                             self.text("Disconnect", "切断")
@@ -357,6 +649,8 @@ impl eframe::App for App {
                         let allowed = running
                             || self.settings.transport == "lan"
                                 && !self.settings.lan_host.trim().is_empty()
+                                && crate::secure::is_hex(&self.settings.lan_fingerprint, 32)
+                                && crate::secure::is_hex(&self.settings.lan_key, 16)
                             || self.settings.transport == "usb"
                                 && self.selected.is_some()
                                 && !self.selection_lost;
@@ -405,8 +699,14 @@ impl eframe::App for App {
                         let status = match &self.session.state {
                             State::Idle => "",
                             State::Connecting => self.text("Connecting…", "接続中…"),
+                            State::ApprovalPending(_) => self.text("Approve this PC on your phone", "スマホでこのPCの接続を許可してください"),
                             State::Waiting => {
-                                if cfg!(windows) && matches!(&self.session.stats, Some(Event::Stats { decoded, active: false, .. }) if *decoded > 0) {
+                                if self.settings.transport == "lan" {
+                                    self.text(
+                                        "TLS 1.3 verified · Press Start camera on your phone",
+                                        "TLS 1.3で認証済み · スマホで「カメラ開始」を押してください",
+                                    )
+                                } else if cfg!(windows) && matches!(&self.session.stats, Some(Event::Stats { decoded, active: false, .. }) if *decoded > 0) {
                                     self.text("Select Mobile Webcam in your PC's camera app", "PCのカメラアプリでMobile Webcamを選択")
                             } else { self.text("Connected · Press Start camera on your phone", "接続済み · スマホで「カメラ開始」を押してください") }
                             },
@@ -416,6 +716,10 @@ impl eframe::App for App {
                                 if error.contains("v4l2loopback") || error.contains("host setup is not included")
                                 {
                                     self.text("Camera driver unavailable", "カメラドライバーを利用できません")
+                                } else if error.contains("fingerprint mismatch") {
+                                    self.text("Fingerprint mismatch", "フィンガープリントが一致しません")
+                                } else if error.contains("was not authorized") {
+                                    self.text("Access key rejected", "接続キーが拒否されました")
                                 } else if self.session.usb_permission.is_some() {
                                     self.text("Allow USB access", "USBアクセスを許可してください")
                                 } else if error.contains("WinUSB") {
@@ -432,9 +736,31 @@ impl eframe::App for App {
                                 ui.label(egui::RichText::new(status).strong());
                             }
                         }
+                        if let State::ApprovalPending(client_id) = &self.session.state {
+                            let grouped = client_id.as_bytes().chunks(4)
+                                .map(|part| std::str::from_utf8(part).expect("validated ASCII PC ID"))
+                                .collect::<Vec<_>>().join(" ");
+                            ui.label(self.text("Match this PC ID before allowing. Approval does not start the camera.", "許可する前にPC IDを照合してください。許可だけでは撮影を開始しません。"));
+                            ui.add(egui::Label::new(egui::RichText::new(grouped).monospace()).wrap());
+                        }
                         if let State::Failed(error) = &self.session.state {
                             let next = if error.contains("v4l2loopback") || error.contains("host setup is not included") {
                                 self.text("Install v4l2loopback for your OS, then reconnect.", "OSにv4l2loopbackを導入して、接続し直してください。")
+                            } else if error.contains("fingerprint mismatch") {
+                                self.text(
+                                    "The certificate fingerprint does not match your phone. Re-check all 64 characters.",
+                                    "証明書のフィンガープリントがスマホと一致しません。64桁すべてを再確認してください。",
+                                )
+                            } else if error.contains("was not authorized") {
+                                self.text(
+                                    "The phone rejected the access key. Re-check all 32 characters; a rotated key revokes the old one.",
+                                    "スマホが接続キーを拒否しました。32桁を再確認してください。ローテーション後のスマホでは旧キーは無効です。",
+                                )
+                            } else if error.contains("peer disconnected") {
+                                self.text(
+                                    "The phone closed the connection. Check the phone's Wi-Fi screen or app.",
+                                    "スマホが接続を閉じました。スマホのWi-Fi画面またはアプリを確認してください。",
+                                )
                             } else if error.contains("WinUSB") {
                                 self.text("The selected phone needs a compatible USB driver.", "選択したスマホ用のUSBドライバーが必要です。")
                             } else if self.session.usb_permission.is_some() {
@@ -462,6 +788,7 @@ impl eframe::App for App {
                                     && std::env::var_os("MW_CAPTURE_DETAILS").is_some(),
                             )
                             .show(ui, |ui| {
+                                self.quality_controls(ui, running);
                                 if let State::Failed(error) = &self.session.state {
                                     ui.label(error);
                                 }

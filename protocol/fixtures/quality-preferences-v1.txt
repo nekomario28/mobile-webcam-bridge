@@ -1,0 +1,8 @@
+# Wishes resolved against quality-capabilities-v1.bin. Zero means independent Auto.
+# width height fps -> width height fps | rejected
+0 0 0 -> 1280 720 30
+1920 1080 0 -> 1920 1080 30
+0 0 60 -> 1280 720 60
+1280 720 60 -> 1280 720 60
+1920 1080 60 -> rejected
+640 480 30 -> rejected

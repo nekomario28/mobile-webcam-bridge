@@ -1,7 +1,11 @@
 #![cfg(all(feature = "gui", feature = "video", any(target_os = "linux", windows)))]
+mod common;
+
+use common::{ACCESS_KEY, PHONE_SHA256, phone_tls};
 use mobile_webcam::{
     session::{Session, State},
     settings::Settings,
+    wire,
 };
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -11,25 +15,51 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn peer(listener: TcpListener) {
-    let (mut socket, _) = listener.accept().unwrap();
-    socket
-        .set_read_timeout(Some(Duration::from_secs(4)))
-        .unwrap();
+fn paired_settings() -> Settings {
+    Settings {
+        transport: "lan".into(),
+        lan_host: "127.0.0.1".into(),
+        lan_fingerprint: PHONE_SHA256.into(),
+        lan_key: ACCESS_KEY.into(),
+        decode: "off".into(),
+        ..Default::default()
+    }
+}
+
+fn peer(listener: TcpListener, approval_pending: bool) {
+    let mut socket = phone_tls(listener.accept().expect("accept").0);
     let mut header = [0; 24];
     socket.read_exact(&mut header).unwrap();
     assert_eq!(header[5], 1);
     assert_eq!(&header[8..12], &1u32.to_le_bytes());
+    assert_eq!(&header[12..16], &16u32.to_le_bytes());
+    let mut token = [0u8; 16];
+    socket.read_exact(&mut token).unwrap();
+    assert_eq!(
+        token.as_slice(),
+        &mobile_webcam::secure::parse_hex(ACCESS_KEY, 16).unwrap()
+    );
     header[5] = 2;
+    header[12..16].copy_from_slice(&0u32.to_le_bytes());
     socket.write_all(&header).unwrap();
-    socket.read_exact(&mut header).unwrap();
-    assert_eq!(header[5], 0x12);
+    socket.flush().unwrap();
+    common::authorize_tls(&mut socket, !approval_pending);
+    if !approval_pending {
+        socket.read_exact(&mut header).unwrap();
+        assert_eq!(header[5], 0x12);
+    }
     let mut byte = [0];
     // Forced process termination can close TCP abortively on Windows.
     // Both terminal outcomes prove the peer closed; data/timeouts still fail.
     match socket.read(&mut byte) {
         Ok(0) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::ConnectionAborted
+            ) => {}
         other => panic!("worker connection remained open or sent unexpected data: {other:?}"),
     }
 }
@@ -40,18 +70,18 @@ fn real_worker_disconnect_and_parent_death() {
         .unwrap_or_else(|| env!("CARGO_BIN_EXE_mobile-webcam").into());
     let ctx = eframe::egui::Context::default();
     let mut session = Session::new(executable.clone());
-    let settings = Settings {
-        transport: "lan".into(),
-        lan_host: "127.0.0.1".into(),
-        decode: "off".into(),
-        ..Default::default()
-    };
-    for _ in 0..2 {
+    let settings = paired_settings();
+    // Include a real child waiting indefinitely for phone approval: pending
+    // must not open the pipeline or make parent Stop wait for the 60s deadline.
+    for approval_pending in [false, false, true] {
         let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
-        let server = thread::spawn(move || peer(listener));
+        let server = thread::spawn(move || peer(listener, approval_pending));
         session.start(settings.clone(), None, ctx.clone()).unwrap();
         let started = Instant::now();
-        while !matches!(session.state, State::Waiting) {
+        while !matches!(
+            (&session.state, approval_pending),
+            (State::Waiting, false) | (State::ApprovalPending(_), true)
+        ) {
             session.poll(&ctx);
             assert!(
                 started.elapsed() < Duration::from_secs(3),
@@ -71,7 +101,7 @@ fn real_worker_disconnect_and_parent_death() {
         server.join().unwrap();
     }
     let listener = TcpListener::bind("127.0.0.1:48527").unwrap();
-    let server = thread::spawn(move || peer(listener));
+    let server = thread::spawn(move || peer(listener, false));
     let mut parent = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "abrupt_parent_fixture", "--nocapture"])
         .env("MW_TEST_PARENT_EXECUTABLE", &executable)
@@ -95,18 +125,7 @@ fn abrupt_parent_fixture() {
     };
     let ctx = eframe::egui::Context::default();
     let mut session = Session::new(executable.into());
-    session
-        .start(
-            Settings {
-                transport: "lan".into(),
-                lan_host: "127.0.0.1".into(),
-                decode: "off".into(),
-                ..Default::default()
-            },
-            None,
-            ctx.clone(),
-        )
-        .unwrap();
+    session.start(paired_settings(), None, ctx.clone()).unwrap();
     let started = Instant::now();
     while !matches!(session.state, State::Waiting) {
         session.poll(&ctx);

@@ -7,6 +7,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.Manifest
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
@@ -15,9 +17,227 @@ import java.util.concurrent.TimeUnit
 
 /** Exercises the platform notification boundary without pretending a USB device is attached. */
 class UsbPermissionInstrumentation : Instrumentation() {
+    private var disposableUi = false
+
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
+        disposableUi = arguments?.getString("disposableUi") == "true"
         start()
+    }
+
+    /**
+     * Runs the real LanServer on the Android emulator while GitHub Actions
+     * connects to it from the host via adb forward. Using an independent
+     * desktop TLS stack tests the same Android Keystore server path as the
+     * Rust receiver: an unauthorized HELLO is rejected before any session
+     * exists, then the authorized client completes pairing.
+     */
+    private fun smokeSecureWifi(context: Context) {
+        val identity = SecureLanIdentity(context)
+        val stored = context.getSharedPreferences("secure_wifi", Context.MODE_PRIVATE)
+        check(!stored.contains("secret")) { "plaintext Wi-Fi credential remains on disk" }
+        check(stored.contains("encrypted_secret_v1")) { "encrypted Wi-Fi credential missing" }
+        check(SecureLanIdentity(context).pairingCode() == identity.pairingCode()) {
+            "Wi-Fi access key did not persist"
+        }
+        val pin = identity.fingerprint()
+        check(pin.length == 64)
+        val sessions = LinkedBlockingQueue<Pair<LanSession, Boolean>>()
+        val errors = LinkedBlockingQueue<String>()
+        val qualityCommands = LinkedBlockingQueue<Wire.HostCommand>()
+        // The emulator holds no camera grant, so the controller must answer a
+        // prepare with a typed permission rejection rather than dropping the
+        // connection or starting a camera.
+        val captureMode = CaptureModes.CaptureMode(
+            cameraId = "0",
+            codecName = "fixture-encoder",
+            width = 1280,
+            height = 720,
+            targetFps = 30,
+            aeRange = CaptureModes.FpsRange(30, 30),
+            bitrate = 6_000_000,
+            minFrameDurationKnown = true,
+        )
+        val snapshot = Wire.Capabilities(
+            extensionVersion = 1,
+            permission = Wire.PERMISSION_PENDING,
+            catalogRevision = 7,
+            streamEpoch = 0,
+            modes = listOf(Wire.QualityMode(1280, 720, 30, 6_000_000)),
+        )
+        var controller: PhoneQualityController? = null
+        // This fixture explicitly approves a valid pending proof. The real
+        // Activity's approval UI is exercised separately; no app bypass flag.
+        val authorization = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = { error("fixture storage failed") })
+        val server = LanServer(
+            identity = identity,
+            authorization = authorization,
+            onAuthorization = { it.clientAuthorization?.takeIf { gate -> gate.pending() != null }?.approve() },
+            // No camera producer exists in this fixture; the conformance gate
+            // exercises the UI-side approval/renew/revoke path instead.
+            onCaptureCancelled = {},
+            port = 48_527,
+            onSession = { session, connected ->
+                if (connected) {
+                    controller = PhoneQualityController(
+                        session = session,
+                        revision = { 7 },
+                        modes = { listOf(captureMode) },
+                        permissionReady = {
+                            context.checkSelfPermission(Manifest.permission.CAMERA) ==
+                                PackageManager.PERMISSION_GRANTED
+                        },
+                        foreground = { true },
+                        streaming = { false },
+                        stopCapture = { _ -> },
+                        startCapture = { error("the TLS gate must not start a camera") },
+                    )
+                }
+                sessions.add(session to connected)
+            },
+            onStatus = {},
+            onError = { error -> errors.add(error) },
+            capabilities = { snapshot },
+            onQuality = { _, command ->
+                qualityCommands.add(command)
+                controller?.handle(command)
+            },
+        )
+        server.start()
+        // Test-only: the CI client needs the real per-install credential the
+        // same way the real desktop user reads it off the phone screen.
+        android.util.Log.i("SecureWifiGate", "READY SHA256=" + pin + " KEY=" + identity.pairingCode())
+        try {
+            // An unauthorized HELLO must be rejected before any session exists.
+            val rejected = errors.poll(20, TimeUnit.SECONDS)
+            check(rejected != null && rejected.contains("rejected")) {
+                "wrong access key was not rejected: $rejected"
+            }
+            check(sessions.isEmpty) { "wrong access key created a session" }
+            // The authorized client then completes pairing through the real server.
+            val authorized = sessions.poll(20, TimeUnit.SECONDS)
+            check(authorized != null && authorized.second) {
+                "authorized client did not connect; server errors observed: $errors"
+            }
+            // The authorized client also sends a 14-byte PREPARE_QUALITY inside
+            // the TLS session; the real server must dispatch it to the
+            // controller and keep serving frames afterwards.
+            val command = qualityCommands.poll(20, TimeUnit.SECONDS)
+            check(command is Wire.HostCommand.Prepare) {
+                "TLS server did not dispatch a quality command: $command"
+            }
+            val request = (command as Wire.HostCommand.Prepare).request
+            check(
+                request.catalogRevision == 7 && request.width == 1280 &&
+                    request.height == 720 && request.targetFps == 30
+            ) {
+                "quality command lost its fields: $request"
+            }
+            check(errors.isEmpty()) { "quality dispatch reported an error: $errors" }
+            // The client reads the rejection and then disconnects. Closing the
+            // server first would drop the queued reply, so the gate waits for
+            // the client's own end of the session instead of assuming a timing.
+            val disconnected = sessions.poll(20, TimeUnit.SECONDS)
+            check(disconnected != null && !disconnected.second) {
+                "client did not finish the session after the rejection: $disconnected"
+            }
+            android.util.Log.i(
+                "SecureWifiGate",
+                "PASS native TLS 1.3 handshake, wrong-key rejection, authenticated AMB framing and quality command dispatch",
+            )
+        } finally {
+            server.close()
+            authorization.close()
+        }
+    }
+
+    /** Real preferences + Keystore, isolated from the application's approvals. */
+    private fun smokeClientStorage() {
+        val namespace = "client_authorization_instrumentation"
+        val prefs = targetContext.getSharedPreferences(namespace, Context.MODE_PRIVATE)
+        val alias = "mobile_webcam_${namespace}_aes_v1"
+        val keystore = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        check(prefs.edit().clear().commit())
+        keystore.deleteEntry(alias)
+        try {
+            val fixture = context.assets.open("client-signature-v1.bin").use { it.readBytes() }
+            val publicKey = fixture.copyOfRange(0, 65)
+            val id = ClientAuthorization.deriveClientId(publicKey)
+            val now = 1_800_000_000L
+            val first = ClientStore(targetContext, namespace).repository
+            check(first.snapshot().isEmpty())
+            first.approve(id, publicKey, "studio-pc", now)
+            val ciphertext = checkNotNull(prefs.getString(ClientStore.RECORD, null))
+            check(prefs.all.keys == setOf(ClientStore.RECORD)) { "unexpected plaintext authorization fields" }
+            val plaintext = ClientRecordCodec.encode(first.snapshot())
+            check(ciphertext != android.util.Base64.encodeToString(plaintext, android.util.Base64.NO_WRAP))
+            var reloaded = ClientStore(targetContext, namespace).repository
+            check(reloaded.snapshot() == first.snapshot()) { "Keystore authorization round trip failed" }
+            reloaded.renew(id, now + 10)
+            reloaded = ClientStore(targetContext, namespace).repository
+            check(reloaded.snapshot().single().expiresAtUnixSeconds == now + 10 + ClientAuthorization.EXPIRY_SECONDS)
+            reloaded.revoke(id)
+            check(ClientStore(targetContext, namespace).repository.snapshot().isEmpty())
+            reloaded.approve(id, publicKey, "studio-pc", now)
+            val valid = checkNotNull(prefs.getString(ClientStore.RECORD, null))
+            check(prefs.edit().remove(ClientStore.RECORD).commit())
+            check(runCatching { ClientStore(targetContext, namespace) }.isFailure) {
+                "lost authorization record with a surviving key was treated as first use"
+            }
+            check(keystore.containsAlias(alias) && !prefs.contains(ClientStore.RECORD)) {
+                "lost record/key state was silently repaired"
+            }
+            check(prefs.edit().putString(ClientStore.RECORD, valid).commit())
+            check(ClientStore(targetContext, namespace).repository.snapshot() == reloaded.snapshot())
+            val changed = android.util.Base64.decode(valid, android.util.Base64.NO_WRAP)
+            changed[changed.lastIndex] = (changed.last().toInt() xor 1).toByte()
+            check(prefs.edit().putString(ClientStore.RECORD,
+                android.util.Base64.encodeToString(changed, android.util.Base64.NO_WRAP)).commit())
+            check(runCatching { ClientStore(targetContext, namespace) }.isFailure) {
+                "tampered authorization ciphertext was accepted"
+            }
+            check(prefs.edit().putString(ClientStore.RECORD, valid).commit())
+            keystore.deleteEntry(alias)
+            check(runCatching { ClientStore(targetContext, namespace) }.isFailure) {
+                "missing Keystore key silently reset the authorization list"
+            }
+            check(!keystore.containsAlias(alias)) { "decryption unexpectedly generated a replacement key" }
+            check(prefs.getString(ClientStore.RECORD, null) == valid) { "corrupt storage was overwritten" }
+        } finally {
+            prefs.edit().clear().commit()
+            keystore.deleteEntry(alias)
+        }
+    }
+
+    /** Exercise the actual Android EC provider, not only a desktop JVM. The
+     * leading-zero fixture used to produce a nonminimal DER INTEGER. */
+    private fun smokeClientSignatures() {
+        for (name in listOf("client-signature-v1.bin", "client-signature-leading-zero-v1.bin")) {
+            val fixture = context.assets.open(name).use { it.readBytes() }
+            check(fixture.size == 186) { "unexpected signature fixture shape: $name" }
+            val publicKey = fixture.copyOfRange(0, 65)
+            val message = fixture.copyOfRange(65, 122)
+            val signature = fixture.copyOfRange(122, 186)
+            if (name.contains("leading-zero")) {
+                check(signature[0] == 0.toByte() && signature[1].toInt() in 1 until 0x80)
+            }
+            check(ClientAuthorization.verify(publicKey, message, signature)) {
+                "Android EC provider rejected the Rust signature: $name"
+            }
+            for (index in listOf(0, 16, 48, 56)) {
+                val changed = message.copyOf()
+                changed[index] = (changed[index].toInt() xor 1).toByte()
+                check(!ClientAuthorization.verify(publicKey, changed, signature)) {
+                    "Android EC provider accepted a changed transcript: $name byte $index"
+                }
+            }
+        }
+        val point = context.assets.open("client-signature-v1.bin").use { it.readBytes() }.copyOfRange(0, 65)
+        val transcript = context.assets.open("client-auth-transcript-v2.bin").use { it.readBytes() }
+        check(Wire.clientAuthMessage(Wire.AUTH_LAN, ByteArray(32) { (it + 32).toByte() }, ByteArray(32) { it.toByte() }, point, "studio-pc").contentEquals(transcript))
+        val usbTranscript = context.assets.open("client-auth-transcript-usb-v2.bin").use { it.readBytes() }
+        check(Wire.clientAuthMessage(Wire.AUTH_USB, ByteArray(32), ByteArray(32) { it.toByte() }, point, "studio-pc").contentEquals(usbTranscript))
+        android.util.Log.i("SecureWifiGate", "PASS Android EC provider signature fixtures and LAN/USB v2 transcripts")
     }
 
     override fun onStart() {
@@ -36,6 +256,12 @@ class UsbPermissionInstrumentation : Instrumentation() {
             context.registerReceiver(receiver, filter)
         }
         try {
+            check(disposableUi && Build.VERSION.SDK_INT >= 35 &&
+                (Build.HARDWARE.contains("ranchu") || Build.PRODUCT.startsWith("sdk_gphone"))) {
+                "Conformance requires an explicitly disposable API 35 emulator (-e disposableUi true)"
+            }
+            check(context.getSharedPreferences("secure_wifi", Context.MODE_PRIVATE).all.isEmpty() &&
+                ClientStore(context).repository.snapshot().isEmpty()) { "Refusing to use an existing app profile" }
             val stale = MainActivity.createUsbPermissionRequest(context, "old-activity")
             val replacement = MainActivity.createUsbPermissionRequest(context, "new-activity")
             check(runCatching { stale.send() }.exceptionOrNull() is PendingIntent.CanceledException) {
@@ -51,11 +277,16 @@ class UsbPermissionInstrumentation : Instrumentation() {
                     "USB request could be replayed"
                 }
             }
+            smokeClientStorage()
+            smokeClientSignatures()
+            if (Build.VERSION.SDK_INT >= 29) smokeSecureWifi(context)
+            ClientAuthorizationUiInstrumentation(this).run()
             finish(Activity.RESULT_OK, Bundle().apply {
-                putString("stream", "PASS USB permission callback: stale request cancellation, identity, immutable extras, one-shot delivery\n")
+                putString("stream", "PASS USB permission, encrypted client storage, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection, host handshake, approval UI and live revocation\n")
             })
         } catch (error: Throwable) {
-            finish(Activity.RESULT_CANCELED, Bundle().apply { putString("stream", "FAIL: $error\n") })
+            android.util.Log.e("SecureWifiGate", "Instrumentation failure", error)
+            finish(Activity.RESULT_CANCELED, Bundle().apply { putString("stream", "FAIL: $error\n${error.stackTraceToString()}\n") })
         } finally {
             context.unregisterReceiver(receiver)
         }

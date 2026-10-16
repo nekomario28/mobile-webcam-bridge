@@ -3,10 +3,18 @@
 Open Mobile Webcam on your phone and PC. Choose the same mode on both:
 
 - **USB:** connect the cable, select the phone on the PC, then press **Connect**.
-- **Wi-Fi:** use the same network, select Wi-Fi on the phone, enter its displayed
-  IP on the PC, then press **Connect**. The address is remembered.
+- **Wi-Fi (development build, Android 10+):** select Wi-Fi on the phone,
+  choose **Show pairing key**, and manually verify the SHA-256
+  certificate fingerprint against the phone display. Enter the displayed
+  128-bit access key and the phone IP in the Rust desktop client, then press
+  **Connect**. Secure Wi-Fi uses TLS 1.3 with certificate pinning. The old
+  C++ host cannot connect to the secure-only phone listener.
 
-Press **Start camera** on the phone and allow camera access. If USB access is
+In authorization-v2 development builds, match the full PC ID and approve the
+request on the phone first. USB needs no QR, but attachment alone grants nothing.
+Use matching Android and Rust builds; older hosts cannot pass this gate on either
+transport. Approval does not start capture. Press **Start camera** on the phone
+and allow camera access. If USB access is
 declined, select USB again to retry. USB debugging is not required.
 
 ## Platform setup
@@ -21,8 +29,19 @@ missing, then resumes connecting. Setup does not install kernel modules.
 Windows USB also requires a libusb-compatible phone/accessory driver;
 Setup.exe installs the virtual camera only.
 
-Use Wi-Fi on a trusted local network: the current stream is not encrypted or
-authenticated. Rotation, flips and advanced settings are in **Details**.
+**Published v0.2.0 releases use plaintext Wi-Fi.** In this unreleased
+security branch, Wi-Fi is TLS 1.3-only and requires the correct pinned
+certificate and access key; it does not silently fall back to plaintext.
+On Windows the access key is stored with per-user DPAPI protection. On Linux
+the settings file uses permissions 0600; secrets are not encrypted at rest.
+Treat the key as sensitive, and rotate it
+from the phone if exposed (this disconnects Wi-Fi clients but leaves their
+per-PC grants intact). Use **Authorized PCs** for individual expiry/renewal/
+revocation; see [per-PC authorization](../docs/per-pc-authorization.md).
+Physical Android, Linux and Windows end-to-end acceptance is still pending.
+See [security and test boundaries](../docs/security.md).
+
+Rotation, flips and advanced settings are in **Details**.
 
 ## Build and verification
 
@@ -33,4 +52,5 @@ pinned in Cargo.lock and the build scripts.
 [Implementation evidence](../specs/rust-host-rewrite/implementation.md) records
 CI and outstanding device checks. Linux/Xperia success was reported by the user;
 physical USB on Linux/Windows was not retested in this update. Classic Qt
-[v0.1.2](../docs/classic-qt.md) remains available for rollback.
+[v0.1.2](../docs/classic-qt.md) remains available for rollback with a matching
+older APK, not as a USB bypass for an authorization-v2 phone.

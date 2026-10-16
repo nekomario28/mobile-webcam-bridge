@@ -53,7 +53,13 @@ def main():
     if set(enabled("_HWACCEL"))!=expected:raise RuntimeError(f"unexpected hardware decoder closure: {enabled('_HWACCEL')}")
     for name in ("AVFORMAT","AVDEVICE","AVFILTER","SWRESAMPLE"):
         if f"CONFIG_{name}=yes" in config.splitlines():raise RuntimeError(f"unexpected library: {name}")
-    run("make","-j1",cwd=build,env=environment);run("make","install",cwd=build,env=environment)
+    # The installed artifacts are independent of job count, but a single-threaded
+    # FFmpeg build dominated the windows-gnu CI job: it was still inside this
+    # step when the 30-minute job budget expired (run 38618355206, head
+    # 1c506d0). Building with one job per CPU keeps the pinned source, flags and
+    # post-build closure checks unchanged.
+    jobs=str(os.cpu_count() or 1)
+    run("make",f"-j{jobs}",cwd=build,env=environment);run("make","install",cwd=build,env=environment)
     manifest={"platform":args.platform,"version":version,"sha256":checksum,"nv_headers":NV_REV,
         "flags":flags,"decoders":decoders,"hwaccels":enabled("_HWACCEL")}
     (prefix/"build-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n")

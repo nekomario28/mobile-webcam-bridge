@@ -12,9 +12,17 @@ video = ["dep:ffmpeg-sys-next", "dep:bindgen"]
 capture = ["gui", "dep:image"]
 
 [dependencies]
+io-budget = { git = "https://github.com/nekomario28/io-budget", rev = "b018023" }
+# Already in the tree through rustls: no new crate/version. The per-PC key
+# generation/signing API usage still needs review independently of TLS.
+ring = "=0.17.14"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 rusb = "=0.9.4"
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"] }
+sha2 = "=0.10.9"
+# Already a GUI transitive dependency; scalar categories keep wire labels single-line.
+unicode-general-category = "=1.1.0"
 eframe = { version = "=0.36.2", default-features = false, features = ["accesskit", "default_fonts", "wgpu_no_default_features", "wayland", "x11"], optional = true }
 fontdb = { version = "=0.24.0", optional = true }
 sys-locale = { version = "=0.3.2", optional = true }

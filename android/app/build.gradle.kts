@@ -23,6 +23,10 @@ android {
     namespace = "dev.nekomario.amb"
     compileSdk = 35
 
+    // Tests use the same public wire/signature fixtures as Rust and JVM tests,
+    // packaged only in the instrumentation APK, not the production app.
+    sourceSets.getByName("androidTest").assets.srcDir(rootProject.file("../protocol/fixtures"))
+
     defaultConfig {
         applicationId = "dev.nekomario.amb"
         minSdk = 26

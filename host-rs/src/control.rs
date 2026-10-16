@@ -1,4 +1,4 @@
-use crate::{settings::Settings, usb::DeviceId};
+use crate::{quality::Mode, settings::Settings, usb::DeviceId};
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, Write};
 
@@ -7,14 +7,22 @@ pub const MAX_LINE: usize = 16 * 1024;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Boxed: the settings payload dwarfs the other variants, and every
+    /// variant of this channel message is copied through a pipe.
     Start {
-        settings: Settings,
+        settings: Box<Settings>,
         device: Option<DeviceId>,
     },
     Transform {
         rotation: u16,
         mirror: bool,
         vertical_flip: bool,
+    },
+    /// Request a capture-mode switch (slice 02); the worker drives the apply.
+    PrepareQuality {
+        width: u16,
+        height: u16,
+        fps: u16,
     },
     Stop {},
 }
@@ -27,13 +35,39 @@ pub enum Event {
     },
     Connecting {},
     Waiting {},
+    /// This exact local key is awaiting an explicit tap on the phone.
+    AuthorizationPending {
+        client_id: String,
+    },
     Stats {
         decoded: u64,
         submitted: u64,
         active: bool,
         width: u32,
         height: u32,
+        /// Configured capture target, not consumer or measured frame rate.
+        target_fps: u32,
         decoder: String,
+    },
+    /// The phone advertised its supported modes and permission state.
+    QualityCapabilities {
+        permission: u8,
+        revision: u16,
+        epoch: u32,
+        modes: Vec<Mode>,
+    },
+    QualityProgress {
+        staged: bool,
+    },
+    QualityApplied {
+        width: u16,
+        height: u16,
+        fps: u16,
+    },
+    QualityFailed {
+        reason: String,
+        /// Failure crossed a destructive boundary; close rather than retry.
+        terminal: bool,
     },
     Error {
         message: String,

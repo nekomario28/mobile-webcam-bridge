@@ -1,9 +1,13 @@
+pub mod client_auth;
 pub mod control;
 #[cfg(feature = "gui")]
 pub mod gui;
+pub mod identity;
 #[cfg(feature = "video")]
 pub mod output;
 pub mod platform;
+pub mod quality;
+pub mod secure;
 #[cfg(feature = "gui")]
 pub mod session;
 pub mod settings;
