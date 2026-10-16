@@ -46,6 +46,59 @@ class PhoneAuthorizationTest {
         override fun close() { owner.close() }
     }
 
+    private fun promptly(block: () -> Unit): Boolean {
+        val done = java.util.concurrent.CountDownLatch(1)
+        Thread({ try { block() } finally { done.countDown() } }, "auth-promptly").apply { isDaemon = true }.start()
+        return done.await(2, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+    /**
+     * A stalled Android Keystore/commit call must not delay revoking access:
+     * expiry and owner close may not queue behind persistence (AUTHREV-002).
+     */
+    @Test fun expiry_and_owner_close_do_not_wait_for_a_slow_persistence_write() {
+        val key = keyPair()
+        val id = ClientAuthorization.deriveClientId(key.first)
+        val disk = java.util.concurrent.atomic.AtomicReference(
+            ClientRecordCodec.encode(listOf(record(key.first, now + 2))))
+        val seconds = java.util.concurrent.atomic.AtomicLong(now)
+        val writing = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val repository = ClientRepository({ disk.get() }, {
+            writing.countDown()
+            check(release.await(10, java.util.concurrent.TimeUnit.SECONDS)) { "test did not release the writer" }
+            disk.set(it.copyOf())
+        })
+        PhoneAuthorization(repository, { seconds.get() }, { 0L },
+            onStorageFailure = { fail("unexpected storage failure") }).use { owner ->
+            val sent = CopyOnWriteArrayList<Pair<Byte, ByteArray>>()
+            val closed = CopyOnWriteArrayList<String>()
+            val session = owner.openSession(Wire.AUTH_LAN, ClientCryptoFixture.phoneBinding(),
+                { type, payload -> sent += type to payload }, {}, { closed += it })
+            session.start()
+            val challenge = Wire.decodeClientChallenge(sent.last().second)
+            val signature = sign(key.second, Wire.clientAuthMessage(Wire.AUTH_LAN,
+                challenge.phoneBinding, challenge.nonce, key.first, "studio-pc"))
+            session.receive(Wire.Header(Wire.TYPE_CLIENT_AUTH, 0, 1, 0, 0),
+                Wire.encodeClientAuth(Wire.ClientAuth(Wire.CLIENT_AUTH_VERSION, key.first, "studio-pc", signature)))
+            assertTrue(session.isAuthorized())
+            val writer = Thread({ owner.revoke(id) }, "auth-blocked-writer").apply {
+                isDaemon = true; start()
+            }
+            try {
+                assertTrue(writing.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                seconds.set(now + 2)
+                assertTrue("expiry waited for the blocked persistence write", promptly { owner.tick() })
+                assertFalse(session.isAuthorized())
+                assertEquals(1, closed.size)
+                assertTrue("owner close waited for the blocked persistence write", promptly { owner.close() })
+            } finally {
+                release.countDown()
+                writer.join(3000)
+            }
+        }
+    }
+
     @Test fun an_empty_list_requires_a_live_phone_approval_saved_before_authorization() {
         Harness().use { h ->
             h.open(); h.receive(h.proof(keyPair()))

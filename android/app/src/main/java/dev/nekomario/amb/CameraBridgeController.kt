@@ -50,7 +50,8 @@ class CameraBridgeController(
             }
         }
 
-        val session = CameraEncoderSession(context, request, listener)
+        val session = CameraEncoderSession(context, request, listener,
+            authorized = { this.session.clientAuthorization?.isAuthorized() == true })
         cameraSession = session
         this.session.attachIdrRequester { session.requestIdr() }
         try {

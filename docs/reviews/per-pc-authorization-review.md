@@ -86,3 +86,43 @@ permanent stall or Java monitor deadlock was established.
 `BLOCK` on AUTHREV-001. Resolve AUTHREV-002 with a focused blocking-persistence
 discriminator. The independent-review authorization granted for this run is
 consumed; no further independent model review is authorized.
+
+## Repair after the review (owner, not independently re-reviewed)
+
+Both findings were repaired with a guard for each. Because the review
+authorization is consumed, this repair has **not** been independently
+re-reviewed; the guards and CI are the evidence, and the merge decision is the
+owner's to re-take.
+
+- **AUTHREV-001.** `AuthorizedMediaSession` now takes a required
+  `onCaptureCancelled: (MediaSession) -> Unit` (a new transport cannot silently
+  omit it: it is a compile error) and invokes it once from `closeMedia()`, on the
+  authorization/transport path. `MainActivity` hands off to a dedicated
+  non-UI, non-authorization thread that detaches and closes the
+  `CameraBridgeController`; installing and detaching the bridge is serialised so
+  exactly one path closes it, and a session that no longer matches is skipped.
+  `CameraEncoderSession` additionally checks the session's authorization on the
+  camera thread before `onOpened`/`onConfigured` can install repeating capture,
+  so an in-flight Camera2 callback cannot start capture after authorization
+  ended. UI text/controller state still runs on the main thread, which no longer
+  gates the producer stop.
+- **AUTHREV-002.** `ClientRepository` publishes volatile immutable snapshots and
+  `snapshot()` is wait-free; `PhoneAuthorization` performs approval/revoke/renew
+  persistence outside the owner monitor (the repository serialises its own
+  mutations). A stalled Keystore/commit call therefore no longer blocks the
+  expiry timer, the frame gate or session teardown. Approve still publishes
+  durably before granting, and the fail-closed latch is unchanged.
+
+Guard evidence (local, cache-only Kotlin/JVM route — not a Gradle/APK/device
+result): `expiry_and_owner_close_do_not_wait_for_a_slow_persistence_write` and
+`authorization_loss_cancels_capture_without_any_ui_or_main_thread_progress`.
+Both were run against the pre-repair behaviour and failed there —
+`expected:<1> but was:<0>` for cancellation, and `expiry waited for the blocked
+persistence write` — then passed on the repaired tree (96 cases). The mutating
+runs were restored byte-for-byte from copies taken before each mutation.
+
+Still unverified by this repair: the Android Camera2/MediaCodec teardown itself
+(camera threads, `codec.stop()` timing and any join against the authorization
+monitor) has no device execution; it is reasoned from the code and must be
+confirmed by the API 35 conformance run and physical capture before any claim
+that authorization loss stops the camera on a device.

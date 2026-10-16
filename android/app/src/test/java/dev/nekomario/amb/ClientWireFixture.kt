@@ -10,6 +10,7 @@ object ClientWireFixture {
         val owner = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = { error("fixture storage failed") })
         return LanSession(socket, { _, _ -> owner.close() }, owner, ClientCryptoFixture.phoneBinding(),
             onAuthorization = { it.clientAuthorization?.takeIf { gate -> gate.pending() != null }?.approve() },
+            onCaptureCancelled = { owner.close() },
             capabilities = capabilities, onQuality = onQuality)
     }
 

@@ -40,7 +40,8 @@ class MainActivity : Activity() {
     private var receiverRegistered = false
     private var connectionMode = ConnectionMode.USB
     private var accessoryFd: ParcelFileDescriptor? = null
-    private var session: MediaSession? = null
+    // Read from the capture-teardown thread as well as the UI thread.
+    @Volatile private var session: MediaSession? = null
     private var authorizationOwner: PhoneAuthorization? = null
     private lateinit var approvalUi: ClientApprovalUi
     private var lanServer: LanServer? = null
@@ -58,7 +59,16 @@ class MainActivity : Activity() {
     private lateinit var pairAction: Button
     private lateinit var rotateAction: Button
     private lateinit var pairInfo: TextView
-    private var cameraBridge: CameraBridgeController? = null
+    // The producer teardown runs off the UI thread, so installing and detaching
+    // the bridge is serialised: exactly one path closes a given bridge.
+    private val cameraLock = Any()
+    private var installedBridge: CameraBridgeController? = null
+    private var cameraBridge: CameraBridgeController?
+        get() = synchronized(cameraLock) { installedBridge }
+        set(value) { synchronized(cameraLock) { installedBridge = value } }
+    private val captureTeardown = java.util.concurrent.Executors.newSingleThreadExecutor { job ->
+        Thread(job, "mwb-capture-teardown").apply { isDaemon = true }
+    }
     private lateinit var cameraButton: Button
     private lateinit var details: TextView
     private var cameraStartRequested = false
@@ -380,6 +390,26 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * Authorization ended: stop the camera/encoder without the UI thread.
+     *
+     * The producer teardown can wait on the encoder callback thread, so it must
+     * run neither on the authorization monitor nor on the main thread. UI text
+     * and control state stay on the main thread in [onAuthorizationChanged].
+     */
+    private fun onCaptureCancelled(origin: MediaSession) {
+        // Never throw into authorization teardown: during shutdown the executor
+        // is already stopped and the UI path owns the final teardown.
+        runCatching {
+            captureTeardown.execute {
+                val current = synchronized(cameraLock) {
+                    if (session === origin) installedBridge.also { installedBridge = null } else null
+                }
+                if (current != null) runCatching { current.close() }
+            }
+        }
+    }
+
     private fun onAuthorizationChanged(origin: MediaSession) {
         handler.post {
             if (session !== origin || isFinishing || isDestroyed) return@post
@@ -442,6 +472,7 @@ class MainActivity : Activity() {
             identity = identity,
             authorization = authorization,
             onAuthorization = ::onAuthorizationChanged,
+            onCaptureCancelled = ::onCaptureCancelled,
             onSession = { lanSession, connected ->
                 handler.post {
                     if (lanServer !== server) {
@@ -568,6 +599,7 @@ class MainActivity : Activity() {
             pfd = pfd,
             authorization = authorization,
             onAuthorization = ::onAuthorizationChanged,
+            onCaptureCancelled = ::onCaptureCancelled,
             capabilities = { advertisedCapabilities },
             onQuality = ::onQualityCommand,
             onProgress = { count ->
@@ -756,8 +788,7 @@ class MainActivity : Activity() {
 
     private fun stopCamera(clearStartRequest: Boolean = true, cancelQuality: Boolean = true) {
         if (clearStartRequest) cameraStartRequested = false
-        val current = cameraBridge
-        cameraBridge = null
+        val current = synchronized(cameraLock) { installedBridge.also { installedBridge = null } }
         current?.close()
         if (cancelQuality) qualityController?.cancel()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -818,6 +849,7 @@ class MainActivity : Activity() {
         stopConnections()
         authorizationOwner?.close()
         authorizationOwner = null
+        captureTeardown.shutdownNow()
         if (receiverRegistered) unregisterReceiver(permissionReceiver)
         super.onDestroy()
     }

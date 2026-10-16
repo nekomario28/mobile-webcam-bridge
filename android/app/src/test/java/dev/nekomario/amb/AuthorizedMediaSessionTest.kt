@@ -30,13 +30,54 @@ class AuthorizedMediaSessionTest {
             ServerSocket(0).use { listener ->
                 Socket("127.0.0.1", listener.localPort).use { client ->
                     client.soTimeout = 200
-                    LanSession(listener.accept(), { _, _ -> }, owner, ClientCryptoFixture.phoneBinding(), {}).use { session ->
+                    LanSession(listener.accept(), { _, _ -> }, owner, ClientCryptoFixture.phoneBinding(), {}, {}).use { session ->
                         session.close()
                         eof(client)
                         session.close()
                         session.start { fail("a closed session was restarted") }
                         assertFalse(session.isActive())
                         assertNull(session.clientAuthorization)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun authorization_loss_cancels_capture_without_any_ui_or_main_thread_progress() {
+        for (transition in listOf("revoke", "expire")) {
+            val key = ClientCryptoFixture.keyPair()
+            val seconds = java.util.concurrent.atomic.AtomicLong(1_800_000_000L)
+            var disk: ByteArray? = ClientRecordCodec.encode(listOf(ClientAuthorization.Client(
+                ClientAuthorization.deriveClientId(key.first), key.first, "test-pc",
+                seconds.get(), seconds.get() + 2)))
+            val repository = ClientRepository({ disk }, { disk = it.copyOf() })
+            PhoneAuthorization(repository, { seconds.get() }, { 0L },
+                onStorageFailure = { fail("unexpected storage failure") }).use { owner ->
+                ServerSocket(0).use { listener ->
+                    Socket("127.0.0.1", listener.localPort).use { client ->
+                        client.soTimeout = 2000
+                        val cancelled = AtomicInteger()
+                        LanSession(listener.accept(), { _, _ -> }, owner, ClientCryptoFixture.phoneBinding(), {},
+                            onCaptureCancelled = { cancelled.incrementAndGet() },
+                            capabilities = { Wire.Capabilities(1, 0, 1, 0, emptyList()) }).use { session ->
+                            session.start()
+                            send(client, Wire.TYPE_CLIENT_AUTH, proof(client, key))
+                            assertEquals(Wire.AUTH_AUTHORIZED,
+                                Wire.decodeClientAuthResult(read(client, Wire.TYPE_CLIENT_AUTH_RESULT)).status)
+                            read(client, Wire.TYPE_QUALITY_CAPABILITIES)
+                            assertEquals("no cancellation while authorized", 0, cancelled.get())
+                            if (transition == "revoke") {
+                                owner.revoke(ClientAuthorization.deriveClientId(key.first))
+                            } else {
+                                seconds.addAndGet(2)
+                                owner.tick()
+                            }
+                            assertFalse(transition, session.clientAuthorization!!.isAuthorized())
+                            assertEquals("$transition must cancel the producer without UI progress",
+                                1, cancelled.get())
+                            session.close()
+                            assertEquals("cancellation fires once per session", 1, cancelled.get())
+                        }
                     }
                 }
             }
@@ -51,7 +92,7 @@ class AuthorizedMediaSessionTest {
                 ServerSocket(0).use { listener ->
                     Socket("127.0.0.1", listener.localPort).use { client ->
                         client.soTimeout = 2000
-                        LanSession(listener.accept(), { _, _ -> }, owner, ClientCryptoFixture.phoneBinding(), {},
+                        LanSession(listener.accept(), { _, _ -> }, owner, ClientCryptoFixture.phoneBinding(), {}, {},
                             capabilities = { Wire.Capabilities(1, 0, 1, 0, emptyList()) },
                             onQuality = { _, _ -> calls.incrementAndGet() }).use { session ->
                             session.start()
@@ -75,7 +116,7 @@ class AuthorizedMediaSessionTest {
             ServerSocket(0).use { listener ->
                 Socket("127.0.0.1", listener.localPort).use { client ->
                     client.soTimeout = 2000
-                    LanSession(listener.accept(), { _, _ -> }, owner, ClientCryptoFixture.phoneBinding(), {},
+                    LanSession(listener.accept(), { _, _ -> }, owner, ClientCryptoFixture.phoneBinding(), {}, {},
                         capabilities = { Wire.Capabilities(1, 0, 1, 0, emptyList()) }).use { session ->
                         session.start()
                         send(client, Wire.TYPE_CLIENT_AUTH, proof(client, key))
@@ -114,7 +155,7 @@ class AuthorizedMediaSessionTest {
             ServerSocket(0).use { listener ->
                 Socket("127.0.0.1", listener.localPort).use { client ->
                     client.soTimeout = 2000
-                    LanSession(listener.accept(), { _, _ -> }, owner, ClientCryptoFixture.phoneBinding(), {}).use { session ->
+                    LanSession(listener.accept(), { _, _ -> }, owner, ClientCryptoFixture.phoneBinding(), {}, {}).use { session ->
                         session.start()
                         send(client, Wire.TYPE_CLIENT_AUTH, proof(client, key))
                         assertEquals(Wire.AUTH_PENDING, Wire.decodeClientAuthResult(read(client, Wire.TYPE_CLIENT_AUTH_RESULT)).status)

@@ -16,6 +16,12 @@ class CameraEncoderSession(
     private val context: Context,
     private val requested: Request,
     private val listener: Listener,
+    /**
+     * The producer's own view of whether capture is still permitted, checked on
+     * the camera thread. A Camera2 callback that arrives after authorization
+     * ended must not install repeating capture (AUTHREV-001).
+     */
+    private val authorized: () -> Boolean = { true },
 ) : AutoCloseable {
     data class Request(
         val mode: CaptureModes.CaptureMode,
@@ -86,8 +92,9 @@ class CameraEncoderSession(
             mode.cameraId,
             object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
-                    if (closed.get()) {
+                    if (closed.get() || !authorized()) {
                         device.close()
+                        if (!closed.get()) close()
                         return
                     }
                     camera = device
@@ -119,8 +126,9 @@ class CameraEncoderSession(
             listOf(surface),
             object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
-                    if (closed.get()) {
+                    if (closed.get() || !authorized()) {
                         session.close()
+                        if (!closed.get()) close()
                         return
                     }
                     captureSession = session

@@ -75,29 +75,34 @@ class ClientRepository(
     read: () -> ByteArray?,
     private val write: (ByteArray) -> Unit,
 ) {
-    private var clients = read()?.let(ClientRecordCodec::decode) ?: emptyList()
-    private var healthy = true
+    // Volatile immutable snapshots, published only after a successful write.
+    // A reader must never queue behind a slow Keystore/commit call: the expiry
+    // timer and the frame gate decide whether access continues, and delaying
+    // them delays revoking access (AUTHREV-002).
+    @Volatile private var clients = read()?.let(ClientRecordCodec::decode) ?: emptyList()
+    @Volatile private var healthy = true
 
-    @Synchronized fun snapshot(): List<ClientAuthorization.Client> {
+    /** Wait-free; the returned list is never mutated in place. */
+    fun snapshot(): List<ClientAuthorization.Client> {
         check(healthy) { "authorization storage failed; reconnect after resolving storage" }
-        return clients.toList()
+        return clients
     }
 
     @Synchronized fun approve(clientId: ByteArray, key: ByteArray, label: String, now: Long) {
-        val next = ClientAuthorization.approve(snapshot(), clientId, key, label, now)
+        val next = ClientAuthorization.approve(clients, clientId, key, label, now)
             ?: error("PC approval is invalid or the authorization list is full")
         publish(next)
     }
 
     @Synchronized fun revoke(clientId: ByteArray) {
         require(clientId.size == ClientAuthorization.CLIENT_ID_BYTES)
-        val before = snapshot()
+        val before = clients
         val next = ClientAuthorization.revoke(before, clientId)
         if (next != before) publish(next)
     }
 
     @Synchronized fun renew(clientId: ByteArray, now: Long) {
-        val before = snapshot()
+        val before = clients
         require(before.any { it.clientId.contentEquals(clientId) }) { "PC is no longer registered" }
         publish(ClientAuthorization.renew(before, clientId, now))
     }

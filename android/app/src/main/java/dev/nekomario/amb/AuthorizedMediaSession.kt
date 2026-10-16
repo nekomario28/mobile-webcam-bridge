@@ -13,9 +13,17 @@ abstract class AuthorizedMediaSession(
     private val capabilities: (() -> Wire.Capabilities?)?,
     private val onQuality: (MediaSession, Wire.HostCommand) -> Unit,
     private val onAuthorization: (MediaSession) -> Unit,
+    /**
+     * Authorization loss must reach the capture producer here, not through a UI
+     * callback a busy main thread can delay (AUTHREV-001). Required, so a new
+     * transport cannot silently skip it. Called at most once per session on the
+     * authorization/transport thread: hand off heavy teardown, never touch views.
+     */
+    private val onCaptureCancelled: (MediaSession) -> Unit,
     threadName: String,
 ) : MediaSession {
     private val idrRequester = AtomicReference<(() -> Unit)?>(null)
+    private val captureCancelled = java.util.concurrent.atomic.AtomicBoolean(false)
     private val outbound = FramedOutbound(output, { idrRequester.get()?.invoke() }, { failMedia(it) }, threadName = threadName)
     private lateinit var gate: PhoneAuthorization.Session
     override val clientAuthorization: PhoneAuthorization.Session? get() = if (::gate.isInitialized) gate else null
@@ -41,6 +49,7 @@ abstract class AuthorizedMediaSession(
 
     protected fun closeMedia() {
         idrRequester.set(null)
+        if (captureCancelled.compareAndSet(false, true)) onCaptureCancelled(this)
         clientAuthorization?.close()
         outbound.close()
     }

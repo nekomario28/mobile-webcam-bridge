@@ -11,10 +11,11 @@ class AccessorySession(
     private val onError: (String) -> Unit,
     authorization: PhoneAuthorization,
     onAuthorization: (MediaSession) -> Unit,
+    onCaptureCancelled: (MediaSession) -> Unit,
     capabilities: (() -> Wire.Capabilities?)? = null,
     onQuality: (MediaSession, Wire.HostCommand) -> Unit = { _, _ -> },
 ) : AuthorizedMediaSession(FileOutputStream(pfd.fileDescriptor), authorization, Wire.AUTH_USB, ByteArray(Wire.PHONE_BINDING_BYTES),
-    capabilities, onQuality, onAuthorization, "mwb-usb-writer") {
+    capabilities, onQuality, onAuthorization, onCaptureCancelled, "mwb-usb-writer") {
     private val running = AtomicBoolean(false)
     private var readerThread: Thread? = null
     private val input = FileInputStream(pfd.fileDescriptor)

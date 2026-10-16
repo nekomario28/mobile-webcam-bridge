@@ -135,20 +135,26 @@ A separately authorized, read-only independent model review of this committed
 scope reviewed `01cfcc2` and returned **BLOCK**: [review record and evidence
 boundary](../../docs/reviews/per-pc-authorization-review.md). Findings:
 
-- **AUTHREV-001 (Medium, blocker):** `AuthorizedMediaSession.closeMedia()` does
+- **AUTHREV-001 (Medium, blocker):** `AuthorizedMediaSession.closeMedia()` did
   not stop the Camera2/MediaCodec producer; only the main-thread `stopCamera()`
-  path does, so expiry/revocation leaves capture running until the UI thread
-  runs. Output remains gated and the transport closes — continued capture, not
-  post-revocation frame disclosure. This is the next implementation task.
-- **AUTHREV-002:** persistence holds the shared authorization monitor, so a
-  stalled Android Keystore/`commit()` call delays expiry and owner close. The
-owner reproduction failed closed (tick/close threads BLOCKED) and is recorded
-  as delayed teardown, not a bypass.
+  path did, so expiry/revocation left capture running until the UI thread ran.
+  Output remained gated and the transport closed — continued capture, not
+  post-revocation frame disclosure.
+- **AUTHREV-002:** persistence held the shared authorization monitor, so a
+  stalled Android Keystore/`commit()` call delayed expiry and owner close.
 
-**Do not merge or release this branch until AUTHREV-001 is repaired with a
-guard that fails on the old state.** The authorization previously granted for a
-single independent review is consumed; no further independent model review is
-authorized.
+Both are now repaired with one guard each: the session takes a required
+`onCaptureCancelled` sink (a transport cannot silently omit it) and stops the
+producer off the UI thread; the repository publishes wait-free snapshots and
+`PhoneAuthorization` writes outside its monitor. Each guard was run against the
+pre-repair behaviour and failed there before passing on the repaired tree; see
+the review record for the exact failures and the restore discipline.
+
+Boundaries: the repair is **not** independently re-reviewed (that authorization
+is consumed), and the Camera2/MediaCodec teardown has no device execution yet.
+Confirm it with the API 35 conformance run and physical capture before claiming
+that authorization loss stops the camera on a device. Do not treat the guards as
+independent security sign-off.
 
 ## Remaining acceptance and follow-through
 

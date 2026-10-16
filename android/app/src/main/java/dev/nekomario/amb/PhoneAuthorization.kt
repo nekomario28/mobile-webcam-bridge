@@ -17,8 +17,10 @@ class PhoneAuthorization(
 
     private val lock = Any()
     private var active: Session? = null
-    private var failed = false
-    private var closed = false
+    // Volatile: persistence runs outside the monitor, so the latching flags are
+    // read without it (AUTHREV-002).
+    @Volatile private var failed = false
+    @Volatile private var closed = false
     private var unknownCooldownUntil = Long.MIN_VALUE
     private val timer = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "mwb-client-authorization").apply { isDaemon = true }
@@ -26,21 +28,29 @@ class PhoneAuthorization(
 
     fun clients(): List<ClientAuthorization.Client> = synchronized(lock) { stored { repository.snapshot() } }
 
-    fun revoke(id: ByteArray) = synchronized(lock) {
+    // Durable writes never run under [lock]: a stalled Keystore/commit call
+    // would otherwise block the expiry timer, the frame gate and session
+    // teardown (AUTHREV-002). The repository serialises its own mutations, and
+    // a reader that still sees the old record is no worse off than before the
+    // write started.
+    fun revoke(id: ByteArray) {
         stored { repository.revoke(id) }
-        active?.checkAuthorized()
+        synchronized(lock) { active?.checkAuthorized() }
     }
 
-    fun renew(id: ByteArray) = synchronized(lock) {
+    fun renew(id: ByteArray) {
         stored { repository.renew(id, nowSeconds()) }
-        active?.checkAuthorized()
+        synchronized(lock) { active?.checkAuthorized() }
     }
 
+    /** Safe both inside and outside [lock]; [lock] is reentrant. */
     private fun <T> stored(action: () -> T): T {
         check(!failed && !closed) { "authorization storage unavailable" }
         try { return action() } catch (e: Exception) {
-            failed = true
-            active?.finish("Authorization storage failed")
+            synchronized(lock) {
+                failed = true
+                active?.finish("Authorization storage failed")
+            }
             onStorageFailure()
             throw e
         }
@@ -157,13 +167,19 @@ class PhoneAuthorization(
             if (active !== this || phase != Phase.PENDING) throw RequestEnded()
         }
 
-        fun approve() = synchronized(lock) {
-            requireLiveApproval()
-            val proposed = checkNotNull(candidate)
-            val id = proposed.clientId
-            stored { repository.approve(id, proposed.publicKey, proposed.label, nowSeconds()) }
-            val saved = stored { repository.snapshot() }.single { it.clientId.contentEquals(id) }
-            grant(saved.expiresAtUnixSeconds)
+        fun approve() {
+            val proposed = synchronized(lock) {
+                requireLiveApproval()
+                checkNotNull(candidate)
+            }
+            // Publish durably before granting, but never while holding the
+            // monitor: a stalled save must not delay expiry or teardown.
+            stored { repository.approve(proposed.clientId, proposed.publicKey, proposed.label, nowSeconds()) }
+            synchronized(lock) {
+                requireLiveApproval()
+                val saved = stored { repository.snapshot() }.single { it.clientId.contentEquals(proposed.clientId) }
+                grant(saved.expiresAtUnixSeconds)
+            }
         }
 
         fun reject() = synchronized(lock) {

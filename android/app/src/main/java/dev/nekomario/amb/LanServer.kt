@@ -22,10 +22,11 @@ class LanSession(
     authorization: PhoneAuthorization,
     phoneBinding: ByteArray,
     onAuthorization: (MediaSession) -> Unit,
+    onCaptureCancelled: (MediaSession) -> Unit,
     capabilities: (() -> Wire.Capabilities?)? = null,
     onQuality: (MediaSession, Wire.HostCommand) -> Unit = { _, _ -> },
 ) : AuthorizedMediaSession(socket.getOutputStream(), authorization, Wire.AUTH_LAN, phoneBinding,
-    capabilities, onQuality, onAuthorization, "mwb-lan-writer") {
+    capabilities, onQuality, onAuthorization, onCaptureCancelled, "mwb-lan-writer") {
     private val running = AtomicBoolean(false)
     private val input = socket.getInputStream()
     private var readerThread: Thread? = null
@@ -69,6 +70,7 @@ class LanServer(
     private val identity: SecureLanIdentity,
     private val authorization: PhoneAuthorization,
     private val onAuthorization: (MediaSession) -> Unit,
+    private val onCaptureCancelled: (MediaSession) -> Unit,
     private val port: Int = DEFAULT_PORT,
     private val onSession: (LanSession, Boolean) -> Unit,
     private val onStatus: (String) -> Unit,
@@ -148,7 +150,7 @@ class LanServer(
                         }
                         if (!error.isNullOrBlank()) onError(error)
                     }, authorization, identity.fingerprint().chunked(2).map { it.toInt(16).toByte() }.toByteArray(),
-                        onAuthorization, capabilities, onQuality)
+                        onAuthorization, onCaptureCancelled, capabilities, onQuality)
                     // Parallel handshakes must never seize the same receiver slot.
                     if (!active.compareAndSet(null, session)) {
                         runCatching { socket.close() }

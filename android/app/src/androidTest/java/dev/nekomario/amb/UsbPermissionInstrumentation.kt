@@ -73,6 +73,9 @@ class UsbPermissionInstrumentation : Instrumentation() {
             identity = identity,
             authorization = authorization,
             onAuthorization = { it.clientAuthorization?.takeIf { gate -> gate.pending() != null }?.approve() },
+            // No camera producer exists in this fixture; the conformance gate
+            // exercises the UI-side approval/renew/revoke path instead.
+            onCaptureCancelled = {},
             port = 48_527,
             onSession = { session, connected ->
                 if (connected) {

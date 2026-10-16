@@ -12,6 +12,14 @@
   stalled Keystore/commit call delays expiry and owner close. The owner
   reproduction failed closed and is documented as delayed teardown, not a bypass.
   See docs/reviews/per-pc-authorization-review.md for scope, evidence and limits.
+- Repair both findings. The session now takes a required capture-cancellation
+  sink, stops the Camera2/MediaCodec producer off the UI thread and refuses to
+  install repeating capture when authorization already ended. Authorization
+  persistence runs outside the owner monitor with wait-free published snapshots,
+  so a stalled Keystore/commit call no longer delays expiry or teardown. Each
+  repair keeps a regression that was observed failing on the pre-repair
+  behaviour; the Android teardown itself still needs device confirmation and has
+  not been independently re-reviewed.
 
 - Add real user-scoped PC identity persistence with atomic first-use publication,
   Unix private-file checks and Windows DPAPI ciphertext. Add a validated,
