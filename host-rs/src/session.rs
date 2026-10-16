@@ -311,6 +311,7 @@ impl Session {
                     }
                 }
                 Err(e) => {
+                    self.auxiliary.take();
                     self.state = State::Failed(e.to_string());
                 }
                 Ok(None) => ctx.request_repaint_after(Duration::from_millis(100)),
