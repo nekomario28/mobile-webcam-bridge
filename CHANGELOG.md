@@ -12,6 +12,15 @@
   stalled Keystore/commit call delays expiry and owner close. The owner
   reproduction failed closed and is documented as delayed teardown, not a bypass.
   See docs/reviews/per-pc-authorization-review.md for scope, evidence and limits.
+- Second independent review of the repair found that moving persistence off the
+owner monitor had made revocation stop taking effect until the write returned
+(REV-001) and a cancellation window while the camera session was constructed
+(REV-003). Revocation now takes effect in memory before the durable write, and
+`start`/`close` of the camera bridge are serialised; both keep a regression, and
+REV-001's guard was observed failing on the pre-repair behaviour. Remaining
+review items (UI-wiring guard gap, unbounded platform calls on the teardown
+thread, MediaCodec call sites, an Allow that persists while its request expires)
+are recorded as accepted limitations in the repair review record.
 - Repair both findings. The session now takes a required capture-cancellation
   sink, stops the Camera2/MediaCodec producer off the UI thread and refuses to
   install repeating capture when authorization already ended. Authorization

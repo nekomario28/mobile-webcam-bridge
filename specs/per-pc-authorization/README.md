@@ -150,11 +150,21 @@ producer off the UI thread; the repository publishes wait-free snapshots and
 pre-repair behaviour and failed there before passing on the repaired tree; see
 the review record for the exact failures and the restore discipline.
 
-Boundaries: the repair is **not** independently re-reviewed (that authorization
-is consumed), and the Camera2/MediaCodec teardown has no device execution yet.
-Confirm it with the API 35 conformance run and physical capture before claiming
-that authorization loss stops the camera on a device. Do not treat the guards as
-independent security sign-off.
+A second, separately authorized independent review then examined that repair
+and found a regression the repair itself introduced
+([repair review record](../../docs/reviews/per-pc-authorization-repair-review.md)):
+revocation stopped taking effect until the durable write returned, because the
+frame gate no longer blocked behind the write. Revocation now takes effect in
+memory before the write and a regression pins the frame gate; the same review
+found and this branch fixed a cancellation window during camera-session
+construction. Its remaining items are accepted as named limitations with
+discriminators (UI-wiring guard gap, unbounded platform calls on the teardown
+thread, MediaCodec call sites, an Allow that persists while its request expires).
+
+Boundaries: neither review is human security certification, and the
+Camera2/MediaCodec teardown has no device execution yet. Confirm it with the API
+35 conformance run and physical capture before claiming that authorization loss
+stops the camera on a device. Do not treat the guards as independent sign-off.
 
 ## Remaining acceptance and follow-through
 

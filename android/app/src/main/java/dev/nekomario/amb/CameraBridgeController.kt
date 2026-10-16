@@ -13,8 +13,11 @@ class CameraBridgeController(
 ) : AutoCloseable {
     private var cameraSession: CameraEncoderSession? = null
     private val closed = AtomicBoolean(false)
+    // Serialises start() against close(): a cancellation that lands while the
+    // camera session is being constructed must not be missed (REV-003).
+    private val lifecycle = Any()
 
-    fun start(request: CameraEncoderSession.Request) {
+    fun start(request: CameraEncoderSession.Request) = synchronized(lifecycle) {
         check(cameraSession == null) { "camera bridge already running" }
 
         check(!closed.get()) { "camera bridge is closed" }
@@ -50,14 +53,20 @@ class CameraBridgeController(
             }
         }
 
-        val session = CameraEncoderSession(context, request, listener,
+        val created = CameraEncoderSession(context, request, listener,
             authorized = { this.session.clientAuthorization?.isAuthorized() == true })
-        cameraSession = session
-        this.session.attachIdrRequester { session.requestIdr() }
+        cameraSession = created
         try {
-            session.start()
+            // close() may have run while the session was being constructed; in
+            // that case it saw no session to close, so close it here instead.
+            check(!closed.get()) { "camera bridge was closed while starting" }
+            this.session.attachIdrRequester { created.requestIdr() }
+            created.start()
         } catch (t: Throwable) {
-            close()
+            cameraSession = null
+            this.session.attachIdrRequester(null)
+            runCatching { created.close() }
+            session.stopVideo()
             throw t
         }
     }
@@ -67,11 +76,13 @@ class CameraBridgeController(
     }
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
+        val current = synchronized(lifecycle) {
+            if (!closed.compareAndSet(false, true)) return
+            cameraSession.also { cameraSession = null }
+        }
         session.stopVideo()
         session.attachIdrRequester(null)
-        runCatching { cameraSession?.close() }
-        cameraSession = null
+        runCatching { current?.close() }
     }
 
     private fun buildError(message: String, cause: Throwable?): String =

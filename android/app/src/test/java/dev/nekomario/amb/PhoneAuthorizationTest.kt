@@ -99,6 +99,57 @@ class PhoneAuthorizationTest {
         }
     }
 
+    /**
+     * Revocation must stop the live session before the durable write returns.
+     * Pre-repair the frame gate blocked on the write holder's monitor; after the
+     * write moved outside it, the gate read the pre-revocation list and kept
+     * authorizing (REV-001).
+     */
+    @Test fun revocation_stops_the_live_frame_gate_before_the_durable_write_returns() {
+        val key = keyPair()
+        val id = ClientAuthorization.deriveClientId(key.first)
+        val disk = java.util.concurrent.atomic.AtomicReference(
+            ClientRecordCodec.encode(listOf(record(key.first, now + ClientAuthorization.EXPIRY_SECONDS))))
+        val writing = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val repository = ClientRepository({ disk.get() }, {
+            writing.countDown()
+            check(release.await(10, java.util.concurrent.TimeUnit.SECONDS)) { "test did not release the writer" }
+            disk.set(it.copyOf())
+        })
+        PhoneAuthorization(repository, { now }, { 0L },
+            onStorageFailure = { fail("unexpected storage failure") }).use { owner ->
+            val sent = CopyOnWriteArrayList<Pair<Byte, ByteArray>>()
+            lateinit var session: PhoneAuthorization.Session
+            session = owner.openSession(Wire.AUTH_LAN, ClientCryptoFixture.phoneBinding(),
+                { type, payload -> sent += type to payload }, {}, {})
+            session.start()
+            val challenge = Wire.decodeClientChallenge(sent.last().second)
+            val signature = sign(key.second, Wire.clientAuthMessage(Wire.AUTH_LAN,
+                challenge.phoneBinding, challenge.nonce, key.first, "studio-pc"))
+            session.receive(Wire.Header(Wire.TYPE_CLIENT_AUTH, 0, 1, 0, 0),
+                Wire.encodeClientAuth(Wire.ClientAuth(Wire.CLIENT_AUTH_VERSION, key.first, "studio-pc", signature)))
+            assertTrue(session.isAuthorized())
+            val writer = Thread({ owner.revoke(id) }, "auth-blocked-revoke").apply {
+                isDaemon = true; start()
+            }
+            try {
+                assertTrue(writing.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                // Read the gate from another thread so a blocked gate fails the
+                // assertion instead of hanging the test.
+                val allowed = java.util.concurrent.atomic.AtomicBoolean(true)
+                Thread({ allowed.set(session.isAuthorized()) }, "auth-gate-reader").apply {
+                    isDaemon = true; start()
+                }
+                Thread.sleep(500)
+                assertFalse("revocation must stop the frame gate before the write returns", allowed.get())
+            } finally {
+                release.countDown()
+                writer.join(3000)
+            }
+        }
+    }
+
     @Test fun an_empty_list_requires_a_live_phone_approval_saved_before_authorization() {
         Harness().use { h ->
             h.open(); h.receive(h.proof(keyPair()))

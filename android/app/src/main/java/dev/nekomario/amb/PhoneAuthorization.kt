@@ -22,6 +22,9 @@ class PhoneAuthorization(
     @Volatile private var failed = false
     @Volatile private var closed = false
     private var unknownCooldownUntil = Long.MIN_VALUE
+    // Revocation must take effect before the durable write returns: a stalled
+    // Keystore/commit call must not keep the live session authorized (REV-001).
+    private val revokedIds = mutableSetOf<List<Byte>>()
     private val timer = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "mwb-client-authorization").apply { isDaemon = true }
     }.also { it.scheduleAtFixedRate({ tick() }, 250, 250, TimeUnit.MILLISECONDS) }
@@ -29,11 +32,16 @@ class PhoneAuthorization(
     fun clients(): List<ClientAuthorization.Client> = synchronized(lock) { stored { repository.snapshot() } }
 
     // Durable writes never run under [lock]: a stalled Keystore/commit call
-    // would otherwise block the expiry timer, the frame gate and session
-    // teardown (AUTHREV-002). The repository serialises its own mutations, and
-    // a reader that still sees the old record is no worse off than before the
-    // write started.
+    // would otherwise block the expiry timer and session teardown (AUTHREV-002).
+    // The repository serialises its own mutations. Revocation is different from
+    // renewal: it must stop the live session immediately, so it records the ID
+    // in memory first and only then persists (REV-001).
     fun revoke(id: ByteArray) {
+        synchronized(lock) {
+            require(id.size == ClientAuthorization.CLIENT_ID_BYTES)
+            revokedIds.add(id.toList())
+            active?.checkAuthorized()
+        }
         stored { repository.revoke(id) }
         synchronized(lock) { active?.checkAuthorized() }
     }
@@ -116,6 +124,10 @@ class PhoneAuthorization(
         internal fun checkAuthorized(): Boolean {
             if (phase != Phase.AUTHORIZED || active !== this || failed || closed) return false
             val key = checkNotNull(candidate)
+            if (revokedIds.contains(key.clientId.toList())) {
+                finish("PC authorization revoked or expired")
+                return false
+            }
             val record = try {
                 stored { repository.snapshot() }.firstOrNull { it.clientId.contentEquals(key.clientId) }
             } catch (_: Exception) { return false }
@@ -178,6 +190,9 @@ class PhoneAuthorization(
             synchronized(lock) {
                 requireLiveApproval()
                 val saved = stored { repository.snapshot() }.single { it.clientId.contentEquals(proposed.clientId) }
+                // A fresh approval supersedes an earlier in-memory revocation of
+                // the same PC, which only ever applied to the live session.
+                revokedIds.remove(proposed.clientId.toList())
                 grant(saved.expiresAtUnixSeconds)
             }
         }
