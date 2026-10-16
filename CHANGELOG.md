@@ -2,6 +2,13 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Extend the device acceptance to a mid-stream quality switch on a real Camera2
+  camera: PREPARE, exactly one pause barrier, COMMIT with the next epoch, an
+  applied result, a new VIDEO_CONFIG and keyframe for the target mode, then live
+  access units — followed by revocation, which still stops capture and releases
+  the camera. The protocol doc now states that a Commit with a stale epoch is
+  ignored without a reply, which this execution reproduced.
+
 - Close the review's UI-wiring guard gap: the authorization producer stop is now
   `CaptureCancellation`, a production class that owns its own daemon thread and
   cannot be pointed at the main looper. `MainActivity` holds the single instance,

@@ -44,6 +44,28 @@ import java.util.concurrent.atomic.AtomicReference
 internal class CameraTeardownInstrumentation(private val test: Instrumentation) {
     private val context: Context get() = test.targetContext
 
+    /** Production controller for the mid-stream switch; set before commands arrive. */
+    @Volatile private var qualityController: PhoneQualityController? = null
+
+    /** Epoch the peer must commit to; advanced when a switch applies. */
+    @Volatile private var admittedEpoch = 0
+
+    @Volatile private var switchRecord: SwitchRecord? = null
+
+    private class SwitchRecord(
+        val attempted: Boolean,
+        val pausedCount: Int,
+        val applied: Boolean,
+        val to: String,
+        val configs: Int,
+        val keyframes: Int,
+        val continued: Int,
+    ) {
+        val report: String
+            get() = if (!attempted) "unavailable (one supported mode)"
+            else "paused=$pausedCount applied=$applied to=$to configs=$configs keyframes=$keyframes continued=$continued"
+    }
+
     fun run(): String {
         var cameraId = ""
         var resolvedMode: CaptureModes.CaptureMode? = null
@@ -66,6 +88,7 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                 return "SKIP camera acceptance: no usable mode for $cameraId (${resolution.reason})"
         }
         val mode = checkNotNull(resolvedMode)
+        val modes = CaptureModes.supported(capabilities).take(Wire.MAX_QUALITY_MODES)
 
         // A disposable profile only: the workflow clears app data and grants
         // CAMERA before this runs. Never silently adopt existing state.
@@ -100,8 +123,9 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                         cancellations.countDown()
                         cancellation.cancel()
                     },
-                    capabilities = { Wire.Capabilities(1, Wire.PERMISSION_READY, 1, 0,
-                        CameraTeardownInstrumentation.capabilityModes(capabilities)) })
+                    onQuality = { _, command -> qualityController?.handle(command) },
+                    capabilities = { Wire.Capabilities(1, Wire.PERMISSION_READY,
+                        ADVERTISED_REVISION, admittedEpoch.toLong(), CameraTeardownInstrumentation.capabilityModes(capabilities)) })
                 session = active
                 active.start()
                 val clientSocket = client!!
@@ -141,6 +165,12 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                 }
                 val capturedAt = SystemClock.elapsedRealtime()
 
+                // Mid-stream switch on the real camera: the production controller
+                // drives the pause/commit/apply sequence, and this harness is the
+                // capture owner (close/open the bridge) exactly as the Activity is.
+                val switched = switchPhase(clientSocket, active, modes, mode, bridge)
+                switchRecord = switched
+
                 authorization.revoke(clientId)
 
                 // `closeMedia` clears the queue before it closes the writer, so
@@ -179,8 +209,8 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                 check(released) { "the camera was still held after authorization loss" }
                 return "PASS camera acceptance: real Camera2/MediaCodec capture stopped and the camera was " +
                     "released after revocation on $cameraId (${mode.width}x${mode.height}@${mode.targetFps}); " +
-                    "configs=$configurations aus=$accessUnits trailingAfterRevoke=$trailing " +
-                    "(emulated/virtual camera evidence, not physical hardware)"
+                    "configs=$configurations aus=$accessUnits trailingAfterRevoke=$trailing; " +
+                    "switch=${switched.report} (emulated/virtual camera evidence, not physical hardware)"
             }
         } catch (error: Throwable) {
             writeArtifact(cameraId, resolvedMode, -1, -1, -1, false, false, error.toString())
@@ -192,6 +222,147 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
             cancellation.shutdown()
             runCatching { authorization.close() }
         }
+    }
+
+    /**
+     * Mid-stream switch through the production controller: PREPARE -> pause
+     * barrier -> COMMIT -> applied, on a real Camera2/MediaCodec producer. This
+     * harness is the capture owner (close/open the bridge), as the Activity is.
+     */
+    private fun switchPhase(
+        socket: Socket,
+        session: MediaSession,
+        modes: List<CaptureModes.CaptureMode>,
+        current: CaptureModes.CaptureMode,
+        bridge: AtomicReference<CameraBridgeController?>,
+    ): SwitchRecord {
+        val target = modes.firstOrNull {
+            it.width != current.width || it.height != current.height || it.targetFps != current.targetFps
+        } ?: return SwitchRecord(false, 0, false, "-", 0, 0, 0)
+
+        val holder = AtomicReference<PhoneQualityController?>(null)
+        val controller = PhoneQualityController(
+            session = session,
+            revision = { ADVERTISED_REVISION },
+            modes = { modes },
+            permissionReady = { true },
+            foreground = { true },
+            streaming = { bridge.get() != null },
+            stopCapture = { runCatching { bridge.getAndSet(null)?.close() }; Unit },
+            startCapture = { requested ->
+                bridge.set(openBridge(session, requested) { width, height, fps ->
+                    holder.get()?.captureStarted(width, height, fps)
+                })
+            },
+            startingEpoch = admittedEpoch.toLong(),
+        )
+        holder.set(controller)
+        qualityController = controller
+
+        val requestId = 1L
+        val prepare = Wire.encodePrepareQuality(Wire.PrepareQuality(
+            requestId, ADVERTISED_REVISION, target.width, target.height, target.targetFps))
+        Wire.writeFrame(socket.getOutputStream(),
+            Wire.Header(Wire.TYPE_PREPARE_QUALITY, 0, 1, prepare.size, 0), prepare)
+
+        // Exactly one pause barrier, naming this request and the current epoch.
+        var paused = 0
+        var epoch: Wire.Epoch? = null
+        val pauseDeadline = SystemClock.elapsedRealtime() + 20_000
+        while (paused == 0) {
+            val frame = try {
+                Wire.readFrame(socket.getInputStream())
+            } catch (timeout: SocketTimeoutException) {
+                error("no pause barrier after PREPARE: the controller refused the target mode " +
+                    "(revision/mode/permission), it never staged")
+            }
+            if (frame.first.type == Wire.TYPE_PAUSED) {
+                paused++
+                epoch = Wire.decodeEpoch(frame.second)
+            }
+            check(SystemClock.elapsedRealtime() < pauseDeadline) { "no pause barrier after PREPARE" }
+        }
+        val committed = checkNotNull(epoch) { "pause barrier carried no epoch" }
+        check(committed.requestId == requestId) { "pause barrier named request ${committed.requestId}" }
+        // The barrier and the producer stop are both part of staging; wait briefly
+        // for the stop rather than assuming which one the machine emits first.
+        val stopDeadline = SystemClock.elapsedRealtime() + 5_000
+        while (bridge.get() != null) {
+            check(SystemClock.elapsedRealtime() < stopDeadline) { "the old producer survived the pause barrier" }
+            Thread.sleep(20)
+        }
+
+        // `QualitySwitch.Machine.Commit` requires `event.epoch == epoch + 1`: the
+        // barrier announces the epoch being left and the commit enters the next
+        // one. Committing the announced epoch is silently ignored as stale.
+        val commitEpoch = Wire.Epoch(requestId, committed.streamEpoch + 1)
+        Wire.writeFrame(socket.getOutputStream(), Wire.Header(Wire.TYPE_COMMIT_QUALITY, 0, 2, 8, 0),
+            Wire.encodeEpoch(commitEpoch))
+
+        var applied = false
+        var configs = 0
+        var keyframes = 0
+        var continued = 0
+        val applyDeadline = SystemClock.elapsedRealtime() + 40_000
+        while (continued < 2) {
+            val frame = try {
+                Wire.readFrame(socket.getInputStream())
+            } catch (timeout: SocketTimeoutException) {
+                // A commit whose epoch is stale is ignored by design, which looks
+                // exactly like this; name it instead of reporting a bare timeout.
+                error("no frame after COMMIT (applied=$applied configs=$configs keyframes=$keyframes): " +
+                    "a stale stream epoch is ignored by the machine")
+            }
+            val (header, payload) = frame
+            when (header.type) {
+                Wire.TYPE_QUALITY_RESULT -> {
+                    val result = Wire.decodeQualityResult(payload)
+                    if (result.status == Wire.RESULT_APPLIED) {
+                        applied = true
+                        check(result.appliedWidth == target.width && result.appliedHeight == target.height &&
+                            result.appliedFps == target.targetFps) {
+                            "applied mode mismatch: ${result.appliedWidth}x${result.appliedHeight}@${result.appliedFps}"
+                        }
+                    }
+                }
+                Wire.TYPE_VIDEO_CONFIG -> {
+                    configs++
+                    val width = (payload[0].toInt() and 0xff) or ((payload[1].toInt() and 0xff) shl 8)
+                    val height = (payload[2].toInt() and 0xff) or ((payload[3].toInt() and 0xff) shl 8)
+                    check(width == target.width && height == target.height) {
+                        "the new producer emitted ${width}x$height instead of ${target.width}x${target.height}"
+                    }
+                }
+                Wire.TYPE_VIDEO_AU -> {
+                    if (header.flags.toInt() and Wire.VIDEO_FLAG_KEYFRAME.toInt() != 0) keyframes++
+                    if (applied && keyframes > 0) continued++
+                }
+            }
+            check(SystemClock.elapsedRealtime() < applyDeadline) {
+                "the switch did not apply: applied=$applied configs=$configs keyframes=$keyframes"
+            }
+        }
+        check(applied) { "COMMIT never produced an applied result" }
+        check(configs >= 1 && keyframes >= 1) {
+            "the applied switch produced no config/keyframe (configs=$configs keyframes=$keyframes)"
+        }
+        check(controller.epoch == commitEpoch.streamEpoch) {
+            "the machine applied epoch ${controller.epoch} instead of ${commitEpoch.streamEpoch}"
+        }
+        admittedEpoch = controller.epoch.toInt()
+        return SwitchRecord(true, paused, applied,
+            "${target.width}x${target.height}@${target.targetFps}", configs, keyframes, continued)
+    }
+
+    private fun openBridge(
+        session: MediaSession,
+        mode: CaptureModes.CaptureMode,
+        onStarted: (Int, Int, Int) -> Unit,
+    ): CameraBridgeController {
+        val controller = CameraBridgeController(context, session, onStatus = {}, onError = {},
+            onStarted = { config -> onStarted(config.size.width, config.size.height, config.fps) })
+        controller.start(CameraEncoderSession.Request(mode))
+        return controller
     }
 
     /** Opens the camera again: success means the previous client released it. */
@@ -254,6 +425,14 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
             append("\"accessUnitsAfterRevoke\":$trailing,")
             append("\"transportTerminal\":$terminal,")
             append("\"cameraReleased\":$released")
+            switchRecord?.let {
+                append(",\"switchAttempted\":${it.attempted}")
+                append(",\"switchPaused\":${it.pausedCount}")
+                append(",\"switchApplied\":${it.applied}")
+                append(",\"switchTo\":\"${it.to}\"")
+                append(",\"switchConfigs\":${it.configs}")
+                append(",\"switchKeyframes\":${it.keyframes}")
+            }
             if (error != null) append(",\"error\":\"${error.replace("\"", "'")}\"")
             append("}")
         }
@@ -285,6 +464,9 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
     }
 
     private companion object {
+        /** Must match the advertised catalog revision the peer prepares against. */
+        const val ADVERTISED_REVISION = 1
+
         fun capabilityModes(capabilities: CaptureModes.Capabilities): List<Wire.QualityMode> =
             CaptureModes.supported(capabilities).take(Wire.MAX_QUALITY_MODES).map {
                 Wire.QualityMode(it.width, it.height, it.targetFps, it.bitrate)
