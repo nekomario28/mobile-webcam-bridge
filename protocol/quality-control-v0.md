@@ -84,8 +84,14 @@ ones that keep a partially received TLS record intact: a poll timeout returns
 `Ok(None)` with the AMB1 fragment retained, so neither an AMB1 frame boundary
 nor a TLS record is lost by a short poll.
 
-PAUSED must match the request and advertised ending epoch. Before Commit, the
-PC releases its output, decoder, conversion buffers and timestamp state. A
+PAUSED must match the request and advertised ending epoch. The barrier announces
+the epoch being left; Commit then enters the next one, so it carries
+`announced epoch + 1`. **A Commit with any other epoch is ignored without a
+reply** — the phone treats it as stale, which is why a peer that commits the
+announced epoch sees silence rather than an error. This was reproduced by
+execution: the device acceptance stalled with no frame after Commit until it
+committed `epoch + 1`. Before Commit, the PC releases its output, decoder,
+conversion buffers and timestamp state. A
 matching width/height/target-fps config only begins output confirmation: Applied
 requires a CONFIG_INCLUDED keyframe to decode and a converted frame to be
 successfully submitted to the output API. A staged idle mode still waits for the
