@@ -66,8 +66,10 @@ class MainActivity : Activity() {
     private var cameraBridge: CameraBridgeController?
         get() = synchronized(cameraLock) { installedBridge }
         set(value) { synchronized(cameraLock) { installedBridge = value } }
-    private val captureTeardown = java.util.concurrent.Executors.newSingleThreadExecutor { job ->
-        Thread(job, "mwb-capture-teardown").apply { isDaemon = true }
+    // Authorization loss must stop the producer off the UI thread; the owner is
+    // a production class so the dispatcher cannot silently become the main looper.
+    private val captureCancellation = CaptureCancellation {
+        synchronized(cameraLock) { installedBridge.also { installedBridge = null } }
     }
     private lateinit var cameraButton: Button
     private lateinit var details: TextView
@@ -398,16 +400,9 @@ class MainActivity : Activity() {
      * and control state stay on the main thread in [onAuthorizationChanged].
      */
     private fun onCaptureCancelled(origin: MediaSession) {
-        // Never throw into authorization teardown: during shutdown the executor
-        // is already stopped and the UI path owns the final teardown.
-        runCatching {
-            captureTeardown.execute {
-                val current = synchronized(cameraLock) {
-                    if (session === origin) installedBridge.also { installedBridge = null } else null
-                }
-                if (current != null) runCatching { current.close() }
-            }
-        }
+        // The owner is re-evaluated on the teardown thread, so a session that has
+        // already been replaced is never torn down by a stale cancellation.
+        captureCancellation.cancel { session === origin }
     }
 
     private fun onAuthorizationChanged(origin: MediaSession) {
@@ -849,7 +844,7 @@ class MainActivity : Activity() {
         stopConnections()
         authorizationOwner?.close()
         authorizationOwner = null
-        captureTeardown.shutdownNow()
+        captureCancellation.shutdown()
         if (receiverRegistered) unregisterReceiver(permissionReceiver)
         super.onDestroy()
     }
