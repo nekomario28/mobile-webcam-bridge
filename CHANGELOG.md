@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased — per-PC authorization (unreviewed integration work)
+## Unreleased — per-PC authorization (independent review returned a merge blocker)
+
+- Record the independently reviewed authorization checkpoint: one Medium blocker,
+  AUTHREV-001, because Camera2/MediaCodec teardown still depends on the main
+  thread rather than the authorization lifetime, so capture can outlive expiry or
+  revocation until the UI thread runs. Output remains gated, but the required
+  non-UI producer-cancellation path is not implemented. Merge is blocked until it
+  is, with a guard that fails on the old state.
+- Record AUTHREV-002: persistence holds the shared authorization monitor, so a
+  stalled Keystore/commit call delays expiry and owner close. The owner
+  reproduction failed closed and is documented as delayed teardown, not a bypass.
+  See docs/reviews/per-pc-authorization-review.md for scope, evidence and limits.
 
 - Add real user-scoped PC identity persistence with atomic first-use publication,
   Unix private-file checks and Windows DPAPI ciphertext. Add a validated,

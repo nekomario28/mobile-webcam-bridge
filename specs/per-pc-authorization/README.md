@@ -129,6 +129,27 @@ failed with `SocketTimeoutException` (1/94). Close now owns physical I/O regardl
 of start state, and a closed socket cannot restart its session. All 94 local JVM
 cases pass after the repair; its exact-head native workflows remain required.
 
+### Independent authorization review — merge blocked
+
+A separately authorized, read-only independent model review of this committed
+scope reviewed `01cfcc2` and returned **BLOCK**: [review record and evidence
+boundary](../../docs/reviews/per-pc-authorization-review.md). Findings:
+
+- **AUTHREV-001 (Medium, blocker):** `AuthorizedMediaSession.closeMedia()` does
+  not stop the Camera2/MediaCodec producer; only the main-thread `stopCamera()`
+  path does, so expiry/revocation leaves capture running until the UI thread
+  runs. Output remains gated and the transport closes — continued capture, not
+  post-revocation frame disclosure. This is the next implementation task.
+- **AUTHREV-002:** persistence holds the shared authorization monitor, so a
+  stalled Android Keystore/`commit()` call delays expiry and owner close. The
+owner reproduction failed closed (tick/close threads BLOCKED) and is recorded
+  as delayed teardown, not a bypass.
+
+**Do not merge or release this branch until AUTHREV-001 is repaired with a
+guard that fails on the old state.** The authorization previously granted for a
+single independent review is consumed; no further independent model review is
+authorized.
+
 ## Remaining acceptance and follow-through
 
 - Run the new exact-revision Android/Windows workflows; require semantic outcomes
@@ -136,8 +157,9 @@ cases pass after the repair; its exact-head native workflows remain required.
   Draft PR #11 and tracking issue #10.
 - Inspect EN/JA narrow/scaled captures and the action/storage/socket assertions.
   Do not call screenshots independent visual acceptance without that review.
-- Keep independent authorization-design review and physical USB/Camera2/native
-  consumer acceptance as separate, unpassed merge/release gates.
+- Independent authorization-design review happened once (above) and returned a
+  blocker; physical USB/Camera2/native consumer acceptance remain separate,
+  unpassed merge/release gates.
 - Explicit identity recovery UX is follow-up work. Preserve failed records and
   report unavailable storage rather than automatically reset or rotate keys.
 
