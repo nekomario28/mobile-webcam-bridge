@@ -271,6 +271,9 @@ jobs:
             echo "Instrumentation reported a failure" >&2
             exit 1
           fi
+          # The camera acceptance clears app data, so preserve the
+          # authorization UI captures from the first run before it does.
+          timeout 30 adb pull /sdcard/Android/data/dev.nekomario.amb/files/authorization-ui build/secure-wifi/authorization-ui
           # Camera acceptance: same disposable emulator, fresh profile and the
           # real Camera2/MediaCodec producer. This is emulated-camera evidence
           # and never substitutes for the physical-device gate in issue #8.
