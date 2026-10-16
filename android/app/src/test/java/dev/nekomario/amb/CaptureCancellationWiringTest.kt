@@ -13,7 +13,7 @@ import java.io.File
  */
 class CaptureCancellationWiringTest {
     private fun mainActivitySource(): String {
-        val roots = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
+        val roots = generateSequence(File(checkNotNull(System.getProperty("user.dir")))) { it.parentFile }
         val candidates = roots.flatMap { root ->
             listOf(
                 File(root, "android/app/src/main/java/dev/nekomario/amb/MainActivity.kt"),
