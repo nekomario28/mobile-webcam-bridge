@@ -77,7 +77,7 @@ jobs:
               timeout 10 adb logcat -d SecureWifiGate:I Conscrypt:V AndroidKeyStore:V AndroidRuntime:E '*:S' 2>/dev/null | tail -130 || true
             fi
           }
-          "$ANDROID_HOME/emulator/emulator" -avd secure-wifi -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 > build/secure-wifi/emulator.log 2>&1 &
+          "$ANDROID_HOME/emulator/emulator" -avd secure-wifi -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -camera-back emulated -memory 2048 -cores 2 > build/secure-wifi/emulator.log 2>&1 &
           emulator_pid=$!
           # A second EXIT trap previously replaced dump_android_failure,
           # hiding the Android-side exception behind OpenSSL EOF.
@@ -89,6 +89,11 @@ jobs:
             timeout 10 adb logcat -d -t 500 > build/secure-wifi/logcat.txt 2>&1 || true
             if ! timeout 30 adb pull /sdcard/Android/data/dev.nekomario.amb/files/authorization-ui build/secure-wifi/authorization-ui; then
               echo "Authorization UI artifact pull failed" >&2
+            fi
+            # Camera acceptance JSON, pulled while the device still exists; the
+            # pull legitimately fails when the run skipped for lack of a camera.
+            if ! timeout 30 adb pull /sdcard/Android/data/dev.nekomario.amb/files/camera-acceptance build/secure-wifi/camera-acceptance; then
+              echo "camera acceptance artifact not collected (absent when the run skipped)" >&2
             fi
             kill "$emulator_pid" 2>/dev/null || true
             trap - EXIT
@@ -265,6 +270,25 @@ jobs:
           if grep -q '^FAIL:' build/secure-wifi/instrumentation.log; then
             echo "Instrumentation reported a failure" >&2
             exit 1
+          fi
+          # Camera acceptance: same disposable emulator, fresh profile and the
+          # real Camera2/MediaCodec producer. This is emulated-camera evidence
+          # and never substitutes for the physical-device gate in issue #8.
+          adb shell pm clear dev.nekomario.amb
+          adb shell pm grant dev.nekomario.amb android.permission.CAMERA
+          adb shell am instrument -w -e disposableUi true -e cameraAcceptance true \
+            dev.nekomario.amb.test/dev.nekomario.amb.UsbPermissionInstrumentation \
+            > build/secure-wifi/camera-acceptance.log 2>&1 || true
+          cat build/secure-wifi/camera-acceptance.log
+          # Missing marker is a failure, never a silent pass.
+          grep -qE 'PASS camera acceptance|SKIP camera acceptance|FAIL:' build/secure-wifi/camera-acceptance.log
+          if grep -q '^FAIL:' build/secure-wifi/camera-acceptance.log; then
+            echo "Camera acceptance failed" >&2
+            exit 1
+          fi
+          if grep -q 'SKIP camera acceptance' build/secure-wifi/camera-acceptance.log; then
+            echo "camera acceptance SKIPPED on this emulator image (recorded; the physical gate stays open):"
+            grep 'SKIP camera acceptance' build/secure-wifi/camera-acceptance.log
           fi
       - name: Verify collected authorization UI artifacts
         if: always()

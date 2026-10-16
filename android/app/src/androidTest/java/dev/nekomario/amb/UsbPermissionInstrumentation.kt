@@ -280,6 +280,14 @@ class UsbPermissionInstrumentation : Instrumentation() {
             smokeClientStorage()
             smokeClientSignatures()
             if (Build.VERSION.SDK_INT >= 29) smokeSecureWifi(context)
+            if (arguments?.getBoolean("cameraAcceptance") == true) {
+                // Separate entry point: the workflow clears app data and grants
+                // CAMERA first, and the acceptance has its own marker so a
+                // skipped run cannot be mistaken for a verified one.
+                val marker = CameraTeardownInstrumentation(this).run()
+                finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "$marker\n") })
+                return
+            }
             ClientAuthorizationUiInstrumentation(this).run()
             finish(Activity.RESULT_OK, Bundle().apply {
                 putString("stream", "PASS USB permission, encrypted client storage, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection, host handshake, approval UI and live revocation\n")
