@@ -262,6 +262,14 @@ class UsbPermissionInstrumentation : Instrumentation() {
                 (Build.HARDWARE.contains("ranchu") || Build.PRODUCT.startsWith("sdk_gphone"))) {
                 "Conformance requires an explicitly disposable API 35 emulator (-e disposableUi true)"
             }
+            if (cameraAcceptance) {
+                // No preamble here: the Wi-Fi smoke test expects an external TLS
+                // client that this invocation does not run, and the camera
+                // acceptance only needs the disposable check above.
+                val marker = CameraTeardownInstrumentation(this).run()
+                finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "$marker\n") })
+                return
+            }
             check(context.getSharedPreferences("secure_wifi", Context.MODE_PRIVATE).all.isEmpty() &&
                 ClientStore(context).repository.snapshot().isEmpty()) { "Refusing to use an existing app profile" }
             val stale = MainActivity.createUsbPermissionRequest(context, "old-activity")
@@ -282,14 +290,6 @@ class UsbPermissionInstrumentation : Instrumentation() {
             smokeClientStorage()
             smokeClientSignatures()
             if (Build.VERSION.SDK_INT >= 29) smokeSecureWifi(context)
-            if (cameraAcceptance) {
-                // Separate entry point: the workflow clears app data and grants
-                // CAMERA first, and the acceptance has its own marker so a
-                // skipped run cannot be mistaken for a verified one.
-                val marker = CameraTeardownInstrumentation(this).run()
-                finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "$marker\n") })
-                return
-            }
             ClientAuthorizationUiInstrumentation(this).run()
             finish(Activity.RESULT_OK, Bundle().apply {
                 putString("stream", "PASS USB permission, encrypted client storage, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection, host handshake, approval UI and live revocation\n")
