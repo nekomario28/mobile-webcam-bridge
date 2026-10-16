@@ -66,6 +66,11 @@ class MainActivity : Activity() {
     private var cameraBridge: CameraBridgeController?
         get() = synchronized(cameraLock) { installedBridge }
         set(value) { synchronized(cameraLock) { installedBridge = value } }
+    // Authorization loss must stop the producer off the UI thread; the owner is
+    // a production class so the dispatcher cannot silently become the main looper.
+    private val captureCancellation = CaptureCancellation {
+        synchronized(cameraLock) { installedBridge.also { installedBridge = null } }
+    }
     private lateinit var cameraButton: Button
     private lateinit var details: TextView
     private var cameraStartRequested = false
@@ -395,9 +400,9 @@ class MainActivity : Activity() {
      * and control state stay on the main thread in [onAuthorizationChanged].
      */
     private fun onCaptureCancelled(origin: MediaSession) {
-        // Pre-repair form on purpose: this is the AUTHREV-001 defect, kept only long
-        // enough to watch the new guards fail.
-        handler.post { if (session === origin) stopCamera() }
+        // The owner is re-evaluated on the teardown thread, so a session that has
+        // already been replaced is never torn down by a stale cancellation.
+        captureCancellation.cancel { session === origin }
     }
 
     private fun onAuthorizationChanged(origin: MediaSession) {
@@ -839,7 +844,7 @@ class MainActivity : Activity() {
         stopConnections()
         authorizationOwner?.close()
         authorizationOwner = null
-
+        captureCancellation.shutdown()
         if (receiverRegistered) unregisterReceiver(permissionReceiver)
         super.onDestroy()
     }
