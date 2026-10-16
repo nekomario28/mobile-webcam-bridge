@@ -292,11 +292,12 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
             Thread.sleep(20)
         }
 
-        // The pause barrier announces the epoch it is leaving; the commit must
-        // carry the epoch the machine moved to (the JVM reference does the same).
-        // `controller.epoch` is authoritative, so a stale commit is impossible.
+        // `QualitySwitch.Machine.Commit` requires `event.epoch == epoch + 1`: the
+        // barrier announces the epoch being left and the commit enters the next
+        // one. Committing the announced epoch is silently ignored as stale.
+        val commitEpoch = Wire.Epoch(requestId, committed.streamEpoch + 1)
         Wire.writeFrame(socket.getOutputStream(), Wire.Header(Wire.TYPE_COMMIT_QUALITY, 0, 2, 8, 0),
-            Wire.encodeEpoch(Wire.Epoch(requestId, controller.epoch)))
+            Wire.encodeEpoch(commitEpoch))
 
         var applied = false
         var configs = 0
@@ -344,6 +345,9 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
         check(applied) { "COMMIT never produced an applied result" }
         check(configs >= 1 && keyframes >= 1) {
             "the applied switch produced no config/keyframe (configs=$configs keyframes=$keyframes)"
+        }
+        check(controller.epoch == commitEpoch.streamEpoch) {
+            "the machine applied epoch ${controller.epoch} instead of ${commitEpoch.streamEpoch}"
         }
         admittedEpoch = controller.epoch.toInt()
         return SwitchRecord(true, paused, applied,
