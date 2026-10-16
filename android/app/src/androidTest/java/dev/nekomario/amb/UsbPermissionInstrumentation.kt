@@ -18,10 +18,12 @@ import java.util.concurrent.TimeUnit
 /** Exercises the platform notification boundary without pretending a USB device is attached. */
 class UsbPermissionInstrumentation : Instrumentation() {
     private var disposableUi = false
+    private var cameraAcceptance = false
 
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         disposableUi = arguments?.getString("disposableUi") == "true"
+        cameraAcceptance = arguments?.getString("cameraAcceptance") == "true"
         start()
     }
 
@@ -280,7 +282,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
             smokeClientStorage()
             smokeClientSignatures()
             if (Build.VERSION.SDK_INT >= 29) smokeSecureWifi(context)
-            if (arguments?.getBoolean("cameraAcceptance") == true) {
+            if (cameraAcceptance) {
                 // Separate entry point: the workflow clears app data and grants
                 // CAMERA first, and the acceptance has its own marker so a
                 // skipped run cannot be mistaken for a verified one.
