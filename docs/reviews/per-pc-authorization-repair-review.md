@@ -69,13 +69,37 @@ cancellation sink it was given. Reverting `MainActivity.onCaptureCancelled` to
 `handler.post { stopCamera() }` — the original defect — would leave that test
 green, because the sink in the test is the test's own counter.
 
-Disposition: accepted as a named guard gap rather than papered over. The
-off-UI property is enforced by construction in `MainActivity` (the cancellation
-body only enqueues to a dedicated single-thread executor; there is no `handler`
-gate on that path) and can only be pinned by an on-device test, which the current
-conformance fixture cannot provide — its harness has no camera producer. The
-concrete check is listed for #8: with a camera attached, expire/revoke a grant
-while the main looper is deliberately busy and assert repeating capture stops.
+Disposition: **closed** rather than left as a gap. The producer stop now lives in
+`CaptureCancellation`, a production class that owns its own dedicated daemon
+thread, so its dispatcher cannot be parameterised to the main looper and
+`cancel()` never runs the close on the calling thread. `MainActivity` holds the
+single instance and delegates to it. Two cheap guards pin that:
+
+- `CaptureCancellationTest` — the teardown completes while the *calling* thread
+  stays busy (a stop routed through the caller, as the main-looper post was,
+  cannot do that), it runs on `mwb-capture-teardown` and exactly once, a replaced
+  session's guard suppresses it, a throwing teardown does not break later
+  cancellations, and `cancel()` after `shutdown()` is safe.
+- `CaptureCancellationWiringTest` — reads `MainActivity.kt`, extracts the
+  `onCaptureCancelled` and `onDestroy` bodies and fails if the Activity stops
+  owning the production class, keeps a second ad-hoc teardown executor (the
+  `mwb-capture-teardown` thread must be owned by one class only) or routes the
+  stop through `handler.post`/`postDelayed`/`runOnUiThread`/`Looper`.
+
+Both guards were observed failing on the defect: a throwaway commit restoring the
+pre-repair `handler.post { if (session === origin) stopCamera() }` wire (and
+dropping the field) failed `android-ci` with
+`MainActivity must own exactly one production CaptureCancellation` and
+`onDestroy must shut the teardown thread down` (run 38925223516); the mutant was
+reverted and the exact head then passed all four checks. The device acceptance
+now constructs the production class instead of a test-local copy, so the tested
+dispatcher is production code.
+
+Residual, stated exactly: the Activity hop with a *deliberately blocked main
+looper* is still not executed end-to-end — that needs the UI-driven harness
+driving the real Activity with a real camera. The wiring test constrains the
+source shape and the contract test constrains the class's threading, but neither
+is that end-to-end run; #8 keeps it listed.
 
 ### REV-004 — the single teardown thread can block unboundedly in framework calls (Low/Medium; ACCEPTED, needs device)
 

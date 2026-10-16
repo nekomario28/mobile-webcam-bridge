@@ -158,8 +158,11 @@ frame gate no longer blocked behind the write. Revocation now takes effect in
 memory before the write and a regression pins the frame gate; the same review
 found and this branch fixed a cancellation window during camera-session
 construction. Its remaining items are accepted as named limitations with
-discriminators (UI-wiring guard gap, unbounded platform calls on the teardown
-thread, MediaCodec call sites, an Allow that persists while its request expires).
+discriminators (unbounded platform calls on the teardown thread, MediaCodec call
+sites, an Allow that persists while its request expires). The UI-wiring guard gap
+that review named is closed: the producer stop is a production class owning its
+own thread, and both its contract and the Activity's use of it have guards that
+were observed failing on the pre-repair wiring.
 
 Boundaries: neither review is human security certification, and the
 Camera2/MediaCodec teardown has no device execution yet. Confirm it with the API

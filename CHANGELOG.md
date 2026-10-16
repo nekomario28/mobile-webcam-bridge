@@ -2,6 +2,14 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Close the review's UI-wiring guard gap: the authorization producer stop is now
+  `CaptureCancellation`, a production class that owns its own daemon thread and
+  cannot be pointed at the main looper. `MainActivity` holds the single instance,
+  the device acceptance constructs the same class, and two guards (a contract
+  test for the threading plus a wiring test over `MainActivity.kt`) were both
+  observed failing on a throwaway commit that restored the pre-repair
+  `handler.post` stop.
+
 - Record the independently reviewed authorization checkpoint: one Medium blocker,
   AUTHREV-001, because Camera2/MediaCodec teardown still depends on the main
   thread rather than the authorization lifetime, so capture can outlive expiry or
