@@ -270,10 +270,15 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
         var epoch: Wire.Epoch? = null
         val pauseDeadline = SystemClock.elapsedRealtime() + 20_000
         while (paused == 0) {
-            val (header, payload) = Wire.readFrame(socket.getInputStream())
-            if (header.type == Wire.TYPE_PAUSED) {
+            val frame = try {
+                Wire.readFrame(socket.getInputStream())
+            } catch (timeout: SocketTimeoutException) {
+                error("no pause barrier after PREPARE: the controller refused the target mode " +
+                    "(revision/mode/permission), it never staged")
+            }
+            if (frame.first.type == Wire.TYPE_PAUSED) {
                 paused++
-                epoch = Wire.decodeEpoch(payload)
+                epoch = Wire.decodeEpoch(frame.second)
             }
             check(SystemClock.elapsedRealtime() < pauseDeadline) { "no pause barrier after PREPARE" }
         }
@@ -287,8 +292,11 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
             Thread.sleep(20)
         }
 
+        // The pause barrier announces the epoch it is leaving; the commit must
+        // carry the epoch the machine moved to (the JVM reference does the same).
+        // `controller.epoch` is authoritative, so a stale commit is impossible.
         Wire.writeFrame(socket.getOutputStream(), Wire.Header(Wire.TYPE_COMMIT_QUALITY, 0, 2, 8, 0),
-            Wire.encodeEpoch(committed))
+            Wire.encodeEpoch(Wire.Epoch(requestId, controller.epoch)))
 
         var applied = false
         var configs = 0
@@ -296,7 +304,15 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
         var continued = 0
         val applyDeadline = SystemClock.elapsedRealtime() + 40_000
         while (continued < 2) {
-            val (header, payload) = Wire.readFrame(socket.getInputStream())
+            val frame = try {
+                Wire.readFrame(socket.getInputStream())
+            } catch (timeout: SocketTimeoutException) {
+                // A commit whose epoch is stale is ignored by design, which looks
+                // exactly like this; name it instead of reporting a bare timeout.
+                error("no frame after COMMIT (applied=$applied configs=$configs keyframes=$keyframes): " +
+                    "a stale stream epoch is ignored by the machine")
+            }
+            val (header, payload) = frame
             when (header.type) {
                 Wire.TYPE_QUALITY_RESULT -> {
                     val result = Wire.decodeQualityResult(payload)
