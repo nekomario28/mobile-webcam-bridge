@@ -143,8 +143,9 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
 
                 authorization.revoke(clientId)
 
-                // Nothing may be *accepted* after revocation; one already-queued
-                // frame may still drain, which the JSON records separately.
+                // `closeMedia` clears the queue before it closes the writer, so
+                // at most the frame already inside the writer can reach the peer;
+                // the JSON records the count separately.
                 var trailing = 0
                 val deadline = SystemClock.elapsedRealtime() + 4_000
                 var terminal = false
@@ -161,7 +162,9 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                     }
                 }
                 check(terminal) { "the transport stayed readable after revocation" }
-                check(trailing <= 1) { "$trailing access units arrived after revocation" }
+                check(trailing <= 1) {
+                    "$trailing access units arrived after revocation (queue clearing did not bound it)"
+                }
                 check(cancellations.await(5, TimeUnit.SECONDS)) {
                     "the session-owned cancellation sink never ran"
                 }

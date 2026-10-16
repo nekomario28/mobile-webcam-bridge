@@ -49,6 +49,10 @@ abstract class AuthorizedMediaSession(
 
     protected fun closeMedia() {
         idrRequester.set(null)
+        // Clear queued output first: authorization loss must not be followed by a
+        // drain of already-queued frames. Only a frame already inside the writer
+        // can still reach the peer, which is why the device acceptance allows one.
+        outbound.stopVideo()
         if (captureCancelled.compareAndSet(false, true)) onCaptureCancelled(this)
         clientAuthorization?.close()
         outbound.close()
