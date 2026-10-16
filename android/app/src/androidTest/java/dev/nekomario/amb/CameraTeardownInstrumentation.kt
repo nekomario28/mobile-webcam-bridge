@@ -15,7 +15,6 @@ import java.security.KeyPairGenerator
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -85,10 +84,10 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
         val authorization = PhoneAuthorization(store.repository,
             onStorageFailure = { error("authorization storage failed during camera acceptance") })
         val cancellations = CountDownLatch(1)
-        val teardown = Executors.newSingleThreadExecutor { job ->
-            Thread(job, "acceptance-capture-teardown").apply { isDaemon = true }
-        }
         val bridge = AtomicReference<CameraBridgeController?>(null)
+        // The production owner, used exactly as MainActivity uses it: the
+        // dispatcher is part of the tested class rather than a test look-alike.
+        val cancellation = CaptureCancellation { bridge.getAndSet(null) }
         var session: LanSession? = null
         var client: Socket? = null
         try {
@@ -98,11 +97,8 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                 val active = LanSession(accepted, { _, _ -> }, authorization, binding,
                     onAuthorization = {},
                     onCaptureCancelled = {
-                        // Mirrors MainActivity: detach once, then close off-UI.
                         cancellations.countDown()
-                        teardown.execute {
-                            bridge.getAndSet(null)?.let { runCatching { it.close() } }
-                        }
+                        cancellation.cancel()
                     },
                     capabilities = { Wire.Capabilities(1, Wire.PERMISSION_READY, 1, 0,
                         CameraTeardownInstrumentation.capabilityModes(capabilities)) })
@@ -190,7 +186,7 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
             runCatching { bridge.getAndSet(null)?.close() }
             runCatching { session?.close() }
             runCatching { client?.close() }
-            teardown.shutdownNow()
+            cancellation.shutdown()
             runCatching { authorization.close() }
         }
     }
