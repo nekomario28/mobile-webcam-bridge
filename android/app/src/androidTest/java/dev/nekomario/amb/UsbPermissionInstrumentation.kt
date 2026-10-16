@@ -18,10 +18,12 @@ import java.util.concurrent.TimeUnit
 /** Exercises the platform notification boundary without pretending a USB device is attached. */
 class UsbPermissionInstrumentation : Instrumentation() {
     private var disposableUi = false
+    private var cameraAcceptance = false
 
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         disposableUi = arguments?.getString("disposableUi") == "true"
+        cameraAcceptance = arguments?.getString("cameraAcceptance") == "true"
         start()
     }
 
@@ -259,6 +261,14 @@ class UsbPermissionInstrumentation : Instrumentation() {
             check(disposableUi && Build.VERSION.SDK_INT >= 35 &&
                 (Build.HARDWARE.contains("ranchu") || Build.PRODUCT.startsWith("sdk_gphone"))) {
                 "Conformance requires an explicitly disposable API 35 emulator (-e disposableUi true)"
+            }
+            if (cameraAcceptance) {
+                // No preamble here: the Wi-Fi smoke test expects an external TLS
+                // client that this invocation does not run, and the camera
+                // acceptance only needs the disposable check above.
+                val marker = CameraTeardownInstrumentation(this).run()
+                finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "$marker\n") })
+                return
             }
             check(context.getSharedPreferences("secure_wifi", Context.MODE_PRIVATE).all.isEmpty() &&
                 ClientStore(context).repository.snapshot().isEmpty()) { "Refusing to use an existing app profile" }
