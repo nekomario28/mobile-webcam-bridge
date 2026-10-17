@@ -55,6 +55,21 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
     /** What this device's own enumeration said, for the artifact. */
     private var capabilityRecord: CapabilityRecord? = null
 
+    /** The second authorization cycle's summary, for the artifact. */
+    @Volatile private var secondRecord: String? = null
+
+    /** Cancellation sinks that ran, across both authorization cycles. */
+    private val cancellations = java.util.concurrent.atomic.AtomicInteger()
+
+    private fun waitForCancellations(target: Int, millis: Long): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + millis
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (cancellations.get() >= target) return true
+            Thread.sleep(20)
+        }
+        return cancellations.get() >= target
+    }
+
     private class CapabilityRecord(
         val enumeratedCameraIds: List<String>,
         val codecName: String,
@@ -133,7 +148,7 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
         val binding = ByteArray(Wire.PHONE_BINDING_BYTES) { (it + 1).toByte() }
         val authorization = PhoneAuthorization(store.repository,
             onStorageFailure = { error("authorization storage failed during camera acceptance") })
-        val cancellations = CountDownLatch(1)
+        val cancellations = this.cancellations
         val bridge = AtomicReference<CameraBridgeController?>(null)
         // The production owner, used exactly as MainActivity uses it: the
         // dispatcher is part of the tested class rather than a test look-alike.
@@ -147,7 +162,7 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                 val active = LanSession(accepted, { _, _ -> }, authorization, binding,
                     onAuthorization = {},
                     onCaptureCancelled = {
-                        cancellations.countDown()
+                        cancellations.incrementAndGet()
                         cancellation.cancel()
                     },
                     onQuality = { _, command -> qualityController?.handle(command) },
@@ -222,7 +237,7 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                 check(trailing <= 1) {
                     "$trailing access units arrived after revocation (queue clearing did not bound it)"
                 }
-                check(cancellations.await(5, TimeUnit.SECONDS)) {
+                check(waitForCancellations(1, 5_000)) {
                     "the session-owned cancellation sink never ran"
                 }
                 check(SystemClock.elapsedRealtime() - capturedAt < 10_000) {
@@ -234,11 +249,19 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                 val released = cameraReleased(cameraId)
                 writeArtifact(cameraId, mode, configurations, accessUnits, trailing, terminal, released)
                 check(released) { "the camera was still held after authorization loss" }
+                // Second authorization cycle: the teardown thread is the only
+                // off-UI path, so it must work again after a revocation, and a
+                // revoked PC must prove itself and be approved again.
+                secondRecord = secondCycle(
+                    listener, mode, advertised, binding, point, keyPair.private, clientId,
+                    authorization, cancellation, bridge,
+                )
                 return "PASS camera acceptance: real Camera2/MediaCodec capture stopped and the camera was " +
                     "released after revocation on $cameraId (${mode.width}x${mode.height}@${mode.targetFps}); " +
                     "configs=$configurations aus=$accessUnits trailingAfterRevoke=$trailing; " +
                     "switch=${switched.report}; codec=${capabilityRecord?.codecName}; " +
-                    "advertised=${capabilityRecord?.advertisedModes} of ${capabilityRecord?.supportedModes} supported " +
+                    "advertised=${capabilityRecord?.advertisedModes} of ${capabilityRecord?.supportedModes} supported; " +
+                    "${secondRecord} " +
                     "(emulated/virtual camera evidence, not physical hardware)"
             }
         } catch (error: Throwable) {
@@ -460,6 +483,7 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                 append(",\"advertisedModes\":${it.advertisedModes}")
                 append(",\"supportedModes\":${it.supportedModes}")
             }
+            secondRecord?.let { append(",\"secondCycle\":\"${it.replace("\"", "'")}\"") }
             switchRecord?.let {
                 append(",\"switchAttempted\":${it.attempted}")
                 append(",\"switchPaused\":${it.pausedCount}")
@@ -496,6 +520,89 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
         }
         check(offset == der.size)
         return output
+    }
+
+    /**
+     * A second authorization cycle on a fresh socket pair after a revocation.
+     *
+     * Two properties: a revoked PC must prove itself and be approved *again*
+     * (revocation is not a ban, and it is not an authorization), and the producer
+     * teardown must work a second time — the teardown thread is the only off-UI
+     * path, so a wedged first teardown would show up here (REV-004).
+     */
+    private fun secondCycle(
+        listener: ServerSocket,
+        mode: CaptureModes.CaptureMode,
+        advertised: List<Wire.QualityMode>,
+        binding: ByteArray,
+        point: ByteArray,
+        privateKey: java.security.PrivateKey,
+        clientId: ByteArray,
+        authorization: PhoneAuthorization,
+        cancellation: CaptureCancellation,
+        bridge: AtomicReference<CameraBridgeController?>,
+    ): String {
+        val client = Socket("127.0.0.1", listener.localPort).also { it.soTimeout = 30_000 }
+        val second = LanSession(
+            listener.accept(), { _, _ -> }, authorization, binding,
+            onAuthorization = {},
+            onCaptureCancelled = {
+                cancellations.incrementAndGet()
+                cancellation.cancel()
+            },
+            capabilities = {
+                Wire.Capabilities(1, Wire.PERMISSION_READY, ADVERTISED_REVISION, admittedEpoch.toLong(), advertised)
+            },
+        )
+        second.use {
+            second.start()
+            val challenge = Wire.decodeClientChallenge(readOfType(client, Wire.TYPE_CLIENT_CHALLENGE))
+            val message = Wire.clientAuthMessage(
+                Wire.AUTH_LAN, binding, challenge.nonce, point, "instrumented-pc",
+            )
+            val signature = Signature.getInstance("SHA256withECDSA").run {
+                initSign(privateKey)
+                update(message)
+                rawSignature(sign())
+            }
+            val proof = Wire.encodeClientAuth(
+                Wire.ClientAuth(Wire.CLIENT_AUTH_VERSION, point, "instrumented-pc", signature),
+            )
+            Wire.writeFrame(
+                client.getOutputStream(),
+                Wire.Header(Wire.TYPE_CLIENT_AUTH, 0, 1, proof.size, 0),
+                proof,
+            )
+            val pending = Wire.decodeClientAuthResult(readOfType(client, Wire.TYPE_CLIENT_AUTH_RESULT))
+            check(pending.status == Wire.AUTH_PENDING) {
+                "a revoked PC was not re-challenged (status=${pending.status})"
+            }
+            checkNotNull(second.clientAuthorization).approve()
+            val granted = Wire.decodeClientAuthResult(readOfType(client, Wire.TYPE_CLIENT_AUTH_RESULT))
+            check(granted.status == Wire.AUTH_AUTHORIZED) { "the second approval did not authorize" }
+            readOfType(client, Wire.TYPE_QUALITY_CAPABILITIES)
+
+            val controller = CameraBridgeController(context, second, onStatus = {}, onError = {})
+            bridge.set(controller)
+            controller.start(CameraEncoderSession.Request(mode))
+            var units = 0
+            val started = SystemClock.elapsedRealtime()
+            while (units == 0) {
+                val (header, _) = Wire.readFrame(client.getInputStream())
+                if (header.type == Wire.TYPE_VIDEO_AU) units++
+                check(SystemClock.elapsedRealtime() - started < 45_000) {
+                    "the second cycle never produced an access unit"
+                }
+            }
+            authorization.revoke(clientId)
+            check(waitForCancellations(2, 10_000)) {
+                "the second teardown never ran (cancellations=${cancellations.get()})"
+            }
+            val releasedAgain = cameraReleased(mode.cameraId)
+            check(releasedAgain) { "the camera stayed held after the second revocation" }
+            client.close()
+            return "second=pending=$pending approved=true aus=$units released=$releasedAgain"
+        }
     }
 
     private companion object {
