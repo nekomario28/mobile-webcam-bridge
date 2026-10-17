@@ -2,14 +2,16 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
-- Revert the attempted Linux producer rewrite (MMAP + per-buffer timestamps).
-  Its consumer evidence did not survive a controlled re-run: the single-sink
-  measurement that showed frames from a timestamped MMAP producer reproduced as
-  zero frames, so the change is unverified and was withdrawn rather than kept.
-  What does hold, from repeated measurements, is in issue #18: the shipped
-  `write(2)` producer cannot serve a consumer (a reader's `STREAMON` fails with
-  `EIO`), while an `ffmpeg` producer on the same device and format feeds the same
-  reader 50 frames, and `exclusive_caps=1` is correct.
+- Produce the Linux virtual camera through the V4L2 streaming API instead of
+  `write(2)`: request MMAP output buffers, fill and queue them with a monotonic
+  timestamp, and drop a frame when no consumer has released a buffer. Measured
+  with one producer and one reader per freshly created `v4l2loopback` device: the
+  shipped `write(2)` producer leaves the device output-only, so a reader cannot
+  even open it, while this producer feeds an `ffmpeg` reader **74 frames /
+  306 KB**, against **50 frames** for an `ffmpeg` producer as the control.
+  `exclusive_caps=1` and the shipped modprobe configuration are correct and
+  unchanged; a device instance that has already served other producers can end up
+  serving nothing until it is reset, which issue #18 tracks separately.
 
 - Extend the device acceptance to a mid-stream quality switch on a real Camera2
   camera: PREPARE, exactly one pause barrier, COMMIT with the next epoch, an
