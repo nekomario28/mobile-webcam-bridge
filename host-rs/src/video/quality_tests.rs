@@ -593,6 +593,13 @@ fn a_real_consumer_records_frames_from_the_real_sink() {
         "the consumer saw unexpected frame sizes: {:?}",
         frames.iter().map(|(_, w, h)| (*w, *h)).collect::<Vec<_>>()
     );
+    // A real consumer reports an empty queued buffer as "contains 0 bytes, but N
+    // were expected" (seen from ffplay before the priming fix): the producer must
+    // never queue one.
+    assert!(
+        !consumer_log.contains("contains 0 bytes"),
+        "the sink queued an empty buffer: {consumer_log}"
+    );
     assert!(
         frames.windows(2).all(|pair| pair[1].0 >= pair[0].0),
         "consumer PTS went backwards: {:?}",

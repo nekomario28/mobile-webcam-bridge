@@ -139,11 +139,24 @@ impl Camera {
                 length,
             });
         }
+        // Prime every buffer with real content: a consumer that dequeues a
+        // zero-length buffer reports "contains 0 bytes, but N were expected"
+        // (seen from ffplay), so an empty buffer is never queued.
+        let started = std::time::Instant::now();
         for index in 0..request.count {
+            let mapped = buffers
+                .get(index as usize)
+                .ok_or("V4L2 reported a buffer index it did not map")?;
+            // SAFETY: the mapping is at least `size` bytes and owned here.
+            unsafe { std::ptr::write_bytes(mapped.ptr, 0x80, size) };
             let mut buffer: v4l2_buffer = unsafe { std::mem::zeroed() };
             buffer.type_ = V4L2_BUF_TYPE_VIDEO_OUTPUT;
             buffer.memory = AMB_MEMORY_MMAP;
             buffer.index = index;
+            buffer.bytesused = size as u32;
+            buffer.timestamp.tv_sec = 0;
+            buffer.timestamp.tv_usec = 0;
+            buffer.flags = AMB_TIMESTAMP_COPY;
             ioctl(&file, AMB_QBUF, &mut buffer)?;
         }
         let mut kind: libc::c_uint = V4L2_BUF_TYPE_VIDEO_OUTPUT;
@@ -153,7 +166,7 @@ impl Camera {
             stride,
             size,
             buffers,
-            started: std::time::Instant::now(),
+            started,
         })
     }
     pub fn ready(&mut self) -> crate::Result<bool> {
