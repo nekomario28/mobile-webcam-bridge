@@ -52,6 +52,16 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
 
     @Volatile private var switchRecord: SwitchRecord? = null
 
+    /** What this device's own enumeration said, for the artifact. */
+    private var capabilityRecord: CapabilityRecord? = null
+
+    private class CapabilityRecord(
+        val enumeratedCameraIds: List<String>,
+        val codecName: String,
+        val advertisedModes: Int,
+        val supportedModes: Int,
+    )
+
     private class SwitchRecord(
         val attempted: Boolean,
         val pausedCount: Int,
@@ -89,6 +99,23 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
         }
         val mode = checkNotNull(resolvedMode)
         val modes = CaptureModes.supported(capabilities).take(Wire.MAX_QUALITY_MODES)
+        // Capability truthfulness: advertise exactly what this device's own
+        // Camera2/MediaCodec data supports, start a mode from that list, and
+        // record the adopted encoder so the artifact names it per device.
+        val advertised = CameraTeardownInstrumentation.capabilityModes(capabilities)
+        check(advertised.isNotEmpty()) { "nothing to advertise for $cameraId" }
+        check(advertised.all { wire ->
+            modes.any { it.width == wire.width && it.height == wire.height && it.targetFps == wire.targetFps }
+        }) { "the advertisement is not the enumerated intersection for $cameraId" }
+        check(modes.contains(mode)) { "the started mode is not in the enumerated list" }
+        runCatching { android.media.MediaCodec.createByCodecName(mode.codecName).release() }
+            .onFailure { error("the adopted encoder ${mode.codecName} cannot be created: $it") }
+        capabilityRecord = CapabilityRecord(
+            CameraCatalog.enumerate(context).map { it.id },
+            mode.codecName,
+            advertised.size,
+            modes.size,
+        )
 
         // A disposable profile only: the workflow clears app data and grants
         // CAMERA before this runs. Never silently adopt existing state.
@@ -210,7 +237,9 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                 return "PASS camera acceptance: real Camera2/MediaCodec capture stopped and the camera was " +
                     "released after revocation on $cameraId (${mode.width}x${mode.height}@${mode.targetFps}); " +
                     "configs=$configurations aus=$accessUnits trailingAfterRevoke=$trailing; " +
-                    "switch=${switched.report} (emulated/virtual camera evidence, not physical hardware)"
+                    "switch=${switched.report}; codec=${capabilityRecord?.codecName}; " +
+                    "advertised=${capabilityRecord?.advertisedModes} of ${capabilityRecord?.supportedModes} supported " +
+                    "(emulated/virtual camera evidence, not physical hardware)"
             }
         } catch (error: Throwable) {
             writeArtifact(cameraId, resolvedMode, -1, -1, -1, false, false, error.toString())
@@ -425,6 +454,12 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
             append("\"accessUnitsAfterRevoke\":$trailing,")
             append("\"transportTerminal\":$terminal,")
             append("\"cameraReleased\":$released")
+            capabilityRecord?.let {
+                append(",\"cameraIds\":\"${it.enumeratedCameraIds.joinToString(",")}\"")
+                append(",\"adoptedCodec\":\"${it.codecName}\"")
+                append(",\"advertisedModes\":${it.advertisedModes}")
+                append(",\"supportedModes\":${it.supportedModes}")
+            }
             switchRecord?.let {
                 append(",\"switchAttempted\":${it.attempted}")
                 append(",\"switchPaused\":${it.pausedCount}")
