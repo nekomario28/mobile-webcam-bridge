@@ -36,10 +36,11 @@ v4l2-ctl -d /dev/video10 --all   # a reader must see "Video Capture"
 
 This repository installs `exclusive_caps=1` (see
 `linux/mobile-webcam-v4l2loopback.conf`, and the installer refuses a modified
-configuration). The host produces through the V4L2 streaming API for exactly this
-reason: with a `write(2)`-only producer a reader cannot even start streaming
-(`EIO`), and a queued buffer without a timestamp is never exposed to it either.
-Both failure modes and their reproduction are tracked in issue #18.
+configuration). That option expects the producer to stream through the V4L2 API;
+a reader that only ever sees "Video Output" cannot open the camera. The symptom,
+the reproduction with a plain `write(2)` producer, and the open questions
+(whether `exclusive_caps=0` is required for this producer path, and the buffer
+hand-off) are tracked in issue #18.
 Windows USB also requires a libusb-compatible phone/accessory driver;
 Setup.exe installs the virtual camera only.
 
