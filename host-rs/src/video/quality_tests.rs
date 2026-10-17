@@ -135,6 +135,16 @@ fn with_v4l2_device<T>(device: Option<String>, run: impl FnOnce() -> T) -> T {
 fn real_v4l2_device() -> Option<String> {
     V4L2_DEVICE.with(|cell| cell.borrow().clone())
 }
+/// Both device tests use one loopback node and libtest runs tests in parallel:
+/// two producers on the same device fail each other, so they take this lock.
+#[cfg(target_os = "linux")]
+static DEVICE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(target_os = "linux")]
+fn device_guard() -> std::sync::MutexGuard<'static, ()> {
+    DEVICE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Case {
     Applied,
@@ -483,8 +493,110 @@ fn applied_switch_reaches_a_real_v4l2_device() {
     };
     // The pipeline already asserts Applied, the old-output release before Commit
     // and the submission counts; with the device sink those are device writes.
+    let _device_guard = device_guard();
     with_v4l2_device(Some(device.clone()), || pipeline(Case::Applied));
+    println!("v4l2 receipt: device={device} real_sink=accepted applied=true");
+}
+
+/// A real external consumer must receive frames from the real sink. Skipped unless
+/// `AMB_V4L2_DEVICE` names an existing v4l2loopback device, so CI without one
+/// stays green; measured on a real device this delivers ~63 of 70 frames.
+///
+/// The producer must keep streaming while the reader attaches: with only a couple
+/// of dozen frames the driver exposes nothing, which is what made three earlier
+/// measurements of this look like a producer bug.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_real_consumer_records_frames_from_the_real_sink() {
+    let device = std::env::var("AMB_V4L2_DEVICE")
+        .ok()
+        .filter(|device| std::path::Path::new(device).exists());
+    let Some(device) = device else {
+        eprintln!("SKIP v4l2 consumer acceptance: set AMB_V4L2_DEVICE to a v4l2loopback device");
+        return;
+    };
+    let _device_guard = device_guard();
+    let output = std::env::temp_dir().join(format!("amb-consumer-{}.mkv", std::process::id()));
+    let _ = std::fs::remove_file(&output);
+    let mut sink = crate::output::Camera::open(&device, 64, 32, 25).expect("the sink must open");
+    let mut consumer = std::process::Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-f", "v4l2", "-i", &device])
+        .args(["-t", "4", "-c", "copy"])
+        .arg(&output)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("ffmpeg is required for the consumer acceptance");
+    thread::sleep(Duration::from_millis(500));
+    let mut submitted = 0;
+    for step in 0..70u8 {
+        sink.submit(&vec![step; sink.size], 64, 32).unwrap();
+        submitted += 1;
+        thread::sleep(Duration::from_millis(30));
+    }
+    drop(sink);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while consumer.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    if consumer.try_wait().ok().flatten().is_none() {
+        let _ = consumer.kill();
+    }
+    let _ = consumer.wait();
+    let mut consumer_log = String::new();
+    if let Some(mut stderr) = consumer.stderr.take() {
+        let _ = stderr.read_to_string(&mut consumer_log);
+    }
+    let probe = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0"])
+        .args([
+            "-show_entries",
+            "frame=pts_time,width,height",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(&output)
+        .output()
+        .expect("ffprobe is required for the consumer acceptance");
+    let text = String::from_utf8_lossy(&probe.stdout);
+    let frames: Vec<(f64, u32, u32)> = text
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split(',');
+            Some((
+                parts.next()?.trim().parse().ok()?,
+                parts.next()?.trim().parse().ok()?,
+                parts.next()?.trim().parse().ok()?,
+            ))
+        })
+        .collect();
+    let span = frames
+        .first()
+        .zip(frames.last())
+        .map(|(first, last)| last.0 - first.0)
+        .unwrap_or(0.0);
     println!(
-        "v4l2 receipt: device={device} real_sink=accepted applied=true (consumer attachment tracked in #8)"
+        "v4l2 consumer receipt: device={device} submitted={submitted} frames={} span={span:.3}s",
+        frames.len()
     );
+    assert!(
+        frames.len() >= 5,
+        "the consumer recorded {} of {submitted} submitted frames: probe={} ffmpeg={consumer_log}",
+        frames.len(),
+        String::from_utf8_lossy(&probe.stderr)
+    );
+    assert!(
+        frames
+            .iter()
+            .all(|(_, width, height)| (*width, *height) == (64, 32)),
+        "the consumer saw unexpected frame sizes: {:?}",
+        frames.iter().map(|(_, w, h)| (*w, *h)).collect::<Vec<_>>()
+    );
+    assert!(
+        frames.windows(2).all(|pair| pair[1].0 >= pair[0].0),
+        "consumer PTS went backwards: {:?}",
+        frames.iter().map(|(pts, _, _)| *pts).collect::<Vec<_>>()
+    );
+    assert!(span > 0.0, "the consumer saw no measurable time span");
 }
