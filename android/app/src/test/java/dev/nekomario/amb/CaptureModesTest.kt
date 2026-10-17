@@ -1,6 +1,7 @@
 package dev.nekomario.amb
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -90,6 +91,27 @@ class CaptureModesTest {
         val auto = resolved(perSizeCapped(), CaptureModes.CapturePreference())
         // 720p/30 is still preferred over 720p/60.
         assertEquals(Triple(1280, 720, 30), Triple(auto.width, auto.height, auto.targetFps))
+    }
+
+    /**
+     * The gate's wording: a device that reports no minimum frame duration must
+     * still **start**, i.e. an explicit request for that mode resolves instead of
+     * being rejected. The known-but-insufficient case stays rejected, so the
+     * unknown case is not "anything goes".
+     */
+    @Test
+    fun unknownMinimumDurationStillResolvesAnExplicitStart() {
+        val unknown = caps(
+            sizes = listOf(size(1280, 720, minFpsCap = null)),
+            aeRanges = listOf(FpsRange(30, 30), FpsRange(60, 60)),
+        )
+        val resolved = CaptureModes.resolve(unknown, CaptureModes.CapturePreference(1280, 720, 60))
+        assertTrue("$resolved", resolved is CaptureModes.Resolution.Resolved)
+        val mode = (resolved as CaptureModes.Resolution.Resolved).mode
+        assertEquals(60, mode.targetFps)
+        assertFalse("an unknown duration must be recorded, not claimed", mode.minFrameDurationKnown)
+        val capped = CaptureModes.resolve(perSizeCapped(), CaptureModes.CapturePreference(1920, 1080, 60))
+        assertTrue("$capped", capped is CaptureModes.Resolution.Rejected)
     }
 
     @Test
