@@ -256,6 +256,9 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                     listener, mode, advertised, binding, point, keyPair.private, clientId,
                     authorization, cancellation, bridge,
                 )
+                // Rewrite the artifact now that the second cycle has a result; the
+                // earlier write happened before it ran.
+                writeArtifact(cameraId, mode, configurations, accessUnits, trailing, terminal, released)
                 return "PASS camera acceptance: real Camera2/MediaCodec capture stopped and the camera was " +
                     "released after revocation on $cameraId (${mode.width}x${mode.height}@${mode.targetFps}); " +
                     "configs=$configurations aus=$accessUnits trailingAfterRevoke=$trailing; " +
