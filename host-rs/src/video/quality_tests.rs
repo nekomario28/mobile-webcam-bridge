@@ -1,5 +1,8 @@
 //! Established-stream pipeline: real TCP framing, FFmpeg and pixel conversion;
 //! only the OS output sink is replaced. This is not virtual-camera acceptance.
+//! `applied_switch_reaches_a_real_v4l2_device` opts into the real OS sink through
+//! `AMB_V4L2_DEVICE`, so the sink leg is a kernel driver rather than a stand-in;
+//! a consuming application is still not attached (issue #8).
 use super::*;
 // The same phone-side TLS fixture the integration tests use, so this pipeline
 // also runs over the authenticated transport rather than a plaintext socket.
@@ -63,6 +66,74 @@ impl Sink for TestSink {
         self.submitted.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
+}
+/// The OS sink when a real V4L2 device is configured, otherwise the test sink.
+/// Only the device path reaches a real consumer; every other test is unchanged.
+enum AnySink {
+    Test(TestSink),
+    #[cfg(target_os = "linux")]
+    Device {
+        camera: crate::output::Camera,
+        submitted: Arc<AtomicUsize>,
+        dropped: Arc<AtomicUsize>,
+    },
+}
+impl Drop for AnySink {
+    fn drop(&mut self) {
+        // The peer asserts the old output was released before Commit; the test
+        // sink records that through its own Drop, so the real device does too.
+        #[cfg(target_os = "linux")]
+        if let AnySink::Device { dropped, .. } = self {
+            dropped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+impl Sink for AnySink {
+    fn layout(&self) -> (usize, usize) {
+        match self {
+            AnySink::Test(sink) => sink.layout(),
+            #[cfg(target_os = "linux")]
+            AnySink::Device { camera, .. } => camera.layout(),
+        }
+    }
+    fn ready(&mut self) -> crate::Result<bool> {
+        match self {
+            AnySink::Test(sink) => sink.ready(),
+            #[cfg(target_os = "linux")]
+            AnySink::Device { camera, .. } => crate::output::Sink::ready(camera),
+        }
+    }
+    fn submit(&mut self, bytes: &[u8], width: u32, height: u32) -> crate::Result<()> {
+        match self {
+            AnySink::Test(sink) => sink.submit(bytes, width, height),
+            #[cfg(target_os = "linux")]
+            AnySink::Device {
+                camera, submitted, ..
+            } => {
+                crate::output::Sink::submit(camera, bytes, width, height)?;
+                submitted.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+    }
+}
+// The real-sink path is opt-in per test, not per process: a global switch would
+// change the outcome of the cases that assert an unavailable or replaced sink.
+#[cfg(target_os = "linux")]
+thread_local! {
+    static V4L2_DEVICE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+#[cfg(target_os = "linux")]
+fn with_v4l2_device<T>(device: Option<String>, run: impl FnOnce() -> T) -> T {
+    V4L2_DEVICE.with(|cell| *cell.borrow_mut() = device);
+    let result = run();
+    V4L2_DEVICE.with(|cell| *cell.borrow_mut() = None);
+    result
+}
+#[cfg(target_os = "linux")]
+fn real_v4l2_device() -> Option<String> {
+    V4L2_DEVICE.with(|cell| cell.borrow().clone())
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Case {
@@ -328,11 +399,24 @@ fn pipeline(case: Case) {
         },
         |mode| {
             opens.push(mode);
-            Ok(TestSink {
+            #[cfg(target_os = "linux")]
+            if let Some(device) = real_v4l2_device() {
+                return Ok(AnySink::Device {
+                    camera: crate::output::Camera::open(
+                        &device,
+                        mode.width,
+                        mode.height,
+                        mode.fps,
+                    )?,
+                    submitted: submitted.clone(),
+                    dropped: dropped.clone(),
+                });
+            }
+            Ok(AnySink::Test(TestSink {
                 ready: case != Case::OutputUnavailable || opens.len() == 1,
                 submitted: submitted.clone(),
                 dropped: dropped.clone(),
-            })
+            }))
         },
     );
     server.join().unwrap();
@@ -374,4 +458,33 @@ fn advertised_fps_mismatch_is_not_applied() {
 #[test]
 fn unavailable_output_does_not_claim_applied_and_hits_deadline() {
     pipeline(Case::OutputUnavailable);
+}
+
+/// Real V4L2 output: the same applied switch as `Case::Applied`, but the frames
+/// go to a real `v4l2loopback` device, so "the sink accepted the frame" is what a
+/// kernel driver accepted rather than an in-crate sink. Skipped unless
+/// `AMB_V4L2_DEVICE` names an existing device, so CI stays green without one.
+///
+/// A *consumer* is not yet attached here. This device reports the output side to
+/// its first opener, so a reader must open while the writer still holds it, which
+/// needs a streaming case that outlives the reader's start; `ffmpeg -f v4l2`
+/// reports `Not a video capture device` when it opens outside that window. The
+/// concrete follow-up (longer post-apply streaming plus a reader that attaches
+/// mid-stream) is tracked in issue #8.
+#[test]
+#[cfg(target_os = "linux")]
+fn applied_switch_reaches_a_real_v4l2_device() {
+    let device = std::env::var("AMB_V4L2_DEVICE")
+        .ok()
+        .filter(|device| std::path::Path::new(device).exists());
+    let Some(device) = device else {
+        eprintln!("SKIP v4l2 acceptance: set AMB_V4L2_DEVICE to a v4l2loopback device");
+        return;
+    };
+    // The pipeline already asserts Applied, the old-output release before Commit
+    // and the submission counts; with the device sink those are device writes.
+    with_v4l2_device(Some(device.clone()), || pipeline(Case::Applied));
+    println!(
+        "v4l2 receipt: device={device} real_sink=accepted applied=true (consumer attachment tracked in #8)"
+    );
 }
