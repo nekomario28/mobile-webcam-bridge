@@ -238,7 +238,7 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                     "released after revocation on $cameraId (${mode.width}x${mode.height}@${mode.targetFps}); " +
                     "configs=$configurations aus=$accessUnits trailingAfterRevoke=$trailing; " +
                     "switch=${switched.report}; codec=${capabilityRecord?.codecName}; " +
-                    "advertised=${"advertised"}${capabilityRecord?.advertisedModes}/${capabilityRecord?.supportedModes} supported " +
+                    "advertised=${capabilityRecord?.advertisedModes} of ${capabilityRecord?.supportedModes} supported " +
                     "(emulated/virtual camera evidence, not physical hardware)"
             }
         } catch (error: Throwable) {
