@@ -112,6 +112,7 @@ impl Sink for AnySink {
             } => {
                 crate::output::Sink::submit(camera, bytes, width, height)?;
                 submitted.fetch_add(1, Ordering::SeqCst);
+                DEVICE_SUBMITS.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             }
         }
@@ -131,6 +132,10 @@ fn with_v4l2_device<T>(device: Option<String>, run: impl FnOnce() -> T) -> T {
     V4L2_DEVICE.with(|cell| *cell.borrow_mut() = None);
     result
 }
+/// Submits the *device* sink accepted, so a diagnostic can tell "the pipeline never
+/// produced frames" from "the device produced frames nobody read".
+#[cfg(target_os = "linux")]
+pub static DEVICE_SUBMITS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 #[cfg(target_os = "linux")]
 fn real_v4l2_device() -> Option<String> {
     V4L2_DEVICE.with(|cell| cell.borrow().clone())
@@ -151,6 +156,7 @@ enum Case {
     IdleStage,
     WrongFps,
     OutputUnavailable,
+    Streaming,
 }
 /// A closed TLS peer surfaces as EOF or a missing close_notify, never as a
 /// clean zero-length read; both mean the worker sent nothing further.
@@ -334,6 +340,17 @@ fn pipeline(case: Case) {
                 1,
             );
         }
+        if case == Case::Streaming {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let mut pts = 3_000_000u64;
+            while Instant::now() < deadline {
+                pts += 20_000;
+                send(&mut stream, wire::VIDEO_AU, H264.to_vec(), 0, pts);
+                thread::sleep(Duration::from_millis(40));
+            }
+            let _ = stream.get_mut().shutdown(std::net::Shutdown::Both);
+            return;
+        }
         expect_closed(&mut stream);
     });
     let client = crate::secure::SecureTcp::connect(
@@ -400,7 +417,9 @@ fn pipeline(case: Case) {
                         "Applied preceded output acceptance or admitted stale/non-config video"
                     );
                     applied = true;
-                    stop.store(true, Ordering::Release);
+                    if case != Case::Streaming {
+                        stop.store(true, Ordering::Release);
+                    }
                 }
                 Event::QualityFailed { reason, .. } => failure = Some(reason),
                 _ => {}
@@ -430,8 +449,10 @@ fn pipeline(case: Case) {
         },
     );
     server.join().unwrap();
-    if matches!(case, Case::Applied | Case::IdleStage) {
-        assert!(result.is_ok());
+    if matches!(case, Case::Applied | Case::IdleStage | Case::Streaming) {
+        if case != Case::Streaming {
+            assert!(result.is_ok());
+        }
         assert!(applied);
         assert!(failure.is_none());
         assert_eq!(
@@ -606,4 +627,79 @@ fn a_real_consumer_records_frames_from_the_real_sink() {
         frames.iter().map(|(pts, _, _)| *pts).collect::<Vec<_>>()
     );
     assert!(span > 0.0, "the consumer saw no measurable time span");
+}
+
+/// A quality switch drops the old sink and opens a new one. A consumer that is
+/// already attached must keep receiving frames across that replacement; measured on
+/// a real device this delivers 63 of 70 frames. Skipped unless `AMB_V4L2_DEVICE`
+/// names an existing v4l2loopback device.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_real_consumer_survives_a_sink_replacement() {
+    let device = std::env::var("AMB_V4L2_DEVICE")
+        .ok()
+        .filter(|device| std::path::Path::new(device).exists());
+    let Some(device) = device else {
+        eprintln!("SKIP v4l2 replacement acceptance: set AMB_V4L2_DEVICE");
+        return;
+    };
+    let _device_guard = device_guard();
+    let output = std::env::temp_dir().join(format!("amb-replaced-{}.mkv", std::process::id()));
+    let _ = std::fs::remove_file(&output);
+    let mut first = crate::output::Camera::open(&device, 64, 32, 25).expect("first sink");
+    let mut consumer = std::process::Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-f", "v4l2", "-i", &device])
+        .args(["-t", "6", "-c", "copy"])
+        .arg(&output)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("ffmpeg is required for the consumer acceptance");
+    thread::sleep(Duration::from_millis(500));
+    let mut submitted = 0;
+    for step in 0..35u8 {
+        first.submit(&vec![step; first.size], 64, 32).unwrap();
+        submitted += 1;
+        thread::sleep(Duration::from_millis(30));
+    }
+    // The switch: release the old sink, then produce through a new one.
+    drop(first);
+    thread::sleep(Duration::from_millis(200));
+    let mut second = crate::output::Camera::open(&device, 64, 32, 25).expect("second sink");
+    for step in 0..35u8 {
+        second.submit(&vec![step; second.size], 64, 32).unwrap();
+        submitted += 1;
+        thread::sleep(Duration::from_millis(30));
+    }
+    drop(second);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while consumer.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    if consumer.try_wait().ok().flatten().is_none() {
+        let _ = consumer.kill();
+    }
+    let _ = consumer.wait();
+    let mut consumer_log = String::new();
+    if let Some(mut stderr) = consumer.stderr.take() {
+        let _ = stderr.read_to_string(&mut consumer_log);
+    }
+    let probed = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-count_frames", "-select_streams", "v:0"])
+        .args(["-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"])
+        .arg(&output)
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap_or_default();
+    let frames: usize = probed.parse().unwrap_or(0);
+    println!(
+        "v4l2 replacement receipt: device={device} submitted={submitted} frames={frames} \
+         consumer_log={:?}",
+        consumer_log.chars().take(80).collect::<String>()
+    );
+    assert!(
+        frames >= 5,
+        "the consumer recorded {frames} of {submitted} frames across the replacement: {consumer_log}"
+    );
 }

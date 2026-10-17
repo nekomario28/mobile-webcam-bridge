@@ -115,12 +115,19 @@ class UsbPermissionInstrumentation : Instrumentation() {
             check(rejected != null && rejected.contains("rejected")) {
                 "wrong access key was not rejected: $rejected"
             }
-            check(sessions.isEmpty) { "wrong access key created a session" }
+            // The external client attempts the wrong key and then the right one
+            // back to back, so a *registered* session may already exist here. The
+            // property is that the wrong key created no unauthorized session, and
+            // only the authorized client's own attempt may succeed.
+            check(sessions.all { it.second }) {
+                "wrong access key created an unauthorized session: ${sessions.map { it.second }}"
+            }
             // The authorized client then completes pairing through the real server.
             val authorized = sessions.poll(20, TimeUnit.SECONDS)
             check(authorized != null && authorized.second) {
                 "authorized client did not connect; server errors observed: $errors"
             }
+            check(sessions.isEmpty()) { "a single client created more than one session" }
             // The authorized client also sends a 14-byte PREPARE_QUALITY inside
             // the TLS session; the real server must dispatch it to the
             // controller and keep serving frames afterwards.
