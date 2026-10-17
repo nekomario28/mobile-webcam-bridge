@@ -26,6 +26,21 @@ declined, select USB again to retry. USB debugging is not required.
 
 On Linux, **Connect** requests OS authorization when camera integration is
 missing, then resumes connecting. Setup does not install kernel modules.
+
+If the host window shows video but no application can see the camera, check how
+the loopback device appears to a reader:
+
+```sh
+v4l2-ctl -d /dev/video10 --all   # a reader must see "Video Capture"
+```
+
+This repository installs `exclusive_caps=1` (see
+`linux/mobile-webcam-v4l2loopback.conf`, and the installer refuses a modified
+configuration). That option expects the producer to stream through the V4L2 API;
+a reader that only ever sees "Video Output" cannot open the camera. The symptom,
+the reproduction with a plain `write(2)` producer, and the open questions
+(whether `exclusive_caps=0` is required for this producer path, and the buffer
+hand-off) are tracked in issue #18.
 Windows USB also requires a libusb-compatible phone/accessory driver;
 Setup.exe installs the virtual camera only.
 
