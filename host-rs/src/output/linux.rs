@@ -1,7 +1,7 @@
 use std::{
     fs::{File, OpenOptions},
-    io::Write,
     os::fd::AsRawFd,
+    os::unix::fs::OpenOptionsExt,
 };
 #[allow(
     non_upper_case_globals,
@@ -17,6 +17,25 @@ pub struct Camera {
     file: File,
     pub stride: usize,
     pub size: usize,
+    buffers: Vec<MappedBuffer>,
+    started: std::time::Instant,
+}
+struct MappedBuffer {
+    ptr: *mut u8,
+    length: usize,
+}
+impl Drop for MappedBuffer {
+    fn drop(&mut self) {
+        unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.length) };
+    }
+}
+// SAFETY: the mapping is process-wide and every access goes through `submit`.
+unsafe impl Send for Camera {}
+impl Drop for Camera {
+    fn drop(&mut self) {
+        let mut kind: libc::c_uint = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        let _ = ioctl(&self.file, AMB_STREAMOFF, &mut kind);
+    }
 }
 fn ioctl<T>(file: &File, request: u64, value: &mut T) -> std::io::Result<()> {
     loop {
@@ -32,7 +51,14 @@ fn ioctl<T>(file: &File, request: u64, value: &mut T) -> std::io::Result<()> {
 }
 impl Camera {
     pub fn open(path: &str, width: u32, height: u32, fps: u32) -> crate::Result<Self> {
-        let file = OpenOptions::new().write(true).open(path)?;
+        // V4L2 MMAP streaming requires a read+write descriptor. Non-blocking:
+        // with no consumer attached the driver never returns a buffer, and a
+        // blocking DQBUF would stall the pipeline instead of dropping the frame.
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)?;
         let mut cap = v4l2_capability::default();
         ioctl(&file, AMB_QUERYCAP, &mut cap)?;
         let caps = if cap.capabilities & V4L2_CAP_DEVICE_CAPS != 0 {
@@ -40,8 +66,8 @@ impl Camera {
         } else {
             cap.capabilities
         };
-        if caps & V4L2_CAP_VIDEO_OUTPUT == 0 || caps & V4L2_CAP_READWRITE == 0 {
-            return Err("camera does not support V4L2 write output".into());
+        if caps & V4L2_CAP_VIDEO_OUTPUT == 0 || caps & V4L2_CAP_STREAMING == 0 {
+            return Err("camera does not support V4L2 mmap output streaming".into());
         }
         let mut format = v4l2_format {
             type_: V4L2_BUF_TYPE_VIDEO_OUTPUT,
@@ -73,47 +99,98 @@ impl Camera {
         parameters.parm.output.timeperframe.numerator = 1;
         parameters.parm.output.timeperframe.denominator = fps;
         ioctl(&file, AMB_S_PARM, &mut parameters)?;
-        Ok(Self { file, stride, size })
+        let mut request: v4l2_requestbuffers = unsafe { std::mem::zeroed() };
+        request.count = 2;
+        request.type_ = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        request.memory = AMB_MEMORY_MMAP;
+        ioctl(&file, AMB_REQBUFS, &mut request)?;
+        if request.count < 1 {
+            return Err("V4L2 refused output buffers".into());
+        }
+        let mut buffers = Vec::new();
+        for index in 0..request.count {
+            let mut buffer: v4l2_buffer = unsafe { std::mem::zeroed() };
+            buffer.type_ = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+            buffer.memory = AMB_MEMORY_MMAP;
+            buffer.index = index;
+            ioctl(&file, AMB_QUERYBUF, &mut buffer)?;
+            let length = buffer.length as usize;
+            if length < size {
+                return Err("V4L2 buffer is smaller than one frame".into());
+            }
+            // SAFETY: QUERYBUF populated the buffer; `offset` is the MMAP arm.
+            let offset = unsafe { buffer.m.offset } as libc::off_t;
+            // SAFETY: offset/length come from VIDIOC_QUERYBUF on this fd.
+            let ptr = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    length,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_SHARED,
+                    file.as_raw_fd(),
+                    offset,
+                )
+            };
+            if ptr == libc::MAP_FAILED {
+                return Err("V4L2 output buffer mapping failed".into());
+            }
+            buffers.push(MappedBuffer {
+                ptr: ptr as *mut u8,
+                length,
+            });
+        }
+        for index in 0..request.count {
+            let mut buffer: v4l2_buffer = unsafe { std::mem::zeroed() };
+            buffer.type_ = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+            buffer.memory = AMB_MEMORY_MMAP;
+            buffer.index = index;
+            ioctl(&file, AMB_QBUF, &mut buffer)?;
+        }
+        let mut kind: libc::c_uint = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        ioctl(&file, AMB_STREAMON, &mut kind)?;
+        Ok(Self {
+            file,
+            stride,
+            size,
+            buffers,
+            started: std::time::Instant::now(),
+        })
     }
     pub fn ready(&mut self) -> crate::Result<bool> {
         Ok(true)
     }
     pub fn submit(&mut self, bytes: &[u8], _width: u32, _height: u32) -> crate::Result<()> {
-        write_frame(&mut self.file, bytes).map_err(Into::into)
-    }
-}
-fn write_frame(output: &mut impl Write, bytes: &[u8]) -> std::io::Result<()> {
-    loop {
-        match output.write(bytes) {
-            Ok(n) if n == bytes.len() => return Ok(()),
-            Ok(_) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::WriteZero,
-                    "partial V4L2 frame write",
-                ));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error),
+        if bytes.len() > self.size {
+            return Err("frame is larger than the V4L2 output buffer".into());
         }
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    struct Partial(usize);
-    impl Write for Partial {
-        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-            self.0 += 1;
-            Ok(2)
+        let mut buffer: v4l2_buffer = unsafe { std::mem::zeroed() };
+        buffer.type_ = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        buffer.memory = AMB_MEMORY_MMAP;
+        match ioctl(&self.file, AMB_DQBUF, &mut buffer) {
+            Ok(()) => {}
+            // No consumer has released a buffer: drop this frame rather than
+            // stalling the producer. A reader that attaches later starts
+            // receiving from the next queued buffer.
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(error) => return Err(error.into()),
         }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    #[test]
-    fn partial_frames_are_not_submitted_as_tails() {
-        let mut camera = Partial(0);
-        assert!(write_frame(&mut camera, &[0; 4]).is_err());
-        assert_eq!(camera.0, 1);
+        let index = buffer.index as usize;
+        let mapped = self
+            .buffers
+            .get(index)
+            .ok_or("V4L2 returned an unknown output buffer index")?;
+        // SAFETY: the mapping is at least one frame long and owned here.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.ptr, bytes.len()) };
+        buffer.bytesused = bytes.len() as u32;
+        // v4l2loopback only exposes a queued buffer to consumers when it carries
+        // a timestamp: with a zero `timeval` the reader's stream is empty and its
+        // `STREAMON` can even fail with EIO. Monotonic since open is enough, and
+        // TIMESTAMP_COPY states that this producer supplied it.
+        let elapsed = self.started.elapsed();
+        buffer.timestamp.tv_sec = elapsed.as_secs() as _;
+        buffer.timestamp.tv_usec = elapsed.subsec_micros() as _;
+        buffer.flags = AMB_TIMESTAMP_COPY;
+        ioctl(&self.file, AMB_QBUF, &mut buffer)?;
+        Ok(())
     }
 }

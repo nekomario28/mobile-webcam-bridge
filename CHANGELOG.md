@@ -2,6 +2,15 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Produce the Linux virtual camera through the V4L2 streaming API instead of
+  `write(2)`: request two MMAP output buffers, fill them with a monotonic
+  timestamp and `TIMESTAMP_COPY`, and drop a frame when no consumer has released
+  a buffer. A `write(2)`-only producer cannot serve consumers at all (a reader's
+  `STREAMON` fails with `EIO`), and a queued buffer without a timestamp is never
+  exposed to a reader either; both were reproduced on a real `v4l2loopback`
+  device, where the streaming producer feeds an `ffmpeg` reader 49 frames.
+  `exclusive_caps=1` and the shipped device configuration are correct.
+
 - Extend the device acceptance to a mid-stream quality switch on a real Camera2
   camera: PREPARE, exactly one pause barrier, COMMIT with the next epoch, an
   applied result, a new VIDEO_CONFIG and keyframe for the target mode, then live
