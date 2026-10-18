@@ -2,6 +2,14 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Add `host-rs/tools/capture-gui-states.sh`: it captures the desktop GUI's
+  fixture-driven states for both locales through the native capture entry point,
+  writes a hashed manifest, and fails when two fixtures render the same frame so
+  a state mapping cannot regress silently. A fixture session also reports itself
+  running now, and a details capture gets a window tall enough for the quality
+  controls, so the captures show the applied target, output device, rotation and
+  stats rather than a clipped frame.
+
 - Move the pinned `io-budget` revision forward to its `main` (`65df550`), which
   fixes the deadline layer handing a released stream back with a stale
   budget-derived socket timeout instead of the pre-wrap values (its issue #1)
