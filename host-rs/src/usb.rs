@@ -304,21 +304,25 @@ impl Transport for Usb {
         let handle = &self.handle;
         let input = self.input;
         let chunk_size = self.packet_size * 128;
-        self.reader.poll(timeout, |bytes, left| {
-            let length = bytes.len().min(chunk_size);
-            // rusb preserves partial transferred bytes even on libusb timeout.
-            // A zero-length USB packet is not a disconnected byte stream.
-            match handle.read_bulk(input, &mut bytes[..length], left) {
-                Ok(0) | Err(rusb::Error::Interrupted) => {
-                    Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into())
+        self.reader
+            .poll(timeout, |bytes, left| {
+                let length = bytes.len().min(chunk_size);
+                // rusb preserves partial transferred bytes even on libusb timeout.
+                // A zero-length USB packet is not a disconnected byte stream.
+                match handle.read_bulk(input, &mut bytes[..length], left) {
+                    Ok(0) | Err(rusb::Error::Interrupted) => {
+                        Err(std::io::Error::from(std::io::ErrorKind::Interrupted))
+                    }
+                    Ok(count) => Ok(count),
+                    Err(rusb::Error::Timeout) => {
+                        Err(std::io::Error::from(std::io::ErrorKind::TimedOut))
+                    }
+                    // The framing layer reports io::Error, so a libusb failure is
+                    // carried as its kind rather than through a boxed trait object.
+                    Err(error) => Err(std::io::Error::other(error)),
                 }
-                Ok(count) => Ok(count),
-                Err(rusb::Error::Timeout) => {
-                    Err(std::io::Error::from(std::io::ErrorKind::TimedOut).into())
-                }
-                Err(error) => Err(error.into()),
-            }
-        })
+            })
+            .map_err(Into::into)
     }
     fn send(&mut self, frame: &Frame, timeout: Duration) -> crate::Result<()> {
         frame.validate()?;

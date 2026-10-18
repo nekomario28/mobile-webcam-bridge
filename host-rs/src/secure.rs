@@ -141,10 +141,10 @@ impl SocketTransport for SecureTcp {
                 left,
                 &io_budget::SystemClock,
             ));
-            Ok(self.0.read(bytes)?)
+            self.0.read(bytes)
         });
         self.1 = reader;
-        outcome
+        outcome.map_err(Into::into)
     }
     fn set_deadline(&mut self, deadline: Instant) -> io::Result<()> {
         self.0.sock.set_budget(budget_for(deadline)?);

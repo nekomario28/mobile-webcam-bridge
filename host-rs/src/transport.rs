@@ -210,10 +210,12 @@ impl SocketTransport for Tcp {
     }
     fn poll_receive(&mut self, timeout: Duration) -> crate::Result<Option<Frame>> {
         let socket = &mut self.0;
-        self.1.poll(timeout, |bytes, left| {
-            socket.set_read_timeout(Some(left))?;
-            Ok(socket.read(bytes)?)
-        })
+        self.1
+            .poll(timeout, |bytes, left| {
+                socket.set_read_timeout(Some(left))?;
+                socket.read(bytes)
+            })
+            .map_err(Into::into)
     }
 }
 
