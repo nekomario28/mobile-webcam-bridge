@@ -83,18 +83,28 @@ compiles there and fails under Gradle. One measured example: a test called
 `android.util.Size.getWidth()`, passed in the local probe and failed 1 of 93
 cases in Gradle (`Size.getWidth in android.util.Size not mocked`).
 
-Two things stop that command on a machine that has never run it, both worth
-checking before concluding the build is broken:
+Three things stop that command on a machine that has never run it, all worth
+checking before concluding the build is broken. Each one was measured here:
 
-1. **The JDK.** Gradle 8.9 (this repository's wrapper) rejects a JDK it does not
-   know: `Unsupported class file major version 71` when the default JDK is
-   Java 27. Point `JAVA_HOME` at a supported JDK, e.g.
+1. **The JDK that runs Gradle.** Gradle 8.9 rejects a JDK it does not know:
+   `Unsupported class file major version 71` when the default JDK is Java 27.
+   Run Gradle itself on a supported JDK:
    `JAVA_HOME=/usr/lib/jvm/java-21-openjdk ./gradlew :app:testDebugUnitTest`.
-2. **The SDK.** The project needs `build-tools;34.0.0` and `platforms;android-35`,
-   and the SDK licences accepted, or Gradle stops with
-   `Failed to install the following Android SDK packages as some licences have
-   not been accepted`. `ANDROID_HOME` must point at an SDK that has them.
+2. **The Java 17 toolchain the project asks for.** `jvmToolchain(17)` is a
+   different thing from the JDK running Gradle, and Gradle will not guess:
+   `Cannot find a Java installation … {languageVersion=17 …}`. Install a JDK 17
+   and name it in the *user* Gradle properties —
+   `org.gradle.java.installations.paths=/path/to/jdk-17` in
+   `~/.gradle/gradle.properties`. A `-Dorg.gradle.java.installations.paths=…` on
+   the command line is **not** enough (measured: it still fails).
+3. **The SDK.** The project needs `build-tools;34.0.0` and `platforms;android-35`
+   with the licences accepted, or Gradle stops with `Failed to install the
+   following Android SDK packages as some licences have not been accepted`
+   (`sdkmanager --licenses` fixes that). `ANDROID_HOME` must point at that SDK.
 
-Run it before trusting any local compile-only probe, and treat an actual Gradle
-result as the local evidence; the emulator conformance job remains the only place
-the real Android runtime and camera are exercised.
+With those three in place this machine runs, from the repository wrapper alone:
+`./gradlew :app:testDebugUnitTest` → **12 suites, 106 tests, 0 failures** (actual
+Gradle XML, not a compile-only probe), and `./gradlew :app:assembleDebugAndroidTest`
+→ the instrumentation APK builds. Run this before trusting any local
+compile-only probe; the emulator conformance job remains the only place the real
+Android runtime and camera are exercised.
