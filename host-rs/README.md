@@ -63,6 +63,26 @@ The Rust host reuses the Android app, AMB1 protocol, FFmpeg, libusb and Windows
 virtual camera. Build entry points are in [tools/](tools/); dependencies are
 pinned in Cargo.lock and the build scripts.
 
+**Capturing the GUI's states without a phone.** `tools/capture-gui-states.sh`
+builds `--features capture`, replays each `tests/fixtures/capture/*.json` through
+the real session (`MW_CAPTURE_FIXTURE`) and writes one PNG per locale with a
+hashed manifest — the native capture entry point, not a second rendering. It also
+fails if two fixtures come out indistinguishable, because a state mapping that
+regresses to one picture would otherwise pass silently.
+
+Three things have to be right for a headless capture, and each cost an
+investigation:
+
+- a display the process can draw to: a dedicated `Xvfb` screen **with a window
+  manager**, so the window is mapped where `MW_CAPTURE_POSITION` puts it;
+- **`WAYLAND_DISPLAY` cleared**: with it set the toolkit picks Wayland and nothing
+  lands on the X display being captured;
+- `LANGUAGE` as well as `LC_ALL` for the locale, because the Unix locale provider
+  prioritises `LANGUAGE`.
+
+`MW_CAPTURE_DETAILS=1` opens the details section (and asks for a window tall
+enough to contain it, so the quality controls are inside the frame).
+
 [Implementation evidence](../specs/rust-host-rewrite/implementation.md) records
 CI and outstanding device checks. Linux/Xperia success was reported by the user;
 physical USB on Linux/Windows was not retested in this update. Classic Qt
