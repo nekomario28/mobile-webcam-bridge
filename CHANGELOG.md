@@ -2,6 +2,15 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Record the exact three blockers that stop the local Gradle JVM gate on a fresh
+  machine (Gradle 8.9 rejects a Java 27 JDK; the project's Java 17 toolchain must
+  be named in the *user* Gradle properties, a command-line `-D` is not enough;
+  the SDK needs `build-tools;34.0.0` and `platforms;android-35` with licences
+  accepted). With them, `./gradlew :app:testDebugUnitTest` runs 106 tests with no
+  failures and `:app:assembleDebugAndroidTest` builds the instrumentation APK
+  locally, so the repository's own toolchain — not a cache-only probe — is the
+  local evidence.
+
 - Add `host-rs/tools/capture-gui-states.sh`: it captures the desktop GUI's
   fixture-driven states for both locales through the native capture entry point,
   writes a hashed manifest, and fails when two fixtures render the same frame so
