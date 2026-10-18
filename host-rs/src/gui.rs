@@ -32,6 +32,10 @@ pub fn run() -> eframe::Result {
     // the position so the screenshot is reproducible.
     #[cfg(feature = "capture")]
     if std::env::var_os("MW_CAPTURE_DETAILS").is_some() {
+        // The quality controls live behind Details; a 440-point window clips them
+        // out of the capture, so a details capture gets a window tall enough to
+        // show the whole section it opens.
+        viewport = viewport.with_inner_size([420.0, 900.0]);
         let (x, y) = std::env::var("MW_CAPTURE_POSITION")
             .ok()
             .and_then(|value| {
