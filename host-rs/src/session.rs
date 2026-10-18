@@ -44,6 +44,10 @@ pub struct Session {
     deadline: Option<Instant>,
     quality_deadline: Option<Instant>,
     writer: Option<std::thread::Thread>,
+    /// A capture fixture drives this session instead of a worker, and the sender
+    /// stays alive so the fixture's silence is not read as a closed channel.
+    #[cfg(feature = "capture")]
+    capture_fixture: Option<mpsc::Sender<Event>>,
     pub state: State,
     pub stats: Option<Event>,
     stats_at: Option<Instant>,
@@ -72,6 +76,7 @@ impl Session {
         }
         let mut session = Self::new(std::path::PathBuf::new());
         session.events = Some(receiver);
+        session.capture_fixture = Some(sender);
         // A capture must look connected: the quality controls and the Apply
         // button are only reachable while a session runs.
         session.state = State::Connecting;
@@ -87,6 +92,8 @@ impl Session {
             deadline: None,
             quality_deadline: None,
             writer: None,
+            #[cfg(feature = "capture")]
+            capture_fixture: None,
             state: State::Idle,
             stats: None,
             stats_at: None,
@@ -101,6 +108,13 @@ impl Session {
 }
 impl Session {
     pub fn running(&self) -> bool {
+        // A fixture session has no worker process, but it is running by intent:
+        // the quality controls and the Apply path must behave as they do live,
+        // otherwise a capture cannot show the state those events produce.
+        #[cfg(feature = "capture")]
+        if self.capture_fixture.is_some() {
+            return true;
+        }
         #[cfg(target_os = "linux")]
         if self.auxiliary.is_some() {
             return true;
@@ -855,14 +869,24 @@ mod tests {
         assert_eq!(session.quality.applied, Some((1280, 720, 30)));
     }
     /// The capture fixtures drive the real session through the normal `poll`
-    /// path, so what a screenshot shows is what these events produce. Assert
-    /// the resulting UI-visible state here: this machine's display stack will
-    /// not present a frame to the X framebuffer (verified with the real
-    /// display, Xvfb, software Vulkan and a compositor), so the pixel capture
-    /// itself still needs a machine with a working display.
+    /// path, so what a screenshot shows is what these events produce. These
+    /// assert the resulting UI-visible state; the pixel capture is a separate
+    /// step (`MW_SCREENSHOT`) because it needs a display the process can draw to.
     #[cfg(all(test, feature = "capture"))]
     mod capture {
         use super::*;
+
+        /// The seam itself: a fixture session must report as running, or the
+        /// quality controls and Apply path stay dead and the capture cannot show
+        /// what the events produce.
+        #[test]
+        fn a_fixture_session_reports_itself_running() {
+            let session = replay(fixture("streaming.json"));
+            assert!(
+                session.running(),
+                "a fixture session must report as running"
+            );
+        }
 
         fn replay(events: Vec<control::Event>) -> Session {
             let mut session = Session::for_capture(events);
