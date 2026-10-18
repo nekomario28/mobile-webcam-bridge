@@ -15,22 +15,54 @@ set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 out=${1:-"$root/target/gui-captures"}
 binary=${MW_CAPTURE_BINARY:-"$root/target/debug/mobile-webcam"}
+# Build it here, with the capture feature. The binary shares its path with the
+# ordinary `--features video` build, so a stale one silently ignores
+# MW_CAPTURE_FIXTURE/MW_SCREENSHOT and the app just runs a live session for ever.
+if [ -z "${MW_CAPTURE_NO_BUILD:-}" ]; then
+  echo "building the capture binary (--features capture)"
+  (cd "$root" && cargo build --locked --features capture >/dev/null)
+fi
 mkdir -p "$out"
 display=90
 for lang in en ja; do
   for fixture in "$root"/tests/fixtures/capture/*.json; do
     name=$(basename "$fixture" .json)
+    # A display that is already taken makes Xvfb exit and the app then never
+    # produces its screenshot, which hangs the capture; pick a free one.
     display=$((display + 1))
+    while [ -e "/tmp/.X11-unix/X$display" ]; do display=$((display + 1)); done
     Xvfb ":$display" -screen 0 640x1000x24 -nolisten tcp >"$out/xvfb-$lang-$name.log" 2>&1 &
     xvfb=$!
-    sleep 1.5
-    DISPLAY=":$display" openbox >/dev/null 2>&1 &
+    # Wait for the server to answer rather than for a fixed delay: under load a
+    # fixed sleep starts the app against a display that is not up yet, and then no
+    # frame is ever presented and no screenshot is produced.
+    ready=0
+    for _ in $(seq 1 40); do
+      if xdpyinfo -display ":$display" >/dev/null 2>&1; then ready=1; break; fi
+      sleep 0.5
+    done
+    if [ "$ready" != 1 ]; then
+      echo "display :$display never came up" >&2
+      kill "$xvfb" 2>/dev/null || true
+      continue
+    fi
+    DISPLAY=":$display" openbox >"$out/openbox-$lang-$name.log" 2>&1 &
     wm=$!
-    sleep 1
+    # A window manager is what gets the window mapped where MW_CAPTURE_POSITION
+    # asks for it; give it a moment, and fail loudly if it died.
+    sleep 1.5
+    if ! kill -0 "$wm" 2>/dev/null; then
+      echo "window manager died on :$display (see $out/openbox-$lang-$name.log)" >&2
+      kill "$xvfb" 2>/dev/null || true
+      continue
+    fi
     if [ "$lang" = ja ]; then locale_env=(LANGUAGE=ja_JP:ja LC_ALL=ja_JP.UTF-8); else locale_env=(LANGUAGE=en_US:en LC_ALL=C); fi
     env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET DISPLAY=":$display" "${locale_env[@]}" \
       MW_CAPTURE_FIXTURE="$fixture" MW_CAPTURE_DETAILS=1 MW_CAPTURE_POSITION=0,0 \
-      MW_SCREENSHOT="$out/$lang-$name.png" "$binary" >"$out/gui-$lang-$name.log" 2>&1 || true
+      MW_SCREENSHOT="$out/$lang-$name.png" timeout 60 "$binary" >"$out/gui-$lang-$name.log" 2>&1 || true
+    if [ ! -s "$out/$lang-$name.png" ]; then
+      echo "capture missing after 60s: $lang-$name (see $out/gui-$lang-$name.log)" >&2
+    fi
     kill "$wm" "$xvfb" 2>/dev/null || true
     wait "$wm" "$xvfb" 2>/dev/null || true
   done
