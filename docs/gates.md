@@ -71,3 +71,30 @@ Validate the virtual camera in at least:
 
 Only after G0-G3 are green. Profile camera, encoder, USB throughput, decoder,
 pixel conversion, and sink independently before optimization.
+
+## Local JVM gate (the app's unit tests, without CI)
+
+The authoritative route for the Android unit tests is the repository's own
+wrapper — `cd android && ./gradlew :app:testDebugUnitTest` — and it is also the
+only local route that exercises Gradle's resource linking and its *mockable*
+`android.jar`. A cache-only `kotlinc`-based probe is **not** equivalent: it
+compiles against a real `android-all` jar, so code that touches Android stubs
+compiles there and fails under Gradle. One measured example: a test called
+`android.util.Size.getWidth()`, passed in the local probe and failed 1 of 93
+cases in Gradle (`Size.getWidth in android.util.Size not mocked`).
+
+Two things stop that command on a machine that has never run it, both worth
+checking before concluding the build is broken:
+
+1. **The JDK.** Gradle 8.9 (this repository's wrapper) rejects a JDK it does not
+   know: `Unsupported class file major version 71` when the default JDK is
+   Java 27. Point `JAVA_HOME` at a supported JDK, e.g.
+   `JAVA_HOME=/usr/lib/jvm/java-21-openjdk ./gradlew :app:testDebugUnitTest`.
+2. **The SDK.** The project needs `build-tools;34.0.0` and `platforms;android-35`,
+   and the SDK licences accepted, or Gradle stops with
+   `Failed to install the following Android SDK packages as some licences have
+   not been accepted`. `ANDROID_HOME` must point at an SDK that has them.
+
+Run it before trusting any local compile-only probe, and treat an actual Gradle
+result as the local evidence; the emulator conformance job remains the only place
+the real Android runtime and camera are exercised.
