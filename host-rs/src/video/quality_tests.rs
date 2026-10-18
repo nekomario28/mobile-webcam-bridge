@@ -341,7 +341,11 @@ fn pipeline(case: Case) {
             );
         }
         if case == Case::Streaming {
-            let deadline = Instant::now() + Duration::from_secs(3);
+            // Long enough for an external consumer to attach and read: `ffmpeg`'s
+            // v4l2 input needs about half a second to open and negotiate, and a
+            // burst that ends too soon is what made earlier attempts look like a
+            // producer bug.
+            let deadline = Instant::now() + Duration::from_secs(6);
             let mut pts = 3_000_000u64;
             while Instant::now() < deadline {
                 pts += 20_000;
@@ -701,5 +705,68 @@ fn a_real_consumer_survives_a_sink_replacement() {
     assert!(
         frames >= 5,
         "the consumer recorded {frames} of {submitted} frames across the replacement: {consumer_log}"
+    );
+}
+
+/// The pipeline's own path, with a real consumer: the applied switch happens
+/// first, then the pipeline keeps producing while `ffmpeg` records from the sink.
+/// `Case::Streaming` existed without a consumer, so this is also what exercises
+/// it. Skipped unless `AMB_V4L2_DEVICE` names an existing v4l2loopback device.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_real_consumer_records_the_stream_the_pipeline_produces() {
+    let device = std::env::var("AMB_V4L2_DEVICE")
+        .ok()
+        .filter(|device| std::path::Path::new(device).exists());
+    let Some(device) = device else {
+        eprintln!("SKIP pipeline consumer acceptance: set AMB_V4L2_DEVICE");
+        return;
+    };
+    let _device_guard = device_guard();
+    let output = std::env::temp_dir().join(format!("amb-pipeline-{}.mkv", std::process::id()));
+    let _ = std::fs::remove_file(&output);
+    let writer_device = device.clone();
+    let writer =
+        thread::spawn(move || with_v4l2_device(Some(writer_device), || pipeline(Case::Streaming)));
+    // Late enough to be past the switch and the sink's own start, with the burst
+    // still running for several seconds afterwards.
+    thread::sleep(Duration::from_millis(1500));
+    let mut consumer = std::process::Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-f", "v4l2", "-i", &device])
+        .args(["-t", "5", "-c", "copy"])
+        .arg(&output)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("ffmpeg is required for the consumer acceptance");
+    writer.join().expect("the pipeline must finish");
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while consumer.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    if consumer.try_wait().ok().flatten().is_none() {
+        let _ = consumer.kill();
+    }
+    let _ = consumer.wait();
+    let mut consumer_log = String::new();
+    if let Some(mut stderr) = consumer.stderr.take() {
+        let _ = stderr.read_to_string(&mut consumer_log);
+    }
+    let probed = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-count_frames", "-select_streams", "v:0"])
+        .args(["-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"])
+        .arg(&output)
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap_or_default();
+    let frames: usize = probed.parse().unwrap_or(0);
+    println!(
+        "pipeline consumer receipt: device={device} frames={frames} consumer_log={:?}",
+        consumer_log.chars().take(90).collect::<String>()
+    );
+    assert!(
+        frames >= 5,
+        "the consumer recorded {frames} frames from the pipeline: {consumer_log}"
     );
 }
