@@ -2,6 +2,13 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Move the pinned `io-budget` revision forward to its `main` (`65df550`), which
+  fixes the deadline layer handing a released stream back with a stale
+  budget-derived socket timeout instead of the pre-wrap values (its issue #1)
+  and takes `io::Result` end to end. The three transports adapt to that error
+  type at the framing boundary; a libusb failure there is carried as an
+  `io::Error` rather than a boxed trait object.
+
 - Produce the Linux virtual camera through the V4L2 streaming API instead of
   `write(2)`: request MMAP output buffers, fill and queue them with a monotonic
   timestamp, and drop a frame when no consumer has released a buffer. Measured

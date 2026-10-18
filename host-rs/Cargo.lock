@@ -1512,7 +1512,7 @@ dependencies = [
 [[package]]
 name = "io-budget"
 version = "0.1.0"
-source = "git+https://github.com/nekomario28/io-budget?rev=b018023#b018023d51e523b8bbcb5a4a8c5b138035c93f23"
+source = "git+https://github.com/nekomario28/io-budget?rev=65df550#65df55004b69e6cc02248ea24871a42f983c1845"
 
 [[package]]
 name = "itertools"
