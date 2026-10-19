@@ -33,15 +33,20 @@ import java.util.concurrent.atomic.AtomicReference
  *  - the camera can be opened again afterwards (so "stopped sending" is
  *    distinguished from "stopped capturing").
  *
- * Boundaries, stated so a green run cannot be over-read: this is **not** physical
- * hardware, it is not the Activity's own dispatcher wiring, and it skips loudly
- * (with a `SKIP:` marker the workflow must surface) when the runtime has no
- * camera, no CAMERA permission or no usable capture mode. The cancellation sink
+ * Boundaries, stated so a green run cannot be over-read: whether the camera is
+ * physical or emulated is reported in the marker, it is not the Activity's own
+ * dispatcher wiring, and it skips loudly (with a `SKIP:` marker the workflow must
+ * surface) when the runtime has no camera, no CAMERA permission or no usable
+ * capture mode. The cancellation sink
  * below mirrors `MainActivity.onCaptureCancelled` (dedicated executor, detach
  * then close); the production Activity path itself is still covered only by
  * inspection.
  */
-internal class CameraTeardownInstrumentation(private val test: Instrumentation) {
+internal class CameraTeardownInstrumentation(
+    private val test: Instrumentation,
+    /** Whether the runtime reports itself as an emulator, for the evidence marker. */
+    private val emulated: Boolean = true,
+) {
     private val context: Context get() = test.targetContext
 
     /** Production controller for the mid-stream switch; set before commands arrive. */
@@ -265,7 +270,7 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
                     "switch=${switched.report}; codec=${capabilityRecord?.codecName}; " +
                     "advertised=${capabilityRecord?.advertisedModes} of ${capabilityRecord?.supportedModes} supported; " +
                     "${secondRecord} " +
-                    "(emulated/virtual camera evidence, not physical hardware)"
+                    evidenceLine()
             }
         } catch (error: Throwable) {
             writeArtifact(cameraId, resolvedMode, -1, -1, -1, false, false, error.toString())
@@ -453,6 +458,12 @@ internal class CameraTeardownInstrumentation(private val test: Instrumentation) 
         } finally {
             thread.quitSafely()
         }
+    }
+
+    private fun evidenceLine(): String = if (emulated) {
+        "(emulated/virtual camera evidence, not physical hardware)"
+    } else {
+        "(physical device evidence: real Camera2 capture and a real hardware encoder)"
     }
 
     private fun writeArtifact(
