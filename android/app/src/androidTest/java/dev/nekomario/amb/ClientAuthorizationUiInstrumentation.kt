@@ -259,7 +259,7 @@ internal class ClientAuthorizationUiInstrumentation(private val test: Instrument
                         "\"${view<TextView>(R.id.connection_status).text}\" " +
                         "(record=${prefs.contains(ClientStore.RECORD)}, " +
                         "key=${keyStore().containsAlias(alias)}, " +
-                        "epoch=${dev.nekomario.amb.StorageGeneration.current()}, " +
+                        "epoch=${dev.nekomario.amb.StorageGeneration.current("client_authorization")}, " +
                         "freshStore=${fresh.exceptionOrNull() ?: fresh.getOrNull()})"
                 }
                 Thread.sleep(50)

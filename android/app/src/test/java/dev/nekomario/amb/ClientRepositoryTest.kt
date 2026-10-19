@@ -5,6 +5,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ClientRepositoryTest {
+    private val NAMESPACE = "unit_test"
     private val now = 1_800_000_000L
     private fun key(): ByteArray {
         val generator = java.security.KeyPairGenerator.getInstance("EC")
@@ -16,16 +17,16 @@ class ClientRepositoryTest {
             now, now + ClientAuthorization.EXPIRY_SECONDS)
 
     @Test fun a_writer_created_before_a_deliberate_reset_cannot_resurrect_the_record() {
-        val born = StorageGeneration.current()
+        val born = StorageGeneration.current(NAMESPACE)
         var disk: ByteArray? = null
         val repository = ClientRepository({ disk }, { disk = it.copyOf() },
-            { StorageGeneration.requireCurrent(born) })
+            { StorageGeneration.requireCurrent(NAMESPACE, born) })
         val publicKey = key()
         val id = ClientAuthorization.deriveClientId(publicKey)
         repository.approve(id, publicKey, "before-reset", now)
         val before = checkNotNull(disk).copyOf()
 
-        StorageGeneration.bump() // the user's deliberate reset
+        StorageGeneration.bump(NAMESPACE) // the user's deliberate reset
 
         val next = key()
         val firstFailure = assertThrows(IllegalStateException::class.java) {
@@ -38,12 +39,24 @@ class ClientRepositoryTest {
         assertThrows(IllegalStateException::class.java) { repository.snapshot() }
     }
 
-    @Test fun a_writer_created_after_the_reset_publishes_normally() {
-        StorageGeneration.bump()
-        val born = StorageGeneration.current()
+    @Test fun resetting_one_store_does_not_latch_a_different_one_shut() {
+        val other = "$NAMESPACE-other"
+        val otherBorn = StorageGeneration.current(other)
         var disk: ByteArray? = null
         val repository = ClientRepository({ disk }, { disk = it.copyOf() },
-            { StorageGeneration.requireCurrent(born) })
+            { StorageGeneration.requireCurrent(other, otherBorn) })
+        StorageGeneration.bump(NAMESPACE) // a reset of the authorization namespace
+        val publicKey = key()
+        repository.approve(ClientAuthorization.deriveClientId(publicKey), publicKey, "other", now)
+        assertEquals("other", repository.snapshot().single().label)
+    }
+
+    @Test fun a_writer_created_after_the_reset_publishes_normally() {
+        StorageGeneration.bump(NAMESPACE)
+        val born = StorageGeneration.current(NAMESPACE)
+        var disk: ByteArray? = null
+        val repository = ClientRepository({ disk }, { disk = it.copyOf() },
+            { StorageGeneration.requireCurrent(NAMESPACE, born) })
         val publicKey = key()
         repository.approve(ClientAuthorization.deriveClientId(publicKey), publicKey, "after-reset", now)
         assertEquals("after-reset", repository.snapshot().single().label)

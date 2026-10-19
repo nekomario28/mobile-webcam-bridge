@@ -484,7 +484,14 @@ class MainActivity : Activity() {
         return true
     }
 
+    private fun disarmStorageAction() {
+        if (!confirmResetStorage) return
+        confirmResetStorage = false
+        storageAction.text = ui("Reset authorization data…", "承認データを初期化…")
+    }
+
     private fun authorizationStorageFailed() {
+        disarmStorageAction()
         storageFailed = true
         stopConnections()
         val previous = authorizationOwner
@@ -818,6 +825,10 @@ class MainActivity : Activity() {
     }
 
     private fun updateControls() {
+        // An armed confirmation only survives while the state it was armed in
+        // does. Any other control change disarms it, so a single press can never
+        // erase the data after an interruption the user did not see.
+        if (!storageFailed) disarmStorageAction()
         storageAction.visibility = if (storageFailed) View.VISIBLE else View.GONE
         for ((button, mode) in listOf(usbMode to ConnectionMode.USB, lanMode to ConnectionMode.LAN)) {
             button.isEnabled = authorizationOwner != null
