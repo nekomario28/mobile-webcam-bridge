@@ -21,6 +21,16 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Make the recovery command's arguments say what they mean. `--replace-identity`
+  is what a user runs when the app will not start, so a mistyped flag used to open
+  the GUI that cannot start for the same reason; unknown options, a stray
+  argument, and `--force` without `--replace-identity` are now named and rejected
+  (exit 2) instead of being ignored, and `--help` prints the three forms.
+  `--replace-identity` no longer creates a key while refusing to replace one
+  (`load_or_create` published one when none existed, which also made "nothing was
+  replaced" false), and a concurrently guarded quarantine name is reserved before
+  the rename rather than checked first, since `rename` overwrites.
+
 - Add the explicit host recovery path for an unusable stored PC key. Startup
   still fails closed and leaves the file untouched; `--replace-identity`, and the
   same action in the GUI behind a two-step confirmation, rename the unusable file

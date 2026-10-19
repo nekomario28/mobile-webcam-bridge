@@ -1,33 +1,41 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
+use mobile_webcam::Command;
+use mobile_webcam::cli::{self, USAGE};
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
-        Some("--worker") => {
-            let result = args
-                .get(1)
-                .ok_or("missing parent PID")
-                .and_then(|s| s.parse::<u32>().map_err(|_| "invalid parent PID"));
-            match result {
-                Ok(parent) => {
-                    if mobile_webcam::video::worker(parent).is_err() {
-                        std::process::exit(1);
-                    }
-                }
-                Err(_) => std::process::exit(2),
+    let command = match cli::parse(&args) {
+        Ok(command) => command,
+        Err(message) => {
+            eprintln!("{message}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    };
+    match command {
+        Command::Help => print!("{USAGE}"),
+        Command::Gui => {
+            if let Err(error) = mobile_webcam::gui::run() {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Command::Worker { parent } => {
+            if mobile_webcam::video::worker(parent).is_err() {
+                std::process::exit(1);
             }
         }
         // Explicit recovery, and the only path that ever replaces a stored key:
         // startup fails closed instead, so an unreadable key is never rotated
         // behind the user's back. The old file is renamed, not deleted.
-        Some("--replace-identity") => {
+        Command::ReplaceIdentity { force } => {
             // Replacing a key that still reads is a different, destructive act:
             // it invalidates every approval for no reason. Require --force.
-            let forced = args.get(1).map(String::as_str) == Some("--force");
+            //
             // `stored_is_readable`, not `load_or_create`: the latter publishes a key
             // when none exists, so refusing to replace would itself have created one
-            // and the message "nothing was replaced" would have been false.
+            // and "nothing was replaced" would have been false.
             let readable = mobile_webcam::identity::Identity::stored_is_readable().unwrap_or(false);
-            if !forced && readable {
+            if !force && readable {
                 eprintln!(
                     "The stored PC key is readable, so nothing was replaced. Replacing it \
                      invalidates every phone approval; add --force if that is what you want."
@@ -44,12 +52,6 @@ fn main() {
                     eprintln!("The stored PC key was not replaced: {error}");
                     std::process::exit(1);
                 }
-            }
-        }
-        _ => {
-            if let Err(e) = mobile_webcam::gui::run() {
-                eprintln!("{e}");
-                std::process::exit(1);
             }
         }
     }
