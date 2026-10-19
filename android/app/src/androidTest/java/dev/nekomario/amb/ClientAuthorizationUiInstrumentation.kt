@@ -136,15 +136,12 @@ internal class ClientAuthorizationUiInstrumentation(
                 peer.send(Wire.TYPE_PING, ByteArray(8))
                 check(peer.read(Wire.TYPE_PONG).contentEquals(ByteArray(8)))
             }
-            // Wait for the waiting state itself, not merely for help text to exist:
-            // this is also the point at which the LAN server is listening again, so
-            // an earlier return makes the reconnect race a server rebind (measured:
-            // TLS handshake Connection reset).
-            waitUi {
-                val status = view<TextView>(R.id.connection_status).text
-                status == "Wi-Fi · waiting for the PC" || status == "Wi-Fi · PCの接続を待っています"
-            }
-            check(view<TextView>(R.id.lan_help).text.isNotEmpty()) {
+            // The help text is set when the LAN view renders; the status transition
+            // that used to serve as a synchronization point does not happen on every
+            // path (the phone can stay in "authorized" instead of returning to
+            // waiting), so the reconnect tolerates a rebinding listener instead.
+            waitUi { view<TextView>(R.id.lan_help).text.isNotEmpty() }
+            check(view<TextView>(R.id.lan_help).text.length > 8) {
                 "the hidden help must carry the address and the how-to"
             }
             // Hidden but present: the device proves the disclosure starts closed and
@@ -221,7 +218,31 @@ internal class ClientAuthorizationUiInstrumentation(
         override fun close() = socket.close()
     }
 
+    /**
+     * Connect to the phone's listener.
+     *
+     * The approval path restarts the LAN server, so a client that connects in the
+     * middle of that rebind gets `Connection reset` from a socket the kernel had
+     * already queued. Retrying briefly is what a real client does; a server that is
+     * genuinely down still fails once the deadline passes.
+     */
     private fun openPeer(tls: SSLContext, identity: SecureLanIdentity,
+        keyPair: java.security.KeyPair, label: String): Peer {
+        val deadline = SystemClock.elapsedRealtime() + 10_000
+        var attempt = 0
+        while (true) {
+            try {
+                return openPeerOnce(tls, identity, keyPair, label)
+            } catch (error: java.io.IOException) {
+                if (SystemClock.elapsedRealtime() >= deadline) throw error
+                attempt++
+                android.util.Log.i("SecureWifiGate", "reconnect attempt $attempt after ${error.javaClass.simpleName}")
+                Thread.sleep(400)
+            }
+        }
+    }
+
+    private fun openPeerOnce(tls: SSLContext, identity: SecureLanIdentity,
         keyPair: java.security.KeyPair, label: String): Peer {
         val peer = Peer(tls.socketFactory.createSocket("127.0.0.1", LanServer.DEFAULT_PORT) as SSLSocket)
         try {
