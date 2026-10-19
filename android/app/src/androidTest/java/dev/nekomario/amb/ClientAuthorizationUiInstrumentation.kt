@@ -137,14 +137,16 @@ internal class ClientAuthorizationUiInstrumentation(
                 check(peer.read(Wire.TYPE_PONG).contentEquals(ByteArray(8)))
             }
             // The status is the state; the address is procedure and lives behind
-            // Details, which is the contract this scenario now holds to.
-            waitUi { view<TextView>(R.id.connection_status).text.startsWith("Wi-Fi") }
+            // Details, which is the contract this scenario now holds to. Wait on the
+            // help text itself: several states start with "Wi-Fi", so the status
+            // prefix alone does not say which one rendered.
+            waitUi { view<TextView>(R.id.lan_help).text.isNotEmpty() }
             check(view<TextView>(R.id.lan_help).visibility == View.GONE) {
                 "the phone address must be hidden until Details is opened"
             }
-            check(view<TextView>(R.id.lan_help).text.contains("192.168.") ||
-                view<TextView>(R.id.lan_help).text.contains("Wi-Fi")) {
-                "the hidden help must still carry the address"
+            val status = view<TextView>(R.id.connection_status).text
+            check(status.startsWith("Wi-Fi") && !status.contains("TLS")) {
+                "the status must be a short state, not the procedure: $status"
             }
             tap(view(R.id.details_action))
             waitUi { view<TextView>(R.id.lan_help).visibility == View.VISIBLE }

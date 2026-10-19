@@ -898,7 +898,17 @@ mod tests {
         }
 
         fn fixture(name: &str) -> Vec<control::Event> {
-            let text = std::fs::read_to_string(format!("tests/fixtures/capture/{name}"))
+            // `capture/` holds the fixtures the GUI screenshots are rendered from;
+            // `session/` holds ones that only drive session behaviour, because they
+            // render the same frame as a sibling and would make the capture gate's
+            // "two states must differ" rule fire on a state that legitimately looks
+            // identical (an apply to the mode already streaming).
+            let path = ["tests/fixtures/capture", "tests/fixtures/session"]
+                .into_iter()
+                .map(|directory| format!("{directory}/{name}"))
+                .find(|candidate| std::path::Path::new(candidate).exists())
+                .unwrap_or_else(|| format!("tests/fixtures/capture/{name}"));
+            let text = std::fs::read_to_string(&path)
                 .unwrap_or_else(|error| panic!("fixture {name}: {error}"));
             serde_json::from_str(&text).unwrap_or_else(|error| panic!("fixture {name}: {error}"))
         }

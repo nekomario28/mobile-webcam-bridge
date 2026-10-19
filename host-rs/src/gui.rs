@@ -107,6 +107,30 @@ impl App {
     /// The Wi-Fi pairing inputs, in one place: shown on the main screen while the
     /// pairing is incomplete, and inside Details afterwards for editing, so the two
     /// cannot drift apart.
+    /// The one automatic connection attempt per launch.
+    ///
+    /// Uses the same entry point as the Connect button: Linux has `connect`
+    /// (USB permission handling lives there), Windows has `start`.
+    fn auto_connect(&mut self, ctx: &egui::Context) {
+        if self.settings.transport != "lan"
+            || !self.settings.lan_pairing_complete()
+            || self.session.running()
+        {
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        let result =
+            self.session
+                .connect(self.settings.clone(), self.selected.clone(), ctx.clone());
+        #[cfg(windows)]
+        let result = self
+            .session
+            .start(self.settings.clone(), self.selected.clone(), ctx.clone());
+        if let Err(error) = result {
+            self.session.state = State::Failed(error.to_string());
+        }
+    }
+
     fn pairing_inputs(&mut self, ui: &mut egui::Ui) {
         ui.label(self.text("Phone address", "スマホに表示されたアドレス"));
         ui.add(
@@ -445,15 +469,7 @@ impl eframe::App for App {
         // never reach this branch.
         if !self.auto_connect_attempted {
             self.auto_connect_attempted = true;
-            if self.settings.transport == "lan"
-                && self.settings.lan_pairing_complete()
-                && !self.session.running()
-                && let Err(error) =
-                    self.session
-                        .connect(self.settings.clone(), self.selected.clone(), ctx.clone())
-            {
-                self.session.state = State::Failed(error.to_string());
-            }
+            self.auto_connect(ctx);
         }
         #[cfg(feature = "capture")]
         if let Some(path) = std::env::var_os("MW_SCREENSHOT") {
