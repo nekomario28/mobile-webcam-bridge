@@ -19,11 +19,14 @@ import java.util.concurrent.TimeUnit
 class UsbPermissionInstrumentation : Instrumentation() {
     private var disposableUi = false
     private var cameraAcceptance = false
+    /** Explicit opt-in for the camera acceptance on real hardware. */
+    private var physicalDevice = false
 
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         disposableUi = arguments?.getString("disposableUi") == "true"
         cameraAcceptance = arguments?.getString("cameraAcceptance") == "true"
+        physicalDevice = arguments?.getString("physicalDevice") == "true"
         start()
     }
 
@@ -313,15 +316,27 @@ class UsbPermissionInstrumentation : Instrumentation() {
             context.registerReceiver(receiver, filter)
         }
         try {
-            check(disposableUi && Build.VERSION.SDK_INT >= 35 &&
-                (Build.HARDWARE.contains("ranchu") || Build.PRODUCT.startsWith("sdk_gphone"))) {
-                "Conformance requires an explicitly disposable API 35 emulator (-e disposableUi true)"
+            val emulator = Build.HARDWARE.contains("ranchu") || Build.PRODUCT.startsWith("sdk_gphone")
+            // Everything below writes the app's own authorization store and drives
+            // its UI, so it needs a profile the caller has cleared. Two explicit
+            // opt-ins satisfy that and nothing does it by default, because a real
+            // phone carries its owner's approvals:
+            //
+            //   -e disposableUi true   a disposable API 35 emulator, and
+            //   -e physicalDevice true a physical device the caller designated.
+            //
+            // The pristine-profile check further down is the second gate: a device
+            // with any stored approval is refused even with the flag.
+            val designated = (disposableUi && emulator && Build.VERSION.SDK_INT >= 35) ||
+                (physicalDevice && !emulator && Build.VERSION.SDK_INT >= 29)
+            check(designated) {
+                "Conformance requires an explicitly disposable API 35 emulator (-e disposableUi true) " +
+                    "or a designated physical device (-e physicalDevice true)"
             }
             if (cameraAcceptance) {
                 // No preamble here: the Wi-Fi smoke test expects an external TLS
-                // client that this invocation does not run, and the camera
-                // acceptance only needs the disposable check above.
-                val marker = CameraTeardownInstrumentation(this).run()
+                // client that this invocation does not run.
+                val marker = CameraTeardownInstrumentation(this, emulator).run()
                 finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "$marker\n") })
                 return
             }
@@ -345,9 +360,11 @@ class UsbPermissionInstrumentation : Instrumentation() {
             smokeClientStorage()
             smokeClientSignatures()
             if (Build.VERSION.SDK_INT >= 29) smokeSecureWifi(context)
-            ClientAuthorizationUiInstrumentation(this).run()
+            ClientAuthorizationUiInstrumentation(this, allowDisplayChanges = physicalDevice).run()
             finish(Activity.RESULT_OK, Bundle().apply {
-                putString("stream", "PASS USB permission, encrypted client storage, EC signature fixtures, Android Keystore TLS 1.3, wrong-key rejection, host handshake, approval UI and live revocation\n")
+                putString("stream", "PASS USB permission, encrypted client storage, EC signature fixtures, " +
+                    "Android Keystore TLS 1.3, wrong-key rejection, host handshake, approval UI and live revocation" +
+                    if (emulator) "\n" else " (physical device)\n")
             })
         } catch (error: Throwable) {
             android.util.Log.e("SecureWifiGate", "Instrumentation failure", error)

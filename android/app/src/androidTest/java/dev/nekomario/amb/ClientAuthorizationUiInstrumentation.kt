@@ -22,7 +22,13 @@ import javax.net.ssl.X509TrustManager
 
 /** Real production Activity, store, TLS gate and pointer input on a disposable
  * API-35 emulator. No approval hook is injected into the application. */
-internal class ClientAuthorizationUiInstrumentation(private val test: Instrumentation) {
+internal class ClientAuthorizationUiInstrumentation(
+    private val test: Instrumentation,
+    /** The caller has established that resizing the display and switching the app
+     * locale is acceptable, which it only is on a disposable emulator or a device
+     * the caller designated for conformance. Defaults to the emulator check. */
+    private val allowDisplayChanges: Boolean = false,
+) {
     private val context = test.targetContext
     private lateinit var activity: MainActivity
     private fun shell(command: String) = ParcelFileDescriptor.AutoCloseInputStream(
@@ -30,7 +36,8 @@ internal class ClientAuthorizationUiInstrumentation(private val test: Instrument
 
     fun run() {
         check(Build.VERSION.SDK_INT >= 33)
-        check(Build.MODEL.contains("sdk") || Build.FINGERPRINT.contains("generic")) {
+        check(allowDisplayChanges ||
+            Build.MODEL.contains("sdk") || Build.FINGERPRINT.contains("generic")) {
             "display-changing UI conformance runs only on a disposable emulator"
         }
         val locale = checkNotNull(context.getSystemService(LocaleManager::class.java))

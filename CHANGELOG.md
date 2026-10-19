@@ -21,6 +21,16 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Run the conformance on a physical phone on purpose. The instrumentation still
+  refuses a device by default, but `-e physicalDevice true` designates one, and
+  `android/tools/physical-conformance.sh` wraps it so the display, font scale,
+  locale and screen timeout are restored on *every* exit including SIGINT and
+  SIGTERM — an aborted hand-run left `Override size: 840x1400` on a physical
+  phone until it was reset by hand. The camera acceptance and the storage/TLS/UI
+  conformance both ran on a physical XQ-GE44 (Android 16, 77 of 77 advertised
+  modes, `c2.qti.avc.encoder`) and the marker says which kind of camera the
+  evidence came from.
+
 - Make the recovery command's arguments say what they mean. `--replace-identity`
   is what a user runs when the app will not start, so a mistyped flag used to open
   the GUI that cannot start for the same reason; unknown options, a stray

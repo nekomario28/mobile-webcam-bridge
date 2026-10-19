@@ -115,3 +115,29 @@ shipped in this repository, the three fixes above make the wrapper usable, and
 the wrapper is the only route that can be trusted for `android.*` behaviour. The
 measurement above — `Size.getWidth()` fine in the probe, unmocked under Gradle —
 is the reason to keep using the wrapper rather than the probe.
+
+## Running the conformance on a physical phone
+
+The instrumentation refuses a physical device by default, because it rewrites the
+app's own authorization store and drives its UI. Two explicit opt-ins satisfy
+that, and the pristine-profile check is a second gate that refuses any device
+holding a stored approval:
+
+- `-e disposableUi true` — a disposable API 35 emulator, which is what CI uses;
+- `-e physicalDevice true` — a physical device the caller has designated.
+
+`android/tools/physical-conformance.sh --serial <serial> --camera|--conformance`
+is the way to run either. It clears the app's data first, grants or revokes
+`CAMERA` so the mode matches what its assertions expect, and — the part that is
+not optional — **restores the device on every exit, including SIGINT and
+SIGTERM**.
+
+The UI conformance resizes the display (`wm size 840x1400`), changes the font
+scale and switches the app locale, and restores them in a `finally` block. That
+block does not run when the process is killed: measured 2026-10-19, an aborted
+run left `Override size: 840x1400` on a physical phone until it was reset by hand
+(`wm size reset`, `wm density reset`, `settings delete system font_scale`). Hence
+the wrapper's trap, and hence running that mode through the wrapper rather than
+by hand. The trap was then verified by sending it `SIGTERM` mid-run: it printed
+`interrupted; restoring` and the device came back at its physical size with the
+font scale, screen timeout and adb forwards clean.
