@@ -212,6 +212,9 @@ class UsbPermissionInstrumentation : Instrumentation() {
             check(runCatching { reloaded.approve(id, publicKey, "stale", now) }.isFailure) {
                 "a store created before the reset published after it"
             }
+            check(runCatching { reloaded.snapshot() }.isFailure) {
+                "a writer the fence refused must latch shut, not keep serving"
+            }
             ClientStore(targetContext, namespace).repository.approve(id, publicKey, "studio-pc", now)
             val valid = checkNotNull(prefs.getString(ClientStore.RECORD, null))
             check(prefs.edit().remove(ClientStore.RECORD).commit())
@@ -222,7 +225,9 @@ class UsbPermissionInstrumentation : Instrumentation() {
                 "lost record/key state was silently repaired"
             }
             check(prefs.edit().putString(ClientStore.RECORD, valid).commit())
-            check(ClientStore(targetContext, namespace).repository.snapshot() == reloaded.snapshot())
+            check(ClientStore(targetContext, namespace).repository.snapshot().single().label == "studio-pc") {
+                "the authorization record did not round trip after a reset"
+            }
             val changed = android.util.Base64.decode(valid, android.util.Base64.NO_WRAP)
             changed[changed.lastIndex] = (changed.last().toInt() xor 1).toByte()
             check(prefs.edit().putString(ClientStore.RECORD,
