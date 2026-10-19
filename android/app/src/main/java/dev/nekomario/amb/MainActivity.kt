@@ -237,7 +237,9 @@ class MainActivity : Activity() {
                 }
                 confirmResetStorage = false
                 text = ui("Reset authorization data…", "承認データを初期化…")
-                val outcome = runCatching { ClientStore(this@MainActivity).reset() }
+                // `clear`, not a store instance: constructing one reads the record,
+                // which is precisely what cannot be read in this state.
+                val outcome = runCatching { ClientStore.clear(this@MainActivity) }
                 val failure = outcome.exceptionOrNull()
                 // Logged under the tag the conformance workflow already collects,
                 // so a failure on the device names its reason instead of leaving

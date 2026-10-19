@@ -12,9 +12,10 @@ import javax.crypto.spec.GCMParameterSpec
 
 /** Android persistence adapter. Separate alias/AEAD context from the Wi-Fi
  * bearer key, which has its own existing storage format and migration policy. */
-class ClientStore(context: Context, namespace: String = "client_authorization") {
-    private val prefs = context.applicationContext.getSharedPreferences(namespace, Context.MODE_PRIVATE)
-    private val alias = "mobile_webcam_${namespace}_aes_v1"
+class ClientStore(context: Context, private val namespace: String = "client_authorization") {
+    private val context = context.applicationContext
+    private val prefs = this.context.getSharedPreferences(namespace, Context.MODE_PRIVATE)
+    private val alias = aliasFor(namespace)
     private val aad = "AMB authorized clients v1:$namespace".toByteArray(Charsets.UTF_8)
     /** The epoch this store was created in; a reset makes it stale. */
     private val born = StorageGeneration.current()
@@ -44,18 +45,7 @@ class ClientStore(context: Context, namespace: String = "client_authorization") 
      * a record without its key cannot decrypt, and a key without its record is
      * already treated as "recovery required" rather than as first use.
      */
-    fun reset() = synchronized(keyLock) {
-        // First, so no writer from the previous epoch can slip in between the
-        // clear and the bump — that race is what made the action look ineffective.
-        StorageGeneration.bump()
-        check(prefs.edit().remove(RECORD).commit()) { "unable to clear the authorization record" }
-        runCatching {
-            KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias)
-        }.onFailure { error ->
-            throw IllegalStateException("unable to clear the authorization encryption key", error)
-        }
-        Unit
-    }
+    fun reset() = clear(context, namespace)
 
     private fun load(): ByteArray? {
         if (!prefs.contains(RECORD)) {
@@ -95,5 +85,35 @@ class ClientStore(context: Context, namespace: String = "client_authorization") 
     companion object {
         internal const val RECORD = "authorized_clients_v1"
         private val keyLock = Any()
+
+        private fun aliasFor(namespace: String) = "mobile_webcam_${namespace}_aes_v1"
+
+        /**
+         * Clear the record and this namespace's key **without reading either**.
+         *
+         * Recovery must not be reachable only through an object whose construction
+         * reads what cannot be read. Constructing a store decrypts the record, so
+         * `ClientStore(context).reset()` threw `AEADBadTagException` before it could
+         * clear anything — the device run for the recovery action failed exactly
+         * there, with the record and its key still in place afterwards.
+         *
+         * Bumping the epoch first means no writer from before the reset can slip in
+         * between the clear and the bump and re-create what the user erased.
+         */
+        fun clear(context: Context, namespace: String = "client_authorization") {
+            synchronized(keyLock) {
+                StorageGeneration.bump()
+                val prefs = context.applicationContext
+                    .getSharedPreferences(namespace, Context.MODE_PRIVATE)
+                check(prefs.edit().remove(RECORD).commit()) { "unable to clear the authorization record" }
+                val failure = runCatching {
+                    KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                        .deleteEntry(aliasFor(namespace))
+                }.exceptionOrNull()
+                failure?.let {
+                    throw IllegalStateException("unable to clear the authorization encryption key", it)
+                }
+            }
+        }
     }
 }

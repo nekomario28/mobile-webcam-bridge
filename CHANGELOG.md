@@ -9,6 +9,12 @@
   closed. The device conformance scenario now presses it and requires the effect —
   record and key gone, a fresh store readable — and the app logs the outcome under
   the tag the workflow already collects, so a failure names its reason.
+- Make recovery reachable when the record cannot be read: `ClientStore.clear()`
+  clears the record and this namespace's key *without* reading either. Constructing
+  a store decrypts the record, so `ClientStore(context).reset()` threw
+  `AEADBadTagException` before it could clear anything — measured on the device, with
+  the record and its key still in place afterwards. The device test now corrupts a
+  record and requires it to be cleared, with a fresh store reading as never-used.
 - Fence writers across a deliberate reset: an owner created before the reset can no
   longer publish, so a live session's expiry or revocation cannot resurrect the
   erased record. Measured on the emulator — without the fence the reset returned

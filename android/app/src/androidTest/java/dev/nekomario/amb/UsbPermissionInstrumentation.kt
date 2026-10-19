@@ -228,6 +228,24 @@ class UsbPermissionInstrumentation : Instrumentation() {
             check(ClientStore(targetContext, namespace).repository.snapshot().single().label == "studio-pc") {
                 "the authorization record did not round trip after a reset"
             }
+            // The case the recovery action actually meets: a record that cannot be
+            // decrypted. It must be clearable *without* reading it — constructing a
+            // store reads it and throws, which is what made the action unreachable
+            // on the device even though the operation itself was correct.
+            val corrupt = android.util.Base64.decode(valid, android.util.Base64.NO_WRAP)
+            corrupt[corrupt.lastIndex] = (corrupt.last().toInt() xor 1).toByte()
+            check(prefs.edit().putString(ClientStore.RECORD,
+                android.util.Base64.encodeToString(corrupt, android.util.Base64.NO_WRAP)).commit())
+            check(runCatching { ClientStore(targetContext, namespace) }.isFailure) { "a corrupt record was read" }
+            ClientStore.clear(targetContext, namespace)
+            check(!prefs.contains(ClientStore.RECORD)) { "clearing a corrupt record left it behind" }
+            check(!java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                .containsAlias(alias)) { "clearing a corrupt record left its key behind" }
+            check(ClientStore(targetContext, namespace).repository.snapshot().isEmpty()) {
+                "a store cleared of a corrupt record must read as never-used"
+            }
+            ClientStore(targetContext, namespace).repository.approve(id, publicKey, "after-corrupt", now)
+            check(prefs.edit().putString(ClientStore.RECORD, valid).commit())
             val changed = android.util.Base64.decode(valid, android.util.Base64.NO_WRAP)
             changed[changed.lastIndex] = (changed.last().toInt() xor 1).toByte()
             check(prefs.edit().putString(ClientStore.RECORD,

@@ -85,7 +85,12 @@ arms it and the label states what the second does), which clears the encrypted
 record *and* this namespace's Keystore key — after which every PC must be approved
 again. Partial failure keeps failing closed: a record without its key cannot
 decrypt, and a key without its record is already "recovery required" rather than
-first use. A deliberate reset also **fences earlier writers**: every
+first use. Recovery is deliberately **not reachable only through a readable store**:
+`ClientStore.clear(context, namespace)` clears the record and the key without
+reading either, because constructing a store decrypts the record — `ClientStore(context).reset()`
+threw `AEADBadTagException` before it could clear anything, which is why the
+device run for the action failed with the record still in place. A deliberate
+reset also **fences earlier writers**: every
 owner captures the storage epoch it was created in and may only publish while that
 epoch is current, so a live session's expiry or revocation cannot re-create the
 record the user just erased. That fence is not decoration — measured on the
