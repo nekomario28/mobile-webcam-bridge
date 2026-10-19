@@ -205,7 +205,14 @@ class UsbPermissionInstrumentation : Instrumentation() {
             }
             afterReset.revoke(id)
             check(ClientStore(targetContext, namespace).repository.snapshot().isEmpty())
-            reloaded.approve(id, publicKey, "studio-pc", now)
+            // The fence, against a real Keystore: `reloaded` was created before the
+            // reset, so it may no longer write. That write is exactly what
+            // re-created the erased record on the device and made the recovery
+            // action look ineffective, so this is the assertion, not a formality.
+            check(runCatching { reloaded.approve(id, publicKey, "stale", now) }.isFailure) {
+                "a store created before the reset published after it"
+            }
+            ClientStore(targetContext, namespace).repository.approve(id, publicKey, "studio-pc", now)
             val valid = checkNotNull(prefs.getString(ClientStore.RECORD, null))
             check(prefs.edit().remove(ClientStore.RECORD).commit())
             check(runCatching { ClientStore(targetContext, namespace) }.isFailure) {
