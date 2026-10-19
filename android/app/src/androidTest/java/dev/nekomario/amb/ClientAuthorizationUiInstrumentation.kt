@@ -254,10 +254,13 @@ internal class ClientAuthorizationUiInstrumentation(private val test: Instrument
             val deadline = SystemClock.elapsedRealtime() + 12000
             while (!recovered()) {
                 check(SystemClock.elapsedRealtime() < deadline) {
+                    val fresh = runCatching { ClientStore(activity).repository.snapshot() }
                     "the reset action did not take effect; app says " +
                         "\"${view<TextView>(R.id.connection_status).text}\" " +
                         "(record=${prefs.contains(ClientStore.RECORD)}, " +
-                        "key=${keyStore().containsAlias(alias)})"
+                        "key=${keyStore().containsAlias(alias)}, " +
+                        "epoch=${dev.nekomario.amb.StorageGeneration.current()}, " +
+                        "freshStore=${fresh.exceptionOrNull() ?: fresh.getOrNull()})"
                 }
                 Thread.sleep(50)
             }

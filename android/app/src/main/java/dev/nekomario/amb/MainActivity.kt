@@ -77,6 +77,8 @@ class MainActivity : Activity() {
     private var cameraStartRequested = false
     /** Authorization storage is unusable until the user deliberately resets it. */
     private var storageFailed = false
+    /** Why storage was last unusable, kept so the user (and a harness) can read it. */
+    private var storageFailureReason: String? = null
     /** The storage action's first press only arms the second. */
     private var confirmResetStorage = false
     private var cameraPermissionPending = false
@@ -252,7 +254,7 @@ class MainActivity : Activity() {
                     ))
                     if (connectionMode == ConnectionMode.LAN) startLanMode() else startUsbMode()
                 } else {
-                    val reason = failure?.message ?: "storage is still unusable"
+                    val reason = failure?.message ?: storageFailureReason ?: "storage is still unusable"
                     show(ui("Reset failed: $reason", "初期化に失敗しました: $reason"))
                 }
             }
@@ -466,10 +468,15 @@ class MainActivity : Activity() {
             PhoneAuthorization(ClientStore(this).repository, onStorageFailure = {
                 handler.post { authorizationStorageFailed() }
             })
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            // Keep the cause: "storage is still unusable" without it is what left
+            // two earlier attempts at the recovery action undiagnosable.
+            storageFailureReason = error.message ?: error.toString()
+            android.util.Log.e("SecureWifiGate", "authorization storage unavailable: $error", error)
             authorizationStorageFailed()
             return false
         }
+        storageFailureReason = null
         storageFailed = false
         updateControls()
         return true
