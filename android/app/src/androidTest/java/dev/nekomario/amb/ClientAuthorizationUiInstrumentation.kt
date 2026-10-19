@@ -144,8 +144,14 @@ internal class ClientAuthorizationUiInstrumentation(
             check(view<TextView>(R.id.lan_help).visibility == View.GONE) {
                 "the phone address must be hidden until Details is opened"
             }
+            // The contract is that the status carries state, not procedure; which
+            // state is not this assertion's business ("PC authorized" is a valid
+            // short state too).
             val status = view<TextView>(R.id.connection_status).text
-            check(status.startsWith("Wi-Fi") && !status.contains("TLS")) {
+            check(!status.contains("TLS") &&
+                !status.contains("Phone IP") &&
+                !status.contains("スマホのIPアドレス") &&
+                !status.contains("192.168.")) {
                 "the status must be a short state, not the procedure: $status"
             }
             tap(view(R.id.details_action))
