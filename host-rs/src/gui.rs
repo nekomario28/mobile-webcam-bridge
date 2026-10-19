@@ -389,6 +389,11 @@ impl App {
 }
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // A confirmation armed in one failure must not carry into a different
+        // state and be completed by a click the user meant for something else.
+        if !matches!(self.session.state, State::Failed(_)) {
+            self.confirm_replace_identity = false;
+        }
         #[cfg(feature = "capture")]
         if let Some(path) = std::env::var_os("MW_SCREENSHOT") {
             for event in ctx.input(|i| i.events.clone()) {

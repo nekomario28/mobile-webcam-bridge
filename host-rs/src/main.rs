@@ -23,7 +23,11 @@ fn main() {
             // Replacing a key that still reads is a different, destructive act:
             // it invalidates every approval for no reason. Require --force.
             let forced = args.get(1).map(String::as_str) == Some("--force");
-            if !forced && mobile_webcam::identity::Identity::load_or_create().is_ok() {
+            // `stored_is_readable`, not `load_or_create`: the latter publishes a key
+            // when none exists, so refusing to replace would itself have created one
+            // and the message "nothing was replaced" would have been false.
+            let readable = mobile_webcam::identity::Identity::stored_is_readable().unwrap_or(false);
+            if !forced && readable {
                 eprintln!(
                     "The stored PC key is readable, so nothing was replaced. Replacing it \
                      invalidates every phone approval; add --force if that is what you want."
