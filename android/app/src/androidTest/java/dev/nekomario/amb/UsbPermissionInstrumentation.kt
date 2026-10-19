@@ -186,6 +186,24 @@ class UsbPermissionInstrumentation : Instrumentation() {
             reloaded = ClientStore(targetContext, namespace).repository
             check(reloaded.snapshot().single().expiresAtUnixSeconds == now + 10 + ClientAuthorization.EXPIRY_SECONDS)
             reloaded.revoke(id)
+            // Explicit recovery: the confirmed reset clears the record *and* this
+            // namespace's key, so the store is pristine and every PC must be
+            // approved again. Partial states already fail closed (a record without
+            // its key cannot decrypt; a key without its record is "recovery
+            // required"), so this asserts only the deliberate path.
+            ClientStore(targetContext, namespace).reset()
+            check(!prefs.contains(ClientStore.RECORD)) { "reset left the authorization record" }
+            check(!java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.containsAlias(alias)) {
+                "reset left the authorization encryption key"
+            }
+            val pristine = ClientStore(targetContext, namespace).repository
+            check(pristine.snapshot().isEmpty()) { "a reset store must read as never-used" }
+            pristine.approve(id, publicKey, "after-reset", now)
+            val afterReset = ClientStore(targetContext, namespace).repository
+            check(afterReset.snapshot().single().label == "after-reset") {
+                "a store must work normally after an explicit reset"
+            }
+            afterReset.revoke(id)
             check(ClientStore(targetContext, namespace).repository.snapshot().isEmpty())
             reloaded.approve(id, publicKey, "studio-pc", now)
             val valid = checkNotNull(prefs.getString(ClientStore.RECORD, null))
