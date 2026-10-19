@@ -179,8 +179,13 @@ stops the camera on a device. Do not treat the guards as independent sign-off.
 - Independent authorization-design review happened once (above) and returned a
   blocker; physical USB/Camera2/native consumer acceptance remain separate,
   unpassed merge/release gates.
-- Explicit identity recovery UX is follow-up work. Preserve failed records and
-  report unavailable storage rather than automatically reset or rotate keys.
+- Explicit identity recovery is implemented on the host (`--replace-identity`,
+  and the GUI action behind a two-step confirmation): it quarantines the
+  unusable file under a `.corrupt-<unix-seconds>` name, publishes a new key, and
+  states that every phone approval is invalidated; a key that still reads is left
+  alone unless `--force`. Failed records are still preserved and unavailable
+  storage is still reported rather than reset automatically. The phone-side
+  explicit repair remains open.
 
 See [choices](choices.md) for design trade-offs and
 [the user/security contract](../../docs/per-pc-authorization.md) for behavior.

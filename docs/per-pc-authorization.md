@@ -52,8 +52,17 @@ on Unix and a user-scope DPAPI-encrypted file under LocalAppData on Windows. It
 publishes complete first-use keys atomically without replacing a concurrent
 winner. Missing creates a key; corrupt/inaccessible existing data fails without
 silently rotating identity. Unix permissions are access control, not encryption.
-Explicit recovery UX remains open: failure is surfaced, not repaired by deleting
-or replacing a key behind the user's back.
+Failure is surfaced, never repaired behind the user's back: startup fails closed
+and the stored file is left exactly as it was. Recovery is explicit —
+`mobile-webcam --replace-identity`, and the same action in the GUI (offered only
+when it sees that failure, behind a two-step confirmation). A replacement
+**renames** the unusable file to `<name>.corrupt-<unix-seconds>` — never deleted,
+never overwritten, so its bytes and permissions survive for inspection — and then
+publishes a new key. Because the phone stores this PC's public key, every
+approval for this PC is invalidated, which is why the command refuses to touch a
+key that still reads unless `--force` is given, and why the GUI states it before
+asking. The phone-side explicit repair (authorization data that cannot be read)
+is still open and remains fail-closed.
 
 [The phone codec/repository](../android/app/src/main/java/dev/nekomario/amb/ClientRepository.kt)
 stores public points, labels and approval/expiry times. IDs are derived instead

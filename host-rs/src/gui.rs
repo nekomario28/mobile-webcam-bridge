@@ -75,6 +75,10 @@ struct App {
     /// The quality draft; 0 fields mean auto (slice 03).
     quality_draft: (u16, u16, u16),
     confirm_forget_phone: bool,
+    /// Two-step confirmation for the only action that replaces a stored key.
+    confirm_replace_identity: bool,
+    /// Where the unusable key was moved, shown after a replacement.
+    recovery_note: Option<String>,
     #[cfg(feature = "capture")]
     capture_requested: bool,
 }
@@ -201,6 +205,8 @@ impl App {
             usb_error: None,
             quality_draft: quality_wish,
             confirm_forget_phone: false,
+            confirm_replace_identity: false,
+            recovery_note: None,
             #[cfg(feature = "capture")]
             capture_requested: false,
         }
@@ -760,6 +766,11 @@ impl eframe::App for App {
                                     "The phone rejected the access key. Re-check all 32 characters; a rotated key revokes the old one.",
                                     "スマホが接続キーを拒否しました。32桁を再確認してください。ローテーション後のスマホでは旧キーは無効です。",
                                 )
+                            } else if error.contains("explicit recovery required") {
+                                self.text(
+                                    "The stored PC key cannot be read. It has been left untouched. Replacing it moves that file aside permanently and every phone that approved this PC must approve it again.",
+                                    "保存されたPC鍵を読み取れません。ファイルはそのまま残しています。置き換えると元のファイルは別名で保存され、このPCを許可したすべてのスマホで再許可が必要です。",
+                                )
                             } else if error.contains("peer disconnected") {
                                 self.text(
                                     "The phone closed the connection. Check the phone's Wi-Fi screen or app.",
@@ -775,6 +786,59 @@ impl eframe::App for App {
                                 self.text("Check the selected phone and its USB permission. See Details for the error.", "選択したスマホとUSBの利用許可を確認してください。エラーは「詳細」に表示します。")
                             };
                             ui.label(next);
+                            if error.contains("explicit recovery required") {
+                                ui.add_space(6.0);
+                                if !self.confirm_replace_identity {
+                                    if ui
+                                        .button(self.text(
+                                            "Replace the stored PC key…",
+                                            "保存されたPC鍵を置き換える…",
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.confirm_replace_identity = true;
+                                    }
+                                } else {
+                                    ui.label(self.text(
+                                        "Replace it now? The old file is kept under a .corrupt- name; every approved phone must approve this PC again.",
+                                        "今すぐ置き換えますか？ 古いファイルは .corrupt- 名で保存され、許可済みのスマホは再許可が必要です。",
+                                    ));
+                                    ui.horizontal(|ui| {
+                                        if ui.button(self.text("Replace", "置き換える")).clicked() {
+                                            self.confirm_replace_identity = false;
+                                            match crate::identity::Identity::replace_stored() {
+                                                Ok(moved) => {
+                                                    self.recovery_note =
+                                                        Some(moved.display().to_string());
+                                                    self.session.state = State::Idle;
+                                                }
+                                                Err(error) => {
+                                                    self.session.state =
+                                                        State::Failed(error.to_string())
+                                                }
+                                            }
+                                        }
+                                        if ui
+                                            .button(self.text("Cancel", "キャンセル"))
+                                            .clicked()
+                                        {
+                                            self.confirm_replace_identity = false;
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                        if let Some(note) = &self.recovery_note {
+                            ui.colored_label(
+                                egui::Color32::LIGHT_GREEN,
+                                format!(
+                                    "{}: {note}",
+                                    self.text(
+                                        "The old PC key was kept here; press Connect to use the new one",
+                                        "古いPC鍵はここに保存しました。「接続」で新しい鍵を使えます"
+                                    )
+                                ),
+                            );
                         }
                         if let Some(error) = &self.save_error {
                             ui.colored_label(
