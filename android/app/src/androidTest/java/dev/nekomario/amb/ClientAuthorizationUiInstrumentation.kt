@@ -243,16 +243,22 @@ internal class ClientAuthorizationUiInstrumentation(private val test: Instrument
             // a pristine store rather than refusing for ever. No extra capture is
             // taken here so the artifact set stays the 15 the workflow verifies;
             // the assertions are the evidence.
+            // The first press only arms the action; the second performs it.
             tap(view(R.id.storage_action))
-            tapText("Reset")
-            waitUi { !view<TextView>(R.id.connection_status).text.contains("storage unavailable") }
-            check(ClientStore(context).repository.snapshot().isEmpty()) {
-                "recovery left approval data behind"
+            tap(view(R.id.storage_action))
+            // Assert the *effect*, not a status string: the record and this
+            // namespace's key are gone, so a fresh store constructs and reads empty.
+            waitUi {
+                !prefs.contains(ClientStore.RECORD) &&
+                    !java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                        .containsAlias("mobile_webcam_client_authorization_aes_v1")
             }
-            check(!prefs.contains(ClientStore.RECORD)) { "recovery left the stored record behind" }
-            check(!java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-                .containsAlias("mobile_webcam_client_authorization_aes_v1")) {
-                "recovery left the encryption key behind"
+            val recovered = runCatching { ClientStore(context).repository.snapshot() }
+            check(recovered.getOrNull()?.isEmpty() == true) {
+                "recovery did not leave a readable, empty store: ${recovered.exceptionOrNull() ?: recovered.getOrNull()}"
+            }
+            check(!view<TextView>(R.id.connection_status).text.contains("storage unavailable")) {
+                "the app still reports unusable storage after a successful reset"
             }
         } finally {
             try {

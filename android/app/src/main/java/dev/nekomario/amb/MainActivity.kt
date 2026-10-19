@@ -77,6 +77,8 @@ class MainActivity : Activity() {
     private var cameraStartRequested = false
     /** Authorization storage is unusable until the user explicitly resets it. */
     private var storageFailed = false
+    /** The storage action's first press only arms the second. */
+    private var confirmResetStorage = false
     private var cameraPermissionPending = false
     private var foreground = false
     private var usbPermissionRequest: PendingIntent? = null
@@ -244,31 +246,33 @@ class MainActivity : Activity() {
         }
         storageAction = Button(this).apply {
             id = R.id.storage_action
-            text = ui("Reset authorization data…", "承認データを初期化…")
             setAllCaps(false)
             visibility = View.GONE
+            text = ui("Reset authorization data…", "承認データを初期化…")
             setOnClickListener {
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle(ui("Reset the authorization data?", "承認データを初期化しますか？"))
-                    .setMessage(ui(
-                        "Use this only if the authorization data cannot be read. Every approved PC must be approved again.",
-                        "承認データを読み取れない場合にのみ使用してください。許可したPCはすべて再許可が必要になります。"
+                if (!confirmResetStorage) {
+                    // Two steps on one control: the label states exactly what the
+                    // second press does, and nothing happens until then.
+                    confirmResetStorage = true
+                    text = ui(
+                        "Press again to erase the record and its key",
+                        "もう一度押すと記録と鍵を消去します"
+                    )
+                    return@setOnClickListener
+                }
+                confirmResetStorage = false
+                text = ui("Reset authorization data…", "承認データを初期化…")
+                val outcome = runCatching { ClientStore(this@MainActivity).reset() }
+                if (outcome.isSuccess && createAuthorizationOwner()) {
+                    show(ui(
+                        "Authorization data was reset. Every PC must be approved again.",
+                        "承認データを初期化しました。すべてのPCで再許可が必要です。"
                     ))
-                    .setNegativeButton(ui("Cancel", "キャンセル"), null)
-                    .setPositiveButton(ui("Reset", "初期化する")) { _, _ ->
-                        runCatching { ClientStore(this@MainActivity).reset() }
-                            .onSuccess {
-                                if (createAuthorizationOwner()) {
-                                    show(ui(
-                                        "Authorization data was reset. Every PC must be approved again.",
-                                        "承認データを初期化しました。すべてのPCで再許可が必要です。"
-                                    ))
-                                    if (connectionMode == ConnectionMode.LAN) startLanMode() else startUsbMode()
-                                }
-                            }
-                            .onFailure { show(ui("Reset failed: ${it.message}", "初期化に失敗しました: ${it.message}")) }
-                    }
-                    .show()
+                    if (connectionMode == ConnectionMode.LAN) startLanMode() else startUsbMode()
+                } else {
+                    val reason = outcome.exceptionOrNull()?.message ?: "storage is still unusable"
+                    show(ui("Reset failed: $reason", "初期化に失敗しました: $reason"))
+                }
             }
         }
         approvalUi = ClientApprovalUi(this, { authorizationOwner }, { session }, {
