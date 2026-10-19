@@ -22,6 +22,11 @@ if [ -z "${MW_CAPTURE_NO_BUILD:-}" ]; then
   echo "building the capture binary (--features capture)"
   (cd "$root" && cargo build --locked --features capture >/dev/null)
 fi
+# Start from an empty directory: the manifest is built from every PNG in it, so a
+# stale capture from an earlier run would be counted as a state the current
+# fixtures no longer produce (measured: a deleted fixture kept passing as one of
+# twelve "states").
+rm -rf "$out"
 mkdir -p "$out"
 display=90
 for lang in en ja; do

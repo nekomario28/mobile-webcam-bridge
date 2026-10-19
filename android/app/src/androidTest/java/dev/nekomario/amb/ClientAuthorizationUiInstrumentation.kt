@@ -136,8 +136,31 @@ internal class ClientAuthorizationUiInstrumentation(
                 peer.send(Wire.TYPE_PING, ByteArray(8))
                 check(peer.read(Wire.TYPE_PONG).contentEquals(ByteArray(8)))
             }
-            waitUi { view<TextView>(R.id.connection_status).text.startsWith(
-                if (japanese) "スマホのIPアドレス" else "Phone IP") }
+            // The help text is set when the LAN view renders; the status transition
+            // that used to serve as a synchronization point does not happen on every
+            // path (the phone can stay in "authorized" instead of returning to
+            // waiting), so the reconnect tolerates a rebinding listener instead.
+            waitUi { view<TextView>(R.id.lan_help).text.isNotEmpty() }
+            check(view<TextView>(R.id.lan_help).text.length > 8) {
+                "the hidden help must carry the address and the how-to"
+            }
+            // Hidden but present: the device proves the disclosure starts closed and
+            // carries the address; the open/close rule itself is pinned by
+            // SecondarySurfaceWiringTest, because tapping the disclosure depends on
+            // where the layout happened to put it (the Japanese pass tapped past it).
+            check(view<TextView>(R.id.lan_help).visibility == View.GONE) {
+                "the phone address must be hidden until Details is opened"
+            }
+            // The contract is that the status carries state, not procedure; which
+            // state is not this assertion's business ("PC authorized" is a valid
+            // short state too).
+            val status = view<TextView>(R.id.connection_status).text
+            check(!status.contains("TLS") &&
+                !status.contains("Phone IP") &&
+                !status.contains("スマホのIPアドレス") &&
+                !status.contains("192.168.")) {
+                "the status must be a short state, not the procedure: $status"
+            }
             openPeer(tls, identity, keyPair, label).use { peer ->
                 val known = peer.result()
                 check(known.status == Wire.AUTH_AUTHORIZED && known.expiresAtUnixSeconds == saved.expiresAtUnixSeconds)
@@ -195,7 +218,31 @@ internal class ClientAuthorizationUiInstrumentation(
         override fun close() = socket.close()
     }
 
+    /**
+     * Connect to the phone's listener.
+     *
+     * The approval path restarts the LAN server, so a client that connects in the
+     * middle of that rebind gets `Connection reset` from a socket the kernel had
+     * already queued. Retrying briefly is what a real client does; a server that is
+     * genuinely down still fails once the deadline passes.
+     */
     private fun openPeer(tls: SSLContext, identity: SecureLanIdentity,
+        keyPair: java.security.KeyPair, label: String): Peer {
+        val deadline = SystemClock.elapsedRealtime() + 10_000
+        var attempt = 0
+        while (true) {
+            try {
+                return openPeerOnce(tls, identity, keyPair, label)
+            } catch (error: java.io.IOException) {
+                if (SystemClock.elapsedRealtime() >= deadline) throw error
+                attempt++
+                android.util.Log.i("SecureWifiGate", "reconnect attempt $attempt after ${error.javaClass.simpleName}")
+                Thread.sleep(400)
+            }
+        }
+    }
+
+    private fun openPeerOnce(tls: SSLContext, identity: SecureLanIdentity,
         keyPair: java.security.KeyPair, label: String): Peer {
         val peer = Peer(tls.socketFactory.createSocket("127.0.0.1", LanServer.DEFAULT_PORT) as SSLSocket)
         try {

@@ -74,6 +74,9 @@ class MainActivity : Activity() {
     }
     private lateinit var cameraButton: Button
     private lateinit var details: TextView
+    /** Phone address and the how-to; shown only while Details is open. */
+    private lateinit var lanHelp: TextView
+    private var lanHelpText = ""
     private var cameraStartRequested = false
     /** Authorization storage is unusable until the user deliberately resets it. */
     private var storageFailed = false
@@ -144,6 +147,12 @@ class MainActivity : Activity() {
             setAllCaps(false)
             setOnClickListener { startLanMode() }
         }
+        lanHelp = TextView(this).apply {
+            id = R.id.lan_help
+            textSize = 12f
+            setTextIsSelectable(true)
+            visibility = android.view.View.GONE
+        }
         details = TextView(this).apply {
             textSize = 13f
             setPadding(0, dp(8), 0, dp(8))
@@ -167,6 +176,7 @@ class MainActivity : Activity() {
                     details.visibility = android.view.View.VISIBLE
                     showCameras()
                 }
+                applySecondaryVisibility()
             }
         }
         cameraButton = Button(this).apply {
@@ -195,29 +205,7 @@ class MainActivity : Activity() {
             // The pairing controls belong to the Wi-Fi flow; startUsbMode hides them.
             visibility = View.GONE
             setOnClickListener {
-                if (pairInfo.visibility == View.VISIBLE) {
-                    pairInfo.visibility = View.GONE
-                    pairInfo.text = ""
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                    text = ui("Show pairing key", "接続キーを表示")
-                    return@setOnClickListener
-                }
-                val identity = lanIdentity ?: return@setOnClickListener
-                runCatching {
-                    pairInfo.text = ui(
-                        "Verify phone certificate SHA-256 on PC:\n" + identity.fingerprint() +
-                        "\n\nEnter this 128-bit access key on PC:\n" + identity.pairingCode() +
-                        "\n\nKeep the key private.",
-                        "PCでスマホ証明書のSHA-256を確認:\n" + identity.fingerprint() +
-                        "\n\nPCに128ビット接続キーを入力:\n" + identity.pairingCode() +
-                        "\n\n接続キーは秘密にしてください。"
-                    )
-                    // Block screenshots and Android's recent-app snapshot while the
-                    // bearer key is on screen.
-                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                    pairInfo.visibility = View.VISIBLE
-                    text = ui("Hide pairing key", "接続キーを隠す")
-                }.onFailure { show("Wi-Fi identity error: " + it.message) }
+                setPairingKeyVisible(pairInfo.visibility != View.VISIBLE)
             }
         }
         storageAction = Button(this).apply {
@@ -310,7 +298,7 @@ class MainActivity : Activity() {
                 addView(cameraButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(12) })
                 addView(cameras, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(pairAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
-                addView(rotateAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                addView(lanHelp, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(storageAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(pairInfo, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(details, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -544,7 +532,9 @@ class MainActivity : Activity() {
         clearUsbPermissionRequest()
         saveConnectionMode()
         pairAction.visibility = View.VISIBLE
-        rotateAction.visibility = View.VISIBLE
+        // Nothing approved yet means the key is the next thing the user needs, so
+        // show it rather than asking for a tap that reveals what is necessary.
+        if (authorization.clients().isEmpty()) setPairingKeyVisible(true)
         lanServer?.close()
         refreshQualityCapabilities()
         val identity = lanIdentity ?: SecureLanIdentity(this).also { lanIdentity = it }
@@ -598,17 +588,20 @@ class MainActivity : Activity() {
         val addresses = LanServer.localIpv4Addresses().ifEmpty {
             listOf(ui("Check the phone Wi-Fi IPv4 address", "Wi-Fi IPv4を確認してください"))
         }
-        show(
-            buildString {
-                append(ui("Phone IP\n", "スマホのIPアドレス\n"))
-                append(addresses.joinToString("\n"))
-                append(ui(
-                    "\nTLS 1.3 is required. Tap Show pairing key to find the phone fingerprint and key for your PC.",
-                    "\nTLS 1.3必須。接続キーを表示し、PCで証明書の指紋と接続キーを入力してください。"
-                ))
-                if (!detail.isNullOrBlank()) append("\n").append(detail)
-            },
-        )
+        // The status says what is happening; the address and the how-to are
+        // procedure, and procedure belongs behind Details.
+        lanHelpText = buildString {
+            append(ui("Phone IP\n", "スマホのIPアドレス\n"))
+            append(addresses.joinToString("\n"))
+            append(ui(
+                "\nTLS 1.3 is required. The pairing key above is what the PC needs.",
+                "\nTLS 1.3必須。PCに入力するのは上の接続キーです。"
+            ))
+            if (!detail.isNullOrBlank()) append("\n").append(detail)
+        }
+        lanHelp.text = lanHelpText
+        lanHelp.visibility = if (details.visibility == View.VISIBLE) View.VISIBLE else View.GONE
+        show(ui("Wi-Fi · waiting for the PC", "Wi-Fi · PCの接続を待っています"))
     }
 
     private fun discoverUsb() {
@@ -856,12 +849,9 @@ class MainActivity : Activity() {
             button.setTextColor(if (selected) Color.WHITE else getColor(R.color.app_text))
         }
         pairAction.visibility = if (connectionMode == ConnectionMode.LAN) View.VISIBLE else View.GONE
-        rotateAction.visibility = pairAction.visibility
+        applySecondaryVisibility()
         if (connectionMode != ConnectionMode.LAN) {
-            pairInfo.visibility = View.GONE
-            pairInfo.text = ""
-            pairAction.text = ui("Show pairing key", "接続キーを表示")
-            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            setPairingKeyVisible(false)
         }
         cameraButton.isEnabled = session?.clientAuthorization?.isAuthorized() == true || cameraBridge != null || cameraStartRequested
         if (::approvalUi.isInitialized) approvalUi.refresh()
@@ -887,6 +877,51 @@ class MainActivity : Activity() {
         if (notificationPermissionPending) return
         notificationPermissionPending = true
         requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
+    }
+
+    /**
+     * Show or hide the pairing key.
+     *
+     * Extracted from the button so the app can reveal it without a tap: while no PC
+     * is approved the key is the next thing the user needs, and one more press to
+     * see it buys nothing. Hiding it still clears the text and the secure flag.
+     */
+    private fun setPairingKeyVisible(visible: Boolean) {
+        if (!visible) {
+            pairInfo.visibility = View.GONE
+            pairInfo.text = ""
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            pairAction.text = ui("Show pairing key", "接続キーを表示")
+            return
+        }
+        val identity = lanIdentity ?: return
+        runCatching {
+            pairInfo.text = ui(
+                "Verify phone certificate SHA-256 on PC:\n" + identity.fingerprint() +
+                "\n\nEnter this 128-bit access key on PC:\n" + identity.pairingCode() +
+                "\n\nKeep the key private.",
+                "PCでスマホ証明書のSHA-256を確認:\n" + identity.fingerprint() +
+                "\n\nPCに128ビット接続キーを入力:\n" + identity.pairingCode() +
+                "\n\n接続キーは秘密にしてください。"
+            )
+            // Block screenshots and Android's recent-app snapshot while the bearer
+            // key is on screen.
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            pairInfo.visibility = View.VISIBLE
+            pairAction.text = ui("Hide pairing key", "接続キーを隠す")
+        }.onFailure { show("Wi-Fi identity error: " + it.message) }
+    }
+
+    /**
+     * Secondary and destructive controls live behind Details: rotating the key
+     * disconnects every Wi-Fi client, and the phone's address plus the how-to are
+     * instructions rather than state.
+     */
+    private fun applySecondaryVisibility() {
+        val open = details.visibility == View.VISIBLE
+        lanHelp.visibility = if (open && lanHelpText.isNotEmpty()) View.VISIBLE else View.GONE
+        rotateAction.visibility =
+            if (open && connectionMode == ConnectionMode.LAN) View.VISIBLE else View.GONE
     }
 
     private fun saveConnectionMode() {
