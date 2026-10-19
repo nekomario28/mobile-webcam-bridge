@@ -2,6 +2,14 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Add the phone-side deliberate repair for authorization data that cannot be read:
+  the storage-failure screen offers one confirmed "Reset authorization data…"
+  action, visible only in that state, which clears the encrypted record and this
+  namespace's Keystore key and says that every PC must be approved again. Nothing
+  resets automatically, partial failure still fails closed, and the device
+  conformance scenario presses the action and requires a pristine store, a
+  recovered connection state and no leftover key.
+
 - Add the explicit host recovery path for an unusable stored PC key. Startup
   still fails closed and leaves the file untouched; `--replace-identity`, and the
   same action in the GUI behind a two-step confirmation, rename the unusable file

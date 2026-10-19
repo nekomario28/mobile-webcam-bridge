@@ -79,7 +79,13 @@ The repository publishes memory state only after successful commit and latches
 closed after write failure. The live owner then closes access and reports the
 error. In particular, a failed revoke stops this connection but **does not prove
 that the on-disk grant was removed**. It must not be shown as successful; the
-user needs to resolve the storage problem. There is no automatic data reset.
+user needs to resolve the storage problem. Nothing resets automatically: the
+storage-failure screen offers one confirmed action ("Reset authorization data…")
+which is visible only in that state, and it clears the encrypted record *and*
+this namespace's Keystore key deliberately — after which every PC must be
+approved again. Partial failure keeps failing closed: a record without its key
+cannot decrypt, and a key without its record is already "recovery required"
+rather than first use.
 
 ## Phone UI and live enforcement
 

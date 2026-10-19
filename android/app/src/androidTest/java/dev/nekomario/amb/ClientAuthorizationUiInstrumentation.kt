@@ -238,6 +238,22 @@ internal class ClientAuthorizationUiInstrumentation(private val test: Instrument
             }
             check(attempted.exceptionOrNull() is java.net.ConnectException) { "corrupt-store startup opened a listener: $attempted" }
             capture("storage-failed")
+            // Explicit recovery, on the device: the action is offered only in this
+            // state, the confirmation is required, and the app must come back with
+            // a pristine store rather than refusing for ever. No extra capture is
+            // taken here so the artifact set stays the 15 the workflow verifies;
+            // the assertions are the evidence.
+            tap(view(R.id.storage_action))
+            tapText("Reset")
+            waitUi { !view<TextView>(R.id.connection_status).text.contains("storage unavailable") }
+            check(ClientStore(context).repository.snapshot().isEmpty()) {
+                "recovery left approval data behind"
+            }
+            check(!prefs.contains(ClientStore.RECORD)) { "recovery left the stored record behind" }
+            check(!java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                .containsAlias("mobile_webcam_client_authorization_aes_v1")) {
+                "recovery left the encryption key behind"
+            }
         } finally {
             try {
                 test.runOnMainSync { activity.finish() }

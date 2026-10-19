@@ -33,6 +33,25 @@ class ClientStore(context: Context, namespace: String = "client_authorization") 
         }
     }
 
+    /**
+     * Explicit recovery: delete the encrypted record and this namespace's key.
+     *
+     * Only the confirmed recovery action calls this; `load` never does, so an
+     * unreadable record still fails closed. Afterwards the store is pristine and
+     * every approved PC must be approved again. Partial failure also fails closed:
+     * a record without its key cannot decrypt, and a key without its record is
+     * already treated as "recovery required" rather than as first use.
+     */
+    fun reset() = synchronized(keyLock) {
+        check(prefs.edit().remove(RECORD).commit()) { "unable to clear the authorization record" }
+        runCatching {
+            KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias)
+        }.onFailure { error ->
+            throw IllegalStateException("unable to clear the authorization encryption key", error)
+        }
+        Unit
+    }
+
     private fun load(): ByteArray? {
         if (!prefs.contains(RECORD)) {
             // SharedPreferences can report missing after XML loss. An existing

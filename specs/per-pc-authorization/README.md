@@ -184,8 +184,10 @@ stops the camera on a device. Do not treat the guards as independent sign-off.
   unusable file under a `.corrupt-<unix-seconds>` name, publishes a new key, and
   states that every phone approval is invalidated; a key that still reads is left
   alone unless `--force`. Failed records are still preserved and unavailable
-  storage is still reported rather than reset automatically. The phone-side
-  explicit repair remains open.
+  storage is still reported rather than reset automatically. The phone side now
+  offers the same deliberate repair: a confirmed "Reset authorization data…"
+  action, visible only while storage is unusable, which clears the record and its
+  Keystore key and states that every PC must be approved again.
 
 See [choices](choices.md) for design trade-offs and
 [the user/security contract](../../docs/per-pc-authorization.md) for behavior.
