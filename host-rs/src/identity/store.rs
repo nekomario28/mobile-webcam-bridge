@@ -18,6 +18,58 @@ impl Identity {
     pub fn load_or_create() -> crate::Result<Self> {
         load_at(&crate::settings::Store::native()?.identity_path()?)
     }
+
+    /// Move an unusable stored key aside and publish a fresh one.
+    ///
+    /// **Explicit only** — nothing on the normal startup path calls this, so a
+    /// corrupt or unreadable key still fails closed until the user asks for this.
+    /// The unusable file is *renamed*, never deleted and never overwritten: its
+    /// bytes and their permissions survive at the returned path so the cause can
+    /// still be inspected. Because the phone stores this PC's public key, every
+    /// previously approved phone must approve this PC again — the caller is
+    /// expected to say so before asking.
+    pub fn replace_stored() -> crate::Result<std::path::PathBuf> {
+        replace_at(&crate::settings::Store::native()?.identity_path()?)
+    }
+}
+
+/// The quarantine name for a replaced key, never colliding with an existing file.
+fn quarantine_path(path: &Path) -> crate::Result<std::path::PathBuf> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("identity path has no usable file name")?
+        .to_owned();
+    let since_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    for attempt in 0..1000u32 {
+        let suffix = if attempt == 0 {
+            String::new()
+        } else {
+            format!("-{attempt}")
+        };
+        let candidate = path.with_file_name(format!("{name}.corrupt-{since_epoch}{suffix}"));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("too many quarantined copies of the stored PC key; move them away first".into())
+}
+
+/// Testable form of [`Identity::replace_stored`].
+fn replace_at(path: &Path) -> crate::Result<std::path::PathBuf> {
+    let quarantine = quarantine_path(path)?;
+    fs::rename(path, &quarantine)?;
+    #[cfg(unix)]
+    if let Some(parent) = quarantine.parent() {
+        // The rename is the recovery's commit point; make it durable before the
+        // new key is published, so a crash cannot lose both.
+        let _ = File::open(parent).and_then(|dir| dir.sync_all());
+    }
+    load_at(path)?;
+    Ok(quarantine)
 }
 
 fn read_at(path: &Path) -> crate::Result<Option<Identity>> {
@@ -126,6 +178,85 @@ fn load_at(path: &Path) -> crate::Result<Identity> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacing_a_corrupt_key_quarantines_its_bytes_and_publishes_a_new_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("private/identity");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let unusable = b"this is not a stored key";
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(&path).unwrap().write_all(unusable).unwrap();
+
+        // Nothing recovers on its own: startup still fails closed.
+        assert!(load_at(&path).is_err());
+
+        let quarantine = replace_at(&path).unwrap();
+        // The unusable bytes and their permissions survive at the reported path.
+        assert_eq!(fs::read(&quarantine).unwrap(), unusable);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&quarantine).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        // A fresh, usable key is published in its place.
+        let identity = load_at(&path).unwrap();
+        assert!(Identity::verify(
+            identity.public_key(),
+            b"after recovery",
+            &identity.sign(b"after recovery").unwrap()
+        ));
+        assert_ne!(
+            fs::read(&path).unwrap(),
+            unusable,
+            "the stored file must now hold the new key"
+        );
+    }
+
+    #[test]
+    fn replacing_never_overwrites_an_existing_quarantine_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identity");
+        fs::write(&path, b"unusable").unwrap();
+        // Take the name the first attempt would use, with a sentinel inside it.
+        let taken = quarantine_path(&path).unwrap();
+        fs::write(&taken, b"sentinel").unwrap();
+        let quarantine = replace_at(&path).unwrap();
+        assert_ne!(
+            quarantine, taken,
+            "an existing quarantine file must be left alone"
+        );
+        assert_eq!(fs::read(&taken).unwrap(), b"sentinel");
+        assert_eq!(fs::read(&quarantine).unwrap(), b"unusable");
+        assert!(load_at(&path).is_ok());
+    }
+
+    #[test]
+    fn replacing_missing_storage_creates_a_key_without_quarantining_anything() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("private/identity");
+        // No file yet: the rename cannot happen, and recovery must fail rather
+        // than pretend it moved something aside.
+        assert!(replace_at(&path).is_err());
+        assert!(
+            load_at(&path).is_ok(),
+            "an ordinary first launch still creates a key"
+        );
+    }
 
     #[test]
     fn actual_file_roundtrip_preserves_the_key_and_signatures() {

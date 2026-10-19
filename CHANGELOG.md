@@ -2,6 +2,13 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Add the explicit host recovery path for an unusable stored PC key. Startup
+  still fails closed and leaves the file untouched; `--replace-identity`, and the
+  same action in the GUI behind a two-step confirmation, rename the unusable file
+  to `<name>.corrupt-<unix-seconds>` (bytes and permissions preserved, never
+  overwritten) and publish a new key, saying that every phone approval for this
+  PC is invalidated. A key that still reads is refused without `--force`.
+
 - Record the exact three blockers that stop the local Gradle JVM gate on a fresh
   machine (Gradle 8.9 rejects a Java 27 JDK; the project's Java 17 toolchain must
   be named in the *user* Gradle properties, a command-line `-D` is not enough;
