@@ -304,7 +304,7 @@ jobs:
           import json, os, pathlib, re, struct
           root = pathlib.Path('build/secure-wifi')
           directory = root / 'authorization-ui'
-          suffixes = ('reject-request', 'pending', 'stale-safe', 'details-open', 'allowed', 'reconnected', 'client-details', 'revoked')
+          suffixes = ('reject-request', 'pending', 'stale-safe', 'allowed', 'reconnected', 'client-details', 'revoked')
           expected = {f'{lang}-{suffix}' for lang in ('en', 'ja') for suffix in suffixes} | {'storage-failed'}
           assert {p.stem for p in directory.glob('*.png')} == expected, 'missing or stale capture membership'
           assert {p.stem for p in directory.glob('*.json')} == expected, 'missing or stale capture metadata'

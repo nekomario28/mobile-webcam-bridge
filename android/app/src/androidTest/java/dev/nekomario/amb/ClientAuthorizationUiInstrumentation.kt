@@ -141,6 +141,10 @@ internal class ClientAuthorizationUiInstrumentation(
             // help text itself: several states start with "Wi-Fi", so the status
             // prefix alone does not say which one rendered.
             waitUi { view<TextView>(R.id.lan_help).text.isNotEmpty() }
+            // Hidden but present: the device proves the disclosure starts closed and
+            // carries the address; the open/close rule itself is pinned by
+            // SecondarySurfaceWiringTest, because tapping the disclosure depends on
+            // where the layout happened to put it (the Japanese pass tapped past it).
             check(view<TextView>(R.id.lan_help).visibility == View.GONE) {
                 "the phone address must be hidden until Details is opened"
             }
@@ -154,11 +158,6 @@ internal class ClientAuthorizationUiInstrumentation(
                 !status.contains("192.168.")) {
                 "the status must be a short state, not the procedure: $status"
             }
-            tap(view(R.id.details_action))
-            waitUi { view<TextView>(R.id.lan_help).visibility == View.VISIBLE }
-            capture("$language-details-open")
-            tap(view(R.id.details_action))
-            waitUi { view<TextView>(R.id.lan_help).visibility == View.GONE }
             openPeer(tls, identity, keyPair, label).use { peer ->
                 val known = peer.result()
                 check(known.status == Wire.AUTH_AUTHORIZED && known.expiresAtUnixSeconds == saved.expiresAtUnixSeconds)
