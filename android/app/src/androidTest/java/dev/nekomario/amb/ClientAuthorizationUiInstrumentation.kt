@@ -136,11 +136,17 @@ internal class ClientAuthorizationUiInstrumentation(
                 peer.send(Wire.TYPE_PING, ByteArray(8))
                 check(peer.read(Wire.TYPE_PONG).contentEquals(ByteArray(8)))
             }
-            // The status is the state; the address is procedure and lives behind
-            // Details, which is the contract this scenario now holds to. Wait on the
-            // help text itself: several states start with "Wi-Fi", so the status
-            // prefix alone does not say which one rendered.
-            waitUi { view<TextView>(R.id.lan_help).text.isNotEmpty() }
+            // Wait for the waiting state itself, not merely for help text to exist:
+            // this is also the point at which the LAN server is listening again, so
+            // an earlier return makes the reconnect race a server rebind (measured:
+            // TLS handshake Connection reset).
+            waitUi {
+                val status = view<TextView>(R.id.connection_status).text
+                status == "Wi-Fi · waiting for the PC" || status == "Wi-Fi · PCの接続を待っています"
+            }
+            check(view<TextView>(R.id.lan_help).text.isNotEmpty()) {
+                "the hidden help must carry the address and the how-to"
+            }
             // Hidden but present: the device proves the disclosure starts closed and
             // carries the address; the open/close rule itself is pinned by
             // SecondarySurfaceWiringTest, because tapping the disclosure depends on
