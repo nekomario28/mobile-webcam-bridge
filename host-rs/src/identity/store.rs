@@ -43,8 +43,10 @@ impl Identity {
     }
 }
 
-/// The quarantine name for a replaced key, never colliding with an existing file.
-fn quarantine_path(path: &Path) -> crate::Result<std::path::PathBuf> {
+/// Reserve the quarantine name for a replaced key, never colliding with an
+/// existing file. Returns the path it has already created (empty, mode 0600), so
+/// the caller's rename cannot be raced into overwriting someone else's copy.
+fn reserve_quarantine_path(path: &Path) -> crate::Result<std::path::PathBuf> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -86,7 +88,7 @@ fn replace_at(path: &Path) -> crate::Result<std::path::PathBuf> {
     if !path.exists() {
         return Err("there is no stored PC key to move aside".into());
     }
-    let quarantine = quarantine_path(path)?;
+    let quarantine = reserve_quarantine_path(path)?;
     if let Err(error) = fs::rename(path, &quarantine) {
         let _ = fs::remove_file(&quarantine);
         return Err(error.into());
@@ -269,7 +271,7 @@ mod tests {
         let path = dir.path().join("identity");
         fs::write(&path, b"unusable").unwrap();
         // Take the name the first attempt would use, with a sentinel inside it.
-        let taken = quarantine_path(&path).unwrap();
+        let taken = reserve_quarantine_path(&path).unwrap();
         fs::write(&taken, b"sentinel").unwrap();
         let quarantine = replace_at(&path).unwrap();
         assert_ne!(

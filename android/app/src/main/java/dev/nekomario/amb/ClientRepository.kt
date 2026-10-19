@@ -74,10 +74,12 @@ object ClientRecordCodec {
 class ClientRepository(
     read: () -> ByteArray?,
     private val write: (ByteArray) -> Unit,
-    /** Refuses to publish when the store has been deliberately reset since
-     * this owner was created; defaults to always writable for the other
-     * namespaces, which have no reset path. */
-    private val assertWritable: () -> Unit = {},
+    /** Throws when the store has been deliberately reset since this owner was
+     * created, which latches it shut; writable by default for the namespaces
+     * that have no reset path. Not named `assert*`: those can be disabled, and
+     * this guard is the only thing standing between a stale owner and a record
+     * the user erased. */
+    private val checkWritable: () -> Unit = {},
 ) {
     // Volatile immutable snapshots, published only after a successful write.
     // A reader must never queue behind a slow Keystore/commit call: the expiry
@@ -116,7 +118,7 @@ class ClientRepository(
         try {
             // Before the write, so a writer from before a deliberate reset cannot
             // resurrect the record it erased; a refusal latches this owner shut.
-            assertWritable()
+            checkWritable()
             write(encoded)
         } catch (error: Exception) {
             healthy = false
