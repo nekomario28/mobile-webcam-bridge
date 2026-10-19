@@ -79,16 +79,25 @@ The repository publishes memory state only after successful commit and latches
 closed after write failure. The live owner then closes access and reports the
 error. In particular, a failed revoke stops this connection but **does not prove
 that the on-disk grant was removed**. It must not be shown as successful; the
-user needs to resolve the storage problem. Nothing resets automatically. The store
-exposes one deliberate operation — `ClientStore.reset()` clears the encrypted
-record *and* this namespace's Keystore key, after which every PC must be approved
-again — and the device test exercises it against the real Keystore. Partial
-failure keeps failing closed: a record without its key cannot decrypt, and a key
-without its record is already "recovery required" rather than first use.
-**Wiring that operation to a user-facing action is not done**: two attempts on
-the emulator (an AlertDialog confirmation, then a two-press button) left the
-record in place and the app's own failure text is not visible to the harness, so
-the action needs its own debugging pass rather than a guess.
+user needs to resolve the storage problem. Nothing resets automatically: the
+storage-failure screen offers one control, **pressed twice** (the first press
+arms it and the label states what the second does), which clears the encrypted
+record *and* this namespace's Keystore key — after which every PC must be approved
+again. Partial failure keeps failing closed: a record without its key cannot
+decrypt, and a key without its record is already "recovery required" rather than
+first use. Recovery is deliberately **not reachable only through a readable store**:
+`ClientStore.clear(context, namespace)` clears the record and the key without
+reading either, because constructing a store decrypts the record — `ClientStore(context).reset()`
+threw `AEADBadTagException` before it could clear anything, which is why the
+device run for the action failed with the record still in place. A deliberate
+reset also **fences earlier writers**: every
+owner captures the storage epoch it was created in and may only publish while that
+epoch is current, so a live session's expiry or revocation cannot re-create the
+record the user just erased. That fence is not decoration — measured on the
+emulator, without it the reset returned *without an error* and the record and its
+key were both back immediately afterwards, leaving the next read with "record
+missing but its key remains": the recovery action looked impossible while the store
+held data the user had erased.
 
 ## Phone UI and live enforcement
 

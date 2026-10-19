@@ -219,6 +219,9 @@ internal class ClientAuthorizationUiInstrumentation(private val test: Instrument
 
     private fun storageFailureUi() {
         val prefs = context.getSharedPreferences("client_authorization", Context.MODE_PRIVATE)
+        // The store's own alias, which a deliberate reset must delete.
+        val alias = "mobile_webcam_client_authorization_aes_v1"
+        var resetHappened = false
         val original = checkNotNull(prefs.getString(ClientStore.RECORD, null))
         val damaged = android.util.Base64.decode(original, android.util.Base64.NO_WRAP)
         damaged[damaged.lastIndex] = (damaged.last().toInt() xor 1).toByte()
@@ -238,12 +241,43 @@ internal class ClientAuthorizationUiInstrumentation(private val test: Instrument
             }
             check(attempted.exceptionOrNull() is java.net.ConnectException) { "corrupt-store startup opened a listener: $attempted" }
             capture("storage-failed")
+            // The action is the only way out of this state. Press it twice — the
+            // first press only arms it — and require the *effect*: the record and
+            // the namespace key are gone, and a fresh store reads empty. When it
+            // does not happen, the message carries the app's own words, because
+            // "an effect did not arrive" is what made the earlier attempts
+            // undiagnosable.
+            fun keyStore() = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            fun recovered() = !prefs.contains(ClientStore.RECORD) && !keyStore().containsAlias(alias)
+            tap(view(R.id.storage_action))
+            tap(view(R.id.storage_action))
+            val deadline = SystemClock.elapsedRealtime() + 12000
+            while (!recovered()) {
+                check(SystemClock.elapsedRealtime() < deadline) {
+                    val fresh = runCatching { ClientStore(activity).repository.snapshot() }
+                    "the reset action did not take effect; app says " +
+                        "\"${view<TextView>(R.id.connection_status).text}\" " +
+                        "(record=${prefs.contains(ClientStore.RECORD)}, " +
+                        "key=${keyStore().containsAlias(alias)}, " +
+                        "epoch=${dev.nekomario.amb.StorageGeneration.current()}, " +
+                        "freshStore=${fresh.exceptionOrNull() ?: fresh.getOrNull()})"
+                }
+                Thread.sleep(50)
+            }
+            resetHappened = true
+            val store = runCatching { ClientStore(activity).repository.snapshot() }
+            check(store.getOrNull()?.isEmpty() == true) {
+                "a fresh store after the reset: ${store.exceptionOrNull() ?: store.getOrNull()}"
+            }
         } finally {
             try {
                 test.runOnMainSync { activity.finish() }
                 waitUi { activity.isDestroyed }
             } finally {
-                check(prefs.edit().putString(ClientStore.RECORD, original).commit())
+                // A successful reset deliberately removed the record *and* the key
+                // that could read it, so putting the old record back would leave
+                // exactly the state this scenario exists to escape.
+                if (!resetHappened) check(prefs.edit().putString(ClientStore.RECORD, original).commit())
             }
         }
     }

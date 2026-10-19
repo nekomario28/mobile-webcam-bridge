@@ -108,3 +108,10 @@ Gradle XML, not a compile-only probe), and `./gradlew :app:assembleDebugAndroidT
 → the instrumentation APK builds. Run this before trusting any local
 compile-only probe; the emulator conformance job remains the only place the real
 Android runtime and camera are exercised.
+
+The cache-only `kotlinc` helper that stood in while Gradle could not run here
+(`~/Documents/kotlin-jvm-test`) is **superseded and unmaintained**: it was never
+shipped in this repository, the three fixes above make the wrapper usable, and
+the wrapper is the only route that can be trusted for `android.*` behaviour. The
+measurement above — `Size.getWidth()` fine in the probe, unmocked under Gradle —
+is the reason to keep using the wrapper rather than the probe.

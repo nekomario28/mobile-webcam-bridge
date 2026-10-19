@@ -2,13 +2,24 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
-- Add the phone-side deliberate operation for authorization data that cannot be
-  read: `ClientStore.reset()` clears the encrypted record and this namespace's
-  Keystore key, exercised against the real Keystore by the device test. Nothing
-  resets automatically and partial failure still fails closed. Wiring it to a
-  user-facing action remains open — two emulator attempts at that wiring left the
-  record in place and the app's failure text is not visible to the harness, so it
-  needs its own debugging pass.
+- Add the phone-side recovery for authorization data that cannot be read. The
+  storage-failure screen offers one control, pressed twice (the label states what
+  the second press does), which clears the encrypted record and this namespace's
+  Keystore key; nothing resets automatically and partial failure still fails
+  closed. The device conformance scenario now presses it and requires the effect —
+  record and key gone, a fresh store readable — and the app logs the outcome under
+  the tag the workflow already collects, so a failure names its reason.
+- Make recovery reachable when the record cannot be read: `ClientStore.clear()`
+  clears the record and this namespace's key *without* reading either. Constructing
+  a store decrypts the record, so `ClientStore(context).reset()` threw
+  `AEADBadTagException` before it could clear anything — measured on the device, with
+  the record and its key still in place afterwards. The device test now corrupts a
+  record and requires it to be cleared, with a fresh store reading as never-used.
+- Fence writers across a deliberate reset: an owner created before the reset can no
+  longer publish, so a live session's expiry or revocation cannot resurrect the
+  erased record. Measured on the emulator — without the fence the reset returned
+  without an error and both the record and its key were present again immediately,
+  which made the recovery action look ineffective.
 
 - Add the explicit host recovery path for an unusable stored PC key. Startup
   still fails closed and leaves the file untouched; `--replace-identity`, and the

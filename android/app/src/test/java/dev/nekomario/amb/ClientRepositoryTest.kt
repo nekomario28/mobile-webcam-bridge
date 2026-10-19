@@ -1,6 +1,7 @@
 package dev.nekomario.amb
 
 import org.junit.Assert.*
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ClientRepositoryTest {
@@ -13,6 +14,41 @@ class ClientRepositoryTest {
     private fun entry(key: ByteArray = key(), label: String = "studio-pc") =
         ClientAuthorization.Client(ClientAuthorization.deriveClientId(key), key, label,
             now, now + ClientAuthorization.EXPIRY_SECONDS)
+
+    @Test fun a_writer_created_before_a_deliberate_reset_cannot_resurrect_the_record() {
+        val born = StorageGeneration.current()
+        var disk: ByteArray? = null
+        val repository = ClientRepository({ disk }, { disk = it.copyOf() },
+            { StorageGeneration.requireCurrent(born) })
+        val publicKey = key()
+        val id = ClientAuthorization.deriveClientId(publicKey)
+        repository.approve(id, publicKey, "before-reset", now)
+        val before = checkNotNull(disk).copyOf()
+
+        StorageGeneration.bump() // the user's deliberate reset
+
+        val next = key()
+        val firstFailure = assertThrows(IllegalStateException::class.java) {
+            repository.approve(ClientAuthorization.deriveClientId(next), next, "after-reset", now)
+        }
+        assertTrue("a stale writer must say why: ${firstFailure.message}",
+            firstFailure.message.orEmpty().contains("could not be saved"))
+        assertThrows(IllegalStateException::class.java) { repository.revoke(id) }
+        assertArrayEquals("a stale writer must not have written anything", before, disk)
+        assertThrows(IllegalStateException::class.java) { repository.snapshot() }
+    }
+
+    @Test fun a_writer_created_after_the_reset_publishes_normally() {
+        StorageGeneration.bump()
+        val born = StorageGeneration.current()
+        var disk: ByteArray? = null
+        val repository = ClientRepository({ disk }, { disk = it.copyOf() },
+            { StorageGeneration.requireCurrent(born) })
+        val publicKey = key()
+        repository.approve(ClientAuthorization.deriveClientId(publicKey), publicKey, "after-reset", now)
+        assertEquals("after-reset", repository.snapshot().single().label)
+        assertNotNull(disk)
+    }
 
     @Test fun approval_is_persisted_and_survives_recreation() {
         var disk: ByteArray? = null
