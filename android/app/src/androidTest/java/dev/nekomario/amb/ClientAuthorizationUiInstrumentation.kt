@@ -136,8 +136,21 @@ internal class ClientAuthorizationUiInstrumentation(
                 peer.send(Wire.TYPE_PING, ByteArray(8))
                 check(peer.read(Wire.TYPE_PONG).contentEquals(ByteArray(8)))
             }
-            waitUi { view<TextView>(R.id.connection_status).text.startsWith(
-                if (japanese) "スマホのIPアドレス" else "Phone IP") }
+            // The status is the state; the address is procedure and lives behind
+            // Details, which is the contract this scenario now holds to.
+            waitUi { view<TextView>(R.id.connection_status).text.startsWith("Wi-Fi") }
+            check(view<TextView>(R.id.lan_help).visibility == View.GONE) {
+                "the phone address must be hidden until Details is opened"
+            }
+            check(view<TextView>(R.id.lan_help).text.contains("192.168.") ||
+                view<TextView>(R.id.lan_help).text.contains("Wi-Fi")) {
+                "the hidden help must still carry the address"
+            }
+            tap(view(R.id.details_action))
+            waitUi { view<TextView>(R.id.lan_help).visibility == View.VISIBLE }
+            capture("$language-details-open")
+            tap(view(R.id.details_action))
+            waitUi { view<TextView>(R.id.lan_help).visibility == View.GONE }
             openPeer(tls, identity, keyPair, label).use { peer ->
                 val known = peer.result()
                 check(known.status == Wire.AUTH_AUTHORIZED && known.expiresAtUnixSeconds == saved.expiresAtUnixSeconds)

@@ -21,6 +21,19 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Show state, hide procedure. Both screens now say what is happening and keep
+  the rest one disclosure away: the phone's status is a short state rather than an
+  address plus a how-to, the key rotation (which disconnects every Wi-Fi client)
+  sits behind Details with the address and instructions, and the PC shows
+  `Paired with <address>` with the pairing fields, the how-to and "Forget paired
+  phone" inside Details. Steps without a decision are automated: the phone reveals
+  its pairing key while no PC is approved, and the PC connects on launch when a
+  complete pairing is stored. Consent is untouched — the phone still approves each
+  PC and still owns the first camera start. The GUI state-capture gate found that
+  two fixtures had been distinguishing themselves by a stray USB line rather than
+  by a real difference; the fixture now applies a different mode so the switch is
+  visible, and 12 captures pass with 0 indistinguishable pairs.
+
 - Keep streaming while the phone is used for something else. The camera now runs
   inside a `camera`-type foreground service whose ongoing notification says it is
   live and carries the action that stops it, and `onPause` no longer stops the

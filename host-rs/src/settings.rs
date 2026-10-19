@@ -64,6 +64,16 @@ impl Default for Settings {
     }
 }
 impl Settings {
+    /// Whether the stored Wi-Fi pairing is complete enough to connect without a
+    /// prompt: an address, a 64-hex phone fingerprint and a 32-hex access key.
+    ///
+    /// Shared by the Connect button and the automatic attempt at launch so the two
+    /// cannot disagree about what "paired" means.
+    pub fn lan_pairing_complete(&self) -> bool {
+        !self.lan_host.trim().is_empty()
+            && crate::secure::is_hex(&self.lan_fingerprint, 32)
+            && crate::secure::is_hex(&self.lan_key, 16)
+    }
     pub fn quality_wish(&self) -> crate::quality::Wish {
         (self.quality_width, self.quality_height, self.quality_fps).into()
     }
@@ -434,6 +444,29 @@ mod registry;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pairing_is_complete_only_with_an_address_a_fingerprint_and_a_key() {
+        let mut settings = Settings::default();
+        assert!(
+            !settings.lan_pairing_complete(),
+            "an empty configuration is not paired"
+        );
+        settings.lan_host = "192.168.1.3".into();
+        settings.lan_fingerprint = "a".repeat(64);
+        assert!(
+            !settings.lan_pairing_complete(),
+            "a missing key is not paired"
+        );
+        settings.lan_key = "b".repeat(32);
+        assert!(settings.lan_pairing_complete());
+        // The two mistakes a copy-paste produces: a short fingerprint or key.
+        settings.lan_fingerprint = "a".repeat(62);
+        assert!(!settings.lan_pairing_complete());
+        settings.lan_fingerprint = "a".repeat(64);
+        settings.lan_key = "not-hex".into();
+        assert!(!settings.lan_pairing_complete());
+    }
+
     use super::*;
     #[test]
     fn independent_auto_dimensions_and_fps_are_valid_preferences() {

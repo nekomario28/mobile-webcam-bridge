@@ -77,6 +77,8 @@ struct App {
     confirm_forget_phone: bool,
     /// Two-step confirmation for the only action that replaces a stored key.
     confirm_replace_identity: bool,
+    /// The one automatic connection attempt per launch.
+    auto_connect_attempted: bool,
     /// Where the unusable key was moved, shown after a replacement.
     recovery_note: Option<String>,
     #[cfg(feature = "capture")]
@@ -102,6 +104,47 @@ fn capture_session() -> Session {
 }
 
 impl App {
+    /// The Wi-Fi pairing inputs, in one place: shown on the main screen while the
+    /// pairing is incomplete, and inside Details afterwards for editing, so the two
+    /// cannot drift apart.
+    fn pairing_inputs(&mut self, ui: &mut egui::Ui) {
+        ui.label(self.text("Phone address", "スマホに表示されたアドレス"));
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.lan_host)
+                .hint_text("192.168.1.42")
+                .min_size(egui::vec2(0.0, 28.0))
+                .desired_width(f32::INFINITY),
+        );
+        ui.label(self.text(
+            "Phone certificate SHA-256 (verify on phone)",
+            "スマホの証明書SHA-256（端末画面で確認）",
+        ));
+        ui.add_enabled(
+            !self.session.running(),
+            egui::TextEdit::singleline(&mut self.settings.lan_fingerprint)
+                .hint_text("64 hexadecimal characters")
+                .desired_width(f32::INFINITY),
+        );
+        ui.label(self.text("128-bit Wi-Fi pairing key", "128ビットWi-Fi接続キー"));
+        ui.add_enabled(
+            !self.session.running(),
+            egui::TextEdit::singleline(&mut self.settings.lan_key)
+                .password(true)
+                .hint_text("32 hexadecimal characters")
+                .desired_width(f32::INFINITY),
+        );
+        let valid_fingerprint = crate::secure::is_hex(&self.settings.lan_fingerprint, 32);
+        let valid_key = crate::secure::is_hex(&self.settings.lan_key, 16);
+        if !valid_fingerprint || !valid_key {
+            ui.colored_label(
+            egui::Color32::YELLOW,
+            self.text(
+                "Pairing required: enter the 64-digit phone fingerprint and 32-digit access key.",
+                "ペアリングが必要です：端末の64桁の指紋と32桁の接続キーを入力してください。",
+            ),
+        );
+        }
+    }
     fn new(ctx: &egui::Context) -> Self {
         let store = Store::native();
         let mut save_error = None;
@@ -206,6 +249,7 @@ impl App {
             quality_draft: quality_wish,
             confirm_forget_phone: false,
             confirm_replace_identity: false,
+            auto_connect_attempted: false,
             recovery_note: None,
             #[cfg(feature = "capture")]
             capture_requested: false,
@@ -387,12 +431,29 @@ impl App {
         self.dirty = None;
     }
 }
+
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // A confirmation armed in one failure must not carry into a different
         // state and be completed by a click the user meant for something else.
         if !matches!(self.session.state, State::Failed(_)) {
             self.confirm_replace_identity = false;
+        }
+        // Automation: with the pairing already stored there is nothing to decide,
+        // so connect instead of asking for a press the user makes every session.
+        // A capture fixture counts as running by design, so the screenshot runs
+        // never reach this branch.
+        if !self.auto_connect_attempted {
+            self.auto_connect_attempted = true;
+            if self.settings.transport == "lan"
+                && self.settings.lan_pairing_complete()
+                && !self.session.running()
+                && let Err(error) =
+                    self.session
+                        .connect(self.settings.clone(), self.selected.clone(), ctx.clone())
+            {
+                self.session.state = State::Failed(error.to_string());
+            }
         }
         #[cfg(feature = "capture")]
         if let Some(path) = std::env::var_os("MW_SCREENSHOT") {
@@ -510,85 +571,20 @@ impl eframe::App for App {
                             });
                             ui.add_space(12.0);
                             if self.settings.transport == "lan" {
-                                if matches!(self.session.state, State::Idle) {
-                                    ui.label(self.text(
-                                        "On your phone, select Wi-Fi in Mobile Webcam.\nUse the same Wi-Fi as this PC.",
-                                        "スマホでアプリを開き、Wi-Fiを選択。\nPCとスマホを同じWi-Fiにつなぐ。",
+                                if self.settings.lan_pairing_complete() {
+                                    let host = self.settings.lan_host.trim().to_owned();
+                                    let fingerprint = self.settings.lan_fingerprint.trim().to_owned();
+                                    ui.label(format!(
+                                        "{}: {host} · {}…",
+                                        self.text("Paired with", "ペアリング済み"),
+                                        &fingerprint[..8.min(fingerprint.len())],
                                     ));
-                                    ui.add_space(8.0);
-                                }
-                                ui.label(self.text("Phone address", "スマホに表示されたアドレス"));
-                                ui.add(
-                            egui::TextEdit::singleline(&mut self.settings.lan_host)
-                                .hint_text("192.168.1.42")
-                                .min_size(egui::vec2(0.0, 28.0))
-                                        .desired_width(f32::INFINITY),
-                                );
-                                ui.label(self.text(
-                                    "Phone certificate SHA-256 (verify on phone)",
-                                    "スマホの証明書SHA-256（端末画面で確認）",
-                                ));
-                                ui.add_enabled(
-                                    !self.session.running(),
-                                    egui::TextEdit::singleline(&mut self.settings.lan_fingerprint)
-                                        .hint_text("64 hexadecimal characters")
-                                        .desired_width(f32::INFINITY),
-                                );
-                                ui.label(self.text("128-bit Wi-Fi pairing key", "128ビットWi-Fi接続キー"));
-                                ui.add_enabled(
-                                    !self.session.running(),
-                                    egui::TextEdit::singleline(&mut self.settings.lan_key)
-                                        .password(true)
-                                        .hint_text("32 hexadecimal characters")
-                                        .desired_width(f32::INFINITY),
-                                );
-                                let valid_fingerprint =
-                                    crate::secure::is_hex(&self.settings.lan_fingerprint, 32);
-                                let valid_key =
-                                    crate::secure::is_hex(&self.settings.lan_key, 16);
-                                if !valid_fingerprint || !valid_key {
-                                    ui.colored_label(
-                                        egui::Color32::YELLOW,
-                                        self.text(
-                                            "Pairing required: enter the 64-digit phone fingerprint and 32-digit access key.",
-                                            "ペアリングが必要です：端末の64桁の指紋と32桁の接続キーを入力してください。",
-                                        ),
-                                    );
-                                }
-                                ui.weak(self.text(
-                                    "Wi-Fi requires TLS 1.3. No plaintext fallback.",
-                                    "Wi-FiはTLS 1.3必須。平文接続への切替なし。",
-                                ));
-                                if !self.session.running()
-                                    && (!self.settings.lan_key.is_empty()
-                                        || !self.settings.lan_fingerprint.is_empty())
-                                {
-                                    if self.confirm_forget_phone {
-                                        ui.horizontal(|ui| {
-                                            ui.label(self.text(
-                                                "Remove stored pairing details?",
-                                                "保存したペアリング情報を削除しますか？",
-                                            ));
-                                            if ui.button(self.text("Remove", "削除")).clicked() {
-                                                self.settings.lan_host.clear();
-                                                self.settings.lan_fingerprint.clear();
-                                                self.settings.lan_key.clear();
-                                                self.confirm_forget_phone = false;
-                                                self.save();
-                                            }
-                                            if ui.button(self.text("Cancel", "キャンセル")).clicked() {
-                                                self.confirm_forget_phone = false;
-                                            }
-                                        });
-                                    } else if ui
-                                        .small_button(self.text(
-                                            "Forget paired phone",
-                                            "登録済みスマホの情報を削除",
-                                        ))
-                                        .clicked()
-                                    {
-                                        self.confirm_forget_phone = true;
-                                    }
+                                    ui.weak(self.text(
+                                        "Edit or remove the pairing under Details.",
+                                        "変更・削除は「詳細」から行えます。",
+                                    ));
+                                } else {
+                                    self.pairing_inputs(ui);
                                 }
                             } else {
                                 if matches!(self.session.state, State::Idle) {
@@ -663,9 +659,7 @@ impl eframe::App for App {
                         };
                         let allowed = running
                             || self.settings.transport == "lan"
-                                && !self.settings.lan_host.trim().is_empty()
-                                && crate::secure::is_hex(&self.settings.lan_fingerprint, 32)
-                                && crate::secure::is_hex(&self.settings.lan_key, 16)
+                                && self.settings.lan_pairing_complete()
                             || self.settings.transport == "usb"
                                 && self.selected.is_some()
                                 && !self.selection_lost;
@@ -861,6 +855,52 @@ impl eframe::App for App {
                                     && std::env::var_os("MW_CAPTURE_DETAILS").is_some(),
                             )
                             .show(ui, |ui| {
+                                if self.settings.transport == "lan" {
+                                    // Editing always lives here, even when the main
+                                    // screen shows only the paired summary.
+                                    self.pairing_inputs(ui);
+                                    ui.add_space(8.0);
+                                    ui.label(self.text(
+                                        "On your phone, select Wi-Fi in Mobile Webcam, then read the address, fingerprint and key from the phone's Show pairing key screen. Both devices must use the same Wi-Fi.",
+                                        "スマホでアプリを開き、Wi-Fiを選択。「接続キーを表示」でアドレス・指紋・接続キーを確認します。PCとスマホは同じWi-Fiにつないでください。",
+                                    ));
+                                    ui.weak(self.text(
+                                        "Wi-Fi requires TLS 1.3. No plaintext fallback.",
+                                        "Wi-FiはTLS 1.3必須。平文接続への切替なし。",
+                                    ));
+                                    if !self.session.running()
+                                        && (!self.settings.lan_key.is_empty()
+                                            || !self.settings.lan_fingerprint.is_empty())
+                                    {
+                                        if self.confirm_forget_phone {
+                                            ui.horizontal(|ui| {
+                                                ui.label(self.text(
+                                                    "Remove stored pairing details?",
+                                                    "保存したペアリング情報を削除しますか？",
+                                                ));
+                                                if ui.button(self.text("Remove", "削除")).clicked() {
+                                                    self.settings.lan_host.clear();
+                                                    self.settings.lan_fingerprint.clear();
+                                                    self.settings.lan_key.clear();
+                                                    self.confirm_forget_phone = false;
+                                                    self.save();
+                                                }
+                                                if ui.button(self.text("Cancel", "キャンセル")).clicked() {
+                                                    self.confirm_forget_phone = false;
+                                                }
+                                            });
+                                        } else if ui
+                                            .small_button(self.text(
+                                                "Forget paired phone",
+                                                "登録済みスマホの情報を削除",
+                                            ))
+                                            .clicked()
+                                        {
+                                            self.confirm_forget_phone = true;
+                                        }
+                                    }
+                                    ui.add_space(8.0);
+                                }
                                 self.quality_controls(ui, running);
                                 if let State::Failed(error) = &self.session.state {
                                     ui.label(error);

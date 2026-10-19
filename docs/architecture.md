@@ -43,6 +43,21 @@ The Linux sink chooses USB or LAN before entering one common frame/decode loop.
 Every socket transport shares one AMB1 framing and pairing implementation;
 transport-specific code is limited to connect and the optional security layer.
 
+**Screens show state; procedure and destructive actions live behind Details.**
+Both apps follow one rule: the first screen answers "what is happening", and
+everything else is one disclosure away. The phone's status is a short state
+(`Wi-Fi · waiting for the PC`) instead of an address plus a how-to, and rotating
+the access key — which disconnects every Wi-Fi client — sits behind `Details`
+with the address and instructions. The PC's main screen shows `Paired with
+<address>` once the pairing is stored and keeps the three pairing fields, the
+how-to and "Forget paired phone" inside `Details`, where they are still editable.
+Steps that involve no decision are automated instead of shown: the phone reveals
+its pairing key by itself while no PC is approved, and the PC connects on launch
+when a complete pairing is stored (the phone still approves each PC, and capture
+still needs its own start, so nothing about consent is skipped). `host-rs/tools/capture-gui-states.sh`
+fails when two fixtures render the same frame, which is what caught the pair that
+had been passing on a stray USB line rather than on a real difference.
+
 **The session owns the foreground while it captures.** `SessionService` is a
 foreground service of type `camera`, started when the camera opens and stopped
 when it closes, and the Activity no longer stops capture in `onPause`. This is
