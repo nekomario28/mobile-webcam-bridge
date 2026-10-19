@@ -9,4 +9,5 @@
     <item name="allow_client" type="id" />
     <item name="deny_client" type="id" />
     <item name="authorized_clients" type="id" />
+    <item name="storage_action" type="id" />
 </resources>

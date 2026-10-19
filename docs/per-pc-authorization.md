@@ -79,16 +79,15 @@ The repository publishes memory state only after successful commit and latches
 closed after write failure. The live owner then closes access and reports the
 error. In particular, a failed revoke stops this connection but **does not prove
 that the on-disk grant was removed**. It must not be shown as successful; the
-user needs to resolve the storage problem. Nothing resets automatically. The store
-exposes one deliberate operation — `ClientStore.reset()` clears the encrypted
-record *and* this namespace's Keystore key, after which every PC must be approved
-again — and the device test exercises it against the real Keystore. Partial
-failure keeps failing closed: a record without its key cannot decrypt, and a key
-without its record is already "recovery required" rather than first use.
-**Wiring that operation to a user-facing action is not done**: two attempts on
-the emulator (an AlertDialog confirmation, then a two-press button) left the
-record in place and the app's own failure text is not visible to the harness, so
-the action needs its own debugging pass rather than a guess.
+user needs to resolve the storage problem. Nothing resets automatically: the
+storage-failure screen offers one control, **pressed twice** (the first press
+arms it and the label states what the second does), which clears the encrypted
+record *and* this namespace's Keystore key — after which every PC must be approved
+again. Partial failure keeps failing closed: a record without its key cannot
+decrypt, and a key without its record is already "recovery required" rather than
+first use. The action logs its outcome under the tag the device conformance
+workflow already collects, so a failure on a real device names its reason instead
+of leaving a harness to report that something did not happen.
 
 ## Phone UI and live enforcement
 

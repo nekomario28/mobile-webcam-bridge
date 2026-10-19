@@ -58,6 +58,7 @@ class MainActivity : Activity() {
     private var lanIdentity: SecureLanIdentity? = null
     private lateinit var pairAction: Button
     private lateinit var rotateAction: Button
+    private lateinit var storageAction: Button
     private lateinit var pairInfo: TextView
     // The producer teardown runs off the UI thread, so installing and detaching
     // the bridge is serialised: exactly one path closes a given bridge.
@@ -74,6 +75,10 @@ class MainActivity : Activity() {
     private lateinit var cameraButton: Button
     private lateinit var details: TextView
     private var cameraStartRequested = false
+    /** Authorization storage is unusable until the user deliberately resets it. */
+    private var storageFailed = false
+    /** The storage action's first press only arms the second. */
+    private var confirmResetStorage = false
     private var cameraPermissionPending = false
     private var foreground = false
     private var usbPermissionRequest: PendingIntent? = null
@@ -212,6 +217,46 @@ class MainActivity : Activity() {
                 }.onFailure { show("Wi-Fi identity error: " + it.message) }
             }
         }
+        storageAction = Button(this).apply {
+            id = R.id.storage_action
+            setAllCaps(false)
+            visibility = View.GONE
+            text = ui("Reset authorization data…", "承認データを初期化…")
+            setOnClickListener {
+                if (!confirmResetStorage) {
+                    // One control, two presses: the label states what the second
+                    // press does and nothing happens until then.
+                    confirmResetStorage = true
+                    text = ui(
+                        "Press again to erase the record and its key",
+                        "もう一度押すと記録と鍵を消去します"
+                    )
+                    return@setOnClickListener
+                }
+                confirmResetStorage = false
+                text = ui("Reset authorization data…", "承認データを初期化…")
+                val outcome = runCatching { ClientStore(this@MainActivity).reset() }
+                val failure = outcome.exceptionOrNull()
+                // Logged under the tag the conformance workflow already collects,
+                // so a failure on the device names its reason instead of leaving
+                // the harness to report that an effect did not arrive.
+                if (failure == null) {
+                    android.util.Log.i("SecureWifiGate", "reset authorization data: ok")
+                } else {
+                    android.util.Log.e("SecureWifiGate", "reset authorization data failed: $failure", failure)
+                }
+                if (failure == null && createAuthorizationOwner()) {
+                    show(ui(
+                        "Authorization data was reset. Every PC must be approved again.",
+                        "承認データを初期化しました。すべてのPCで再許可が必要です。"
+                    ))
+                    if (connectionMode == ConnectionMode.LAN) startLanMode() else startUsbMode()
+                } else {
+                    val reason = failure?.message ?: "storage is still unusable"
+                    show(ui("Reset failed: $reason", "初期化に失敗しました: $reason"))
+                }
+            }
+        }
         rotateAction = Button(this).apply {
             text = ui("Rotate Wi-Fi access key", "Wi-Fi接続キーを変更")
             setAllCaps(false)
@@ -261,6 +306,7 @@ class MainActivity : Activity() {
                 addView(cameras, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(pairAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(rotateAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                addView(storageAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(pairInfo, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(details, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             })
@@ -295,14 +341,7 @@ class MainActivity : Activity() {
             registerReceiver(permissionReceiver, filter)
         }
         receiverRegistered = true
-        authorizationOwner = try {
-            PhoneAuthorization(ClientStore(this).repository, onStorageFailure = {
-                handler.post { authorizationStorageFailed() }
-            })
-        } catch (_: Exception) {
-            authorizationStorageFailed()
-            return
-        }
+        if (!createAuthorizationOwner()) return
         if (getSharedPreferences("settings", MODE_PRIVATE).getString("connectionMode", "USB") == "LAN") {
             startLanMode()
         } else {
@@ -417,7 +456,27 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * The one place an owner is created: startup, and after a deliberate reset.
+     * Returns false when storage is unusable, which stops connections without
+     * touching the stored data.
+     */
+    private fun createAuthorizationOwner(): Boolean {
+        authorizationOwner = try {
+            PhoneAuthorization(ClientStore(this).repository, onStorageFailure = {
+                handler.post { authorizationStorageFailed() }
+            })
+        } catch (_: Exception) {
+            authorizationStorageFailed()
+            return false
+        }
+        storageFailed = false
+        updateControls()
+        return true
+    }
+
     private fun authorizationStorageFailed() {
+        storageFailed = true
         stopConnections()
         val previous = authorizationOwner
         authorizationOwner = null
@@ -750,6 +809,7 @@ class MainActivity : Activity() {
     }
 
     private fun updateControls() {
+        storageAction.visibility = if (storageFailed) View.VISIBLE else View.GONE
         for ((button, mode) in listOf(usbMode to ConnectionMode.USB, lanMode to ConnectionMode.LAN)) {
             button.isEnabled = authorizationOwner != null
             val selected = connectionMode == mode
