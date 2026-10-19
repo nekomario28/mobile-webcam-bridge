@@ -8,6 +8,9 @@
          see SessionService for the measurement behind this. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- The foreground notification is what makes continued capture visible; on
+         API 33+ it is hidden unless the user grants this. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="false"

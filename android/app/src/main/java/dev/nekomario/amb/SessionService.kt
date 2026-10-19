@@ -29,16 +29,6 @@ class SessionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            // The notification's own stop: the Activity owns the camera, so ask it
-            // to stop rather than tearing anything down from here.
-            startActivity(
-                Intent(this, MainActivity::class.java)
-                    .setAction(MainActivity.ACTION_STOP_SESSION)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-            return START_NOT_STICKY
-        }
         val notification = notification()
         if (Build.VERSION.SDK_INT >= 29) {
             // android:foregroundServiceType="camera" in the manifest; the camera
@@ -57,9 +47,16 @@ class SessionService : Service() {
                 NotificationChannel(CHANNEL, label("Streaming", "配信中"), NotificationManager.IMPORTANCE_LOW)
             )
         }
-        val stop = PendingIntent.getService(
+        // `getActivity`, not `getService`: a service that answers the action by
+        // starting the Activity is blocked by the background activity-start
+        // restriction on Android 10+, so the stop would silently do nothing. A
+        // notification's activity PendingIntent is user-initiated and exempt, and
+        // the Activity owns the camera anyway.
+        val stop = PendingIntent.getActivity(
             this, 0,
-            Intent(this, SessionService::class.java).setAction(ACTION_STOP),
+            Intent(this, MainActivity::class.java)
+                .setAction(MainActivity.ACTION_STOP_SESSION)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return Notification.Builder(this, CHANNEL)
@@ -78,7 +75,6 @@ class SessionService : Service() {
         if (resources.configuration.locales[0].language == "ja") japanese else english
 
     companion object {
-        internal const val ACTION_STOP = "dev.nekomario.amb.STOP_SESSION_FROM_NOTIFICATION"
         private const val CHANNEL = "mobile_webcam_session"
         private const val NOTIFICATION_ID = 1
 
