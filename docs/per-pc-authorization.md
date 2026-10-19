@@ -87,9 +87,10 @@ again. Partial failure keeps failing closed: a record without its key cannot
 decrypt, and a key without its record is already "recovery required" rather than
 first use. Recovery is deliberately **not reachable only through a readable store**:
 `ClientStore.clear(context, namespace)` clears the record and the key without
-reading either, because constructing a store decrypts the record — `ClientStore(context).reset()`
-threw `AEADBadTagException` before it could clear anything, which is why the
-device run for the action failed with the record still in place. A deliberate
+reading either, because constructing a store decrypts the record — the instance
+`reset()` that used to exist threw `AEADBadTagException` before it could clear
+anything (it is gone for that reason), which is why the device run for the action
+failed with the record still in place. A deliberate
 reset also **fences earlier writers**: every
 owner captures the epoch of its own namespace and may only publish while that
 epoch is current, so a live session's expiry or revocation cannot re-create the
