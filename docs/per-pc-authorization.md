@@ -85,9 +85,14 @@ arms it and the label states what the second does), which clears the encrypted
 record *and* this namespace's Keystore key — after which every PC must be approved
 again. Partial failure keeps failing closed: a record without its key cannot
 decrypt, and a key without its record is already "recovery required" rather than
-first use. The action logs its outcome under the tag the device conformance
-workflow already collects, so a failure on a real device names its reason instead
-of leaving a harness to report that something did not happen.
+first use. A deliberate reset also **fences earlier writers**: every
+owner captures the storage epoch it was created in and may only publish while that
+epoch is current, so a live session's expiry or revocation cannot re-create the
+record the user just erased. That fence is not decoration — measured on the
+emulator, without it the reset returned *without an error* and the record and its
+key were both back immediately afterwards, leaving the next read with "record
+missing but its key remains": the recovery action looked impossible while the store
+held data the user had erased.
 
 ## Phone UI and live enforcement
 

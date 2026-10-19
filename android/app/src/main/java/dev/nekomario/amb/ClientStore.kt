@@ -16,7 +16,9 @@ class ClientStore(context: Context, namespace: String = "client_authorization") 
     private val prefs = context.applicationContext.getSharedPreferences(namespace, Context.MODE_PRIVATE)
     private val alias = "mobile_webcam_${namespace}_aes_v1"
     private val aad = "AMB authorized clients v1:$namespace".toByteArray(Charsets.UTF_8)
-    val repository = ClientRepository(::load, ::save)
+    /** The epoch this store was created in; a reset makes it stale. */
+    private val born = StorageGeneration.current()
+    val repository = ClientRepository(::load, ::save, { StorageGeneration.requireCurrent(born) })
 
     private fun key(create: Boolean): SecretKey = synchronized(keyLock) {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -43,6 +45,9 @@ class ClientStore(context: Context, namespace: String = "client_authorization") 
      * already treated as "recovery required" rather than as first use.
      */
     fun reset() = synchronized(keyLock) {
+        // First, so no writer from the previous epoch can slip in between the
+        // clear and the bump — that race is what made the action look ineffective.
+        StorageGeneration.bump()
         check(prefs.edit().remove(RECORD).commit()) { "unable to clear the authorization record" }
         runCatching {
             KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias)

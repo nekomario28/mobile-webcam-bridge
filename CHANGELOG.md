@@ -9,6 +9,11 @@
   closed. The device conformance scenario now presses it and requires the effect —
   record and key gone, a fresh store readable — and the app logs the outcome under
   the tag the workflow already collects, so a failure names its reason.
+- Fence writers across a deliberate reset: an owner created before the reset can no
+  longer publish, so a live session's expiry or revocation cannot resurrect the
+  erased record. Measured on the emulator — without the fence the reset returned
+  without an error and both the record and its key were present again immediately,
+  which made the recovery action look ineffective.
 
 - Add the explicit host recovery path for an unusable stored PC key. Startup
   still fails closed and leaves the file untouched; `--replace-identity`, and the

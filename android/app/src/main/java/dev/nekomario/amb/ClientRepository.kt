@@ -74,6 +74,10 @@ object ClientRecordCodec {
 class ClientRepository(
     read: () -> ByteArray?,
     private val write: (ByteArray) -> Unit,
+    /** Refuses to publish when the store has been deliberately reset since
+     * this owner was created; defaults to always writable for the other
+     * namespaces, which have no reset path. */
+    private val assertWritable: () -> Unit = {},
 ) {
     // Volatile immutable snapshots, published only after a successful write.
     // A reader must never queue behind a slow Keystore/commit call: the expiry
@@ -109,7 +113,12 @@ class ClientRepository(
 
     private fun publish(next: List<ClientAuthorization.Client>) {
         val encoded = ClientRecordCodec.encode(next)
-        try { write(encoded) } catch (error: Exception) {
+        try {
+            // Before the write, so a writer from before a deliberate reset cannot
+            // resurrect the record it erased; a refusal latches this owner shut.
+            assertWritable()
+            write(encoded)
+        } catch (error: Exception) {
             healthy = false
             throw IllegalStateException("authorization could not be saved; access must stop", error)
         }
