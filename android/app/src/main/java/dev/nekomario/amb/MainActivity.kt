@@ -356,6 +356,12 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foreground = true
+        // The notification's Stop action arrives as an intent; consume it once.
+        if (intent?.action == ACTION_STOP_SESSION) {
+            setIntent(Intent(intent).setAction(null))
+            stopCamera()
+            return
+        }
         refreshQualityCapabilities()
         if (cameraStartRequested) startCamera()
         if (::usb.isInitialized && connectionMode == ConnectionMode.USB && session == null) discoverUsb()
@@ -363,8 +369,10 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         foreground = false
-        // Do not keep capturing video after the activity leaves the foreground.
-        stopCamera()
+        // Streaming deliberately continues while the phone is used for something
+        // else — that is what a webcam is for — and the ongoing notification from
+        // `SessionService` is what tells the user it continues. What stops here is
+        // only what must not survive in the task switcher.
         handler.removeCallbacks(rediscoverRunnable)
         // Never leave the secret visible in the task switcher or on return.
         pairInfo.visibility = View.GONE
@@ -770,6 +778,11 @@ class MainActivity : Activity() {
             }
         }
 
+        // Keep streaming while the phone is used for something else: the service
+        // holds the process in the foreground so Android does not stop camera
+        // access. Measured on a physical phone: without it, pressing Home closed
+        // the session and the consumer read 0 frames.
+        SessionService.start(this)
         lateinit var bridge: CameraBridgeController
         bridge = CameraBridgeController(
             context = this,
@@ -863,6 +876,9 @@ class MainActivity : Activity() {
 
     private fun stopCamera(clearStartRequest: Boolean = true, cancelQuality: Boolean = true) {
         if (clearStartRequest) cameraStartRequested = false
+        // The camera is what the foreground service exists for; nothing is
+        // streaming once it stops.
+        SessionService.stop(this)
         val current = synchronized(cameraLock) { installedBridge.also { installedBridge = null } }
         current?.close()
         if (cancelQuality) qualityController?.cancel()
@@ -922,6 +938,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         stopConnections()
+        SessionService.stop(this)
         authorizationOwner?.close()
         authorizationOwner = null
         captureCancellation.shutdown()
@@ -931,6 +948,9 @@ class MainActivity : Activity() {
 
     companion object {
         internal const val ACTION_USB_PERMISSION = "dev.nekomario.amb.USB_PERMISSION"
+
+        /** From the foreground notification's Stop action. */
+        internal const val ACTION_STOP_SESSION = "dev.nekomario.amb.STOP_SESSION"
         internal const val EXTRA_USB_REQUEST_ID = "usb_permission_request_id"
         private const val CAMERA_PERMISSION_REQUEST = 1001
         private const val REDISCOVER_DELAY_MS = 1000L

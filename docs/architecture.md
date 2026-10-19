@@ -43,6 +43,19 @@ The Linux sink chooses USB or LAN before entering one common frame/decode loop.
 Every socket transport shares one AMB1 framing and pairing implementation;
 transport-specific code is limited to connect and the optional security layer.
 
+**The session owns the foreground while it captures.** `SessionService` is a
+foreground service of type `camera`, started when the camera opens and stopped
+when it closes, and the Activity no longer stops capture in `onPause`. This is
+not a preference: a phone used as a webcam is, by definition, being used for
+something else at the same time. Measured on a physical phone (2026-10-19),
+pressing Home ended the session — the TCP connection closed and the consumer read
+0 frames — because `onPause` tore the camera down and Android stops camera access
+for a background app. The ongoing notification is the other half of the contract:
+it says the camera is still live and carries the action that stops it, so
+continuing to capture is visible rather than silent. What `onPause` still does is
+hide the pairing key and clear `FLAG_SECURE`, because those must not survive in
+the task switcher.
+
 ## Backpressure and recovery
 
 Video is live data, so queue growth must stay bounded. `FramedOutbound` keeps a
