@@ -2,13 +2,13 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
-- Add the phone-side deliberate repair for authorization data that cannot be read:
-  the storage-failure screen offers one confirmed "Reset authorization data…"
-  action, visible only in that state, which clears the encrypted record and this
-  namespace's Keystore key and says that every PC must be approved again. Nothing
-  resets automatically, partial failure still fails closed, and the device
-  conformance scenario presses the action and requires a pristine store, a
-  recovered connection state and no leftover key.
+- Add the phone-side deliberate operation for authorization data that cannot be
+  read: `ClientStore.reset()` clears the encrypted record and this namespace's
+  Keystore key, exercised against the real Keystore by the device test. Nothing
+  resets automatically and partial failure still fails closed. Wiring it to a
+  user-facing action remains open — two emulator attempts at that wiring left the
+  record in place and the app's failure text is not visible to the harness, so it
+  needs its own debugging pass.
 
 - Add the explicit host recovery path for an unusable stored PC key. Startup
   still fails closed and leaves the file untouched; `--replace-identity`, and the
