@@ -21,6 +21,14 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Keep streaming while the phone is used for something else. The camera now runs
+  inside a `camera`-type foreground service whose ongoing notification says it is
+  live and carries the action that stops it, and `onPause` no longer stops the
+  capture (`onDestroy`, the app's Stop, the notification's Stop and authorization
+  loss still do). Measured on a physical phone: before this, pressing Home closed
+  the session and the consumer read 0 frames. A wiring test pins both halves and
+  fails on the previous `onPause` (2 of 112 tests fail against that mutant).
+
 - Run the conformance on a physical phone on purpose. The instrumentation still
   refuses a device by default, but `-e physicalDevice true` designates one, and
   `android/tools/physical-conformance.sh` wraps it so the display, font scale,
