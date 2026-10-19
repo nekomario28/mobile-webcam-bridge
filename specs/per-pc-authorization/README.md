@@ -185,7 +185,8 @@ stops the camera on a device. Do not treat the guards as independent sign-off.
   states that every phone approval is invalidated; a key that still reads is left
   alone unless `--force`. Failed records are still preserved and unavailable
   storage is still reported rather than reset automatically. The phone side has the same
-  deliberate repair: `ClientStore.reset()` clears the record and its Keystore key,
+  deliberate repair: `ClientStore.clear()` clears the record and its Keystore key
+  without reading either (the instance `reset()` delegates to it),
   and the storage-failure screen exposes it as one control pressed twice, which
   the device conformance scenario presses and holds to its effect.
 
