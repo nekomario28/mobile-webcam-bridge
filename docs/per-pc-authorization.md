@@ -61,8 +61,8 @@ never overwritten, so its bytes and permissions survive for inspection — and t
 publishes a new key. Because the phone stores this PC's public key, every
 approval for this PC is invalidated, which is why the command refuses to touch a
 key that still reads unless `--force` is given, and why the GUI states it before
-asking. The phone-side explicit repair (authorization data that cannot be read)
-is still open and remains fail-closed.
+asking. The phone side has the matching repair, described below; without it an
+unreadable record stays fail-closed.
 
 [The phone codec/repository](../android/app/src/main/java/dev/nekomario/amb/ClientRepository.kt)
 stores public points, labels and approval/expiry times. IDs are derived instead
@@ -91,7 +91,7 @@ reading either, because constructing a store decrypts the record — `ClientStor
 threw `AEADBadTagException` before it could clear anything, which is why the
 device run for the action failed with the record still in place. A deliberate
 reset also **fences earlier writers**: every
-owner captures the storage epoch it was created in and may only publish while that
+owner captures the epoch of its own namespace and may only publish while that
 epoch is current, so a live session's expiry or revocation cannot re-create the
 record the user just erased. That fence is not decoration — measured on the
 emulator, without it the reset returned *without an error* and the record and its

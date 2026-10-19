@@ -191,7 +191,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
             // approved again. Partial states already fail closed (a record without
             // its key cannot decrypt; a key without its record is "recovery
             // required"), so this asserts only the deliberate path.
-            ClientStore(targetContext, namespace).reset()
+            ClientStore.clear(targetContext, namespace)
             check(!prefs.contains(ClientStore.RECORD)) { "reset left the authorization record" }
             check(!java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.containsAlias(alias)) {
                 "reset left the authorization encryption key"

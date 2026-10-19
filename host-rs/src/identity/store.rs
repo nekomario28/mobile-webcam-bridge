@@ -31,6 +31,16 @@ impl Identity {
     pub fn replace_stored() -> crate::Result<std::path::PathBuf> {
         replace_at(&crate::settings::Store::native()?.identity_path()?)
     }
+
+    /// Whether a stored key exists **and can be read**, without creating one.
+    ///
+    /// `load_or_create` is the wrong question here: it publishes a key when none
+    /// exists, so asking it "is the stored key readable?" before a *refused*
+    /// replacement both wrote a key and made the refusal message false.
+    pub fn stored_is_readable() -> crate::Result<bool> {
+        let path = crate::settings::Store::native()?.identity_path()?;
+        read_at(&path).map(|stored| stored.is_some())
+    }
 }
 
 /// The quarantine name for a replaced key, never colliding with an existing file.
@@ -51,8 +61,21 @@ fn quarantine_path(path: &Path) -> crate::Result<std::path::PathBuf> {
             format!("-{attempt}")
         };
         let candidate = path.with_file_name(format!("{name}.corrupt-{since_epoch}{suffix}"));
-        if !candidate.exists() {
-            return Ok(candidate);
+        // Reserve the name atomically. `exists()` followed by `rename` would be a
+        // race in which two concurrent recoveries pick one name and the second
+        // rename overwrites the first quarantined key, destroying the bytes this
+        // is supposed to preserve.
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&candidate) {
+            Ok(_) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
         }
     }
     Err("too many quarantined copies of the stored PC key; move them away first".into())
@@ -60,15 +83,28 @@ fn quarantine_path(path: &Path) -> crate::Result<std::path::PathBuf> {
 
 /// Testable form of [`Identity::replace_stored`].
 fn replace_at(path: &Path) -> crate::Result<std::path::PathBuf> {
+    if !path.exists() {
+        return Err("there is no stored PC key to move aside".into());
+    }
     let quarantine = quarantine_path(path)?;
-    fs::rename(path, &quarantine)?;
+    if let Err(error) = fs::rename(path, &quarantine) {
+        let _ = fs::remove_file(&quarantine);
+        return Err(error.into());
+    }
     #[cfg(unix)]
     if let Some(parent) = quarantine.parent() {
         // The rename is the recovery's commit point; make it durable before the
         // new key is published, so a crash cannot lose both.
         let _ = File::open(parent).and_then(|dir| dir.sync_all());
     }
-    load_at(path)?;
+    // The old key is already aside if this fails, so say where it went: "not
+    // replaced" alone would send the user looking for a key that is still there.
+    load_at(path).map_err(|error| {
+        format!(
+            "the old key was moved to {} but a new one could not be created: {error}",
+            quarantine.display()
+        )
+    })?;
     Ok(quarantine)
 }
 
@@ -243,6 +279,43 @@ mod tests {
         assert_eq!(fs::read(&taken).unwrap(), b"sentinel");
         assert_eq!(fs::read(&quarantine).unwrap(), b"unusable");
         assert!(load_at(&path).is_ok());
+    }
+
+    #[test]
+    fn reading_tells_missing_corrupt_and_readable_apart() {
+        // What the `--force` decision rests on: "readable" must not be true for a
+        // missing or a corrupt file, or the refusal it exists to enforce silently
+        // stops happening.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identity");
+        assert!(
+            read_at(&path).unwrap().is_none(),
+            "missing must read as absent"
+        );
+
+        fs::write(&path, b"not a stored key").unwrap();
+        assert!(
+            read_at(&path).is_err(),
+            "a corrupt key must not read as absent or as usable"
+        );
+
+        replace_at(&path).unwrap();
+        assert!(
+            read_at(&path).unwrap().is_some(),
+            "the key published by recovery must read back"
+        );
+    }
+
+    #[test]
+    fn replacing_missing_storage_says_there_was_nothing_to_move() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identity");
+        let error = replace_at(&path).unwrap_err().to_string();
+        assert!(
+            error.contains("no stored PC key"),
+            "a missing key must be named as such, not as an I/O failure: {error}"
+        );
+        assert!(!path.exists(), "nothing may be created by the refusal");
     }
 
     #[test]
