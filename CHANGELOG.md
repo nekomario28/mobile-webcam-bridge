@@ -21,6 +21,13 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Report silence. When the phone stops the camera the session stays up and frames
+  stop, so the PC used to say "camera connected" indefinitely; after three seconds
+  of silence outside a quality switch it now says no video is arriving and that the
+  camera may have been stopped on the phone. The paired line also shows when this PC
+  last really streamed (`最終接続: 3分前` / `Last connected: 3 min ago`), so "it worked
+  yesterday" is distinguishable from "it has never worked".
+
 - Say which refusal it was. The phone already answered with a reason — revoked,
   expired, too many PCs, signature rejected — but the PC reported every one of them
   as "access key rejected", sending the user to re-check a key that is not the

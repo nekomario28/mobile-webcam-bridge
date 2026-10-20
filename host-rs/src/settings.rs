@@ -10,6 +10,9 @@ pub struct Settings {
     pub lan_host: String,
     pub lan_fingerprint: String,
     pub lan_key: String,
+    /// Unix seconds of the last time this PC actually streamed from the phone.
+    /// 0 means never; it is information, not a credential.
+    pub last_connected: u64,
     pub decode: String,
     pub output: String,
     pub rotation: u16,
@@ -46,6 +49,7 @@ impl Default for Settings {
             lan_host: String::new(),
             lan_fingerprint: String::new(),
             lan_key: String::new(),
+            last_connected: 0,
             decode: "auto".into(),
             output: if cfg!(windows) {
                 "Unity Video Capture"
@@ -122,6 +126,7 @@ impl Settings {
             ("qualityWidth", self.quality_width.to_string()),
             ("qualityHeight", self.quality_height.to_string()),
             ("qualityFps", self.quality_fps.to_string()),
+            ("lastConnected", self.last_connected.to_string()),
         ]
         .into_iter()
         .map(|(k, v)| (k.into(), v))
@@ -144,6 +149,9 @@ impl Settings {
                 "qualityWidth" => s.quality_width = parse_quality(value, &mut quality_invalid),
                 "qualityHeight" => s.quality_height = parse_quality(value, &mut quality_invalid),
                 "qualityFps" => s.quality_fps = parse_quality(value, &mut quality_invalid),
+                // Informational only: a malformed value means "unknown", never a
+                // reason to refuse the rest of the settings.
+                "lastConnected" => s.last_connected = value.parse().unwrap_or(0),
                 _ => {}
             }
         }
