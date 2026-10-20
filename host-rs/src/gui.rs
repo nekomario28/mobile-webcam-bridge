@@ -524,6 +524,83 @@ fn auto_retry_delay(attempt: u32) -> std::time::Duration {
     std::time::Duration::from_secs(seconds)
 }
 
+/// Why the phone refused this PC, in the words the protocol already carries.
+///
+/// The reasons need different actions — revoking or expiring needs a tap on the
+/// phone, a rotated key needs the new one, a signature rejection usually means the
+/// PC key changed — so reporting all of them as "access key rejected" sends the
+/// user to check the wrong thing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refusal {
+    Revoked,
+    Expired,
+    TooMany,
+    Signature,
+    Unknown,
+}
+
+fn refusal(error: &str) -> Option<Refusal> {
+    let lowered = error.to_lowercase();
+    if lowered.contains("access was revoked") {
+        Some(Refusal::Revoked)
+    } else if lowered.contains("authorization expired") {
+        Some(Refusal::Expired)
+    } else if lowered.contains("too many pcs") {
+        Some(Refusal::TooMany)
+    } else if lowered.contains("rejected this pc's signature") {
+        Some(Refusal::Signature)
+    } else if lowered.contains("was not authorized")
+        || lowered.contains("is not known to the phone")
+    {
+        Some(Refusal::Unknown)
+    } else {
+        None
+    }
+}
+
+impl Refusal {
+    fn title<'a>(self, text: impl Fn(&'a str, &'a str) -> &'a str) -> &'a str {
+        match self {
+            Refusal::Revoked => text(
+                "Permission revoked on the phone",
+                "スマホで許可が取り消されました",
+            ),
+            Refusal::Expired => text("Permission expired", "許可の期限が切れました"),
+            Refusal::TooMany => text("Too many PCs approved", "許可したPCが上限に達しています"),
+            Refusal::Signature => text(
+                "Phone rejected this PC's signature",
+                "スマホがこのPCの署名を拒否しました",
+            ),
+            Refusal::Unknown => text("This PC is not approved", "このPCは許可されていません"),
+        }
+    }
+
+    fn guidance<'a>(self, text: impl Fn(&'a str, &'a str) -> &'a str) -> &'a str {
+        match self {
+            Refusal::Revoked => text(
+                "Approve this PC again on the phone: open Authorized PCs, then allow it when it asks.",
+                "スマホでこのPCをもう一度許可してください。「許可したPC」を開き、接続要求が出たら許可します。",
+            ),
+            Refusal::Expired => text(
+                "The 90-day approval ran out. Renew it on the phone under Authorized PCs.",
+                "90日の許可が切れました。スマホの「許可したPC」で更新してください。",
+            ),
+            Refusal::TooMany => text(
+                "Remove a PC you no longer use under Authorized PCs on the phone.",
+                "スマホの「許可したPC」で、使っていないPCを削除してください。",
+            ),
+            Refusal::Signature => text(
+                "This PC's key no longer matches what the phone stored. Replace the PC key, then approve it again.",
+                "このPCの鍵がスマホの記録と一致しません。PC鍵を置き換えてから、もう一度許可してください。",
+            ),
+            Refusal::Unknown => text(
+                "Approve this PC on the phone. If you recently rotated the Wi-Fi key, enter the new one.",
+                "スマホでこのPCを許可してください。Wi-Fi接続キーを変更した場合は新しいキーを入力してください。",
+            ),
+        }
+    }
+}
+
 /// Whether another attempt can plausibly succeed.
 ///
 /// A phone that is not listening yet is worth retrying; a rejected access key or a
@@ -907,8 +984,8 @@ impl eframe::App for App {
                                     self.text("Camera driver unavailable", "カメラドライバーを利用できません")
                                 } else if error.contains("fingerprint mismatch") {
                                     self.text("Fingerprint mismatch", "フィンガープリントが一致しません")
-                                } else if error.contains("was not authorized") {
-                                    self.text("Access key rejected", "接続キーが拒否されました")
+                                } else if let Some(refusal) = refusal(error) {
+                                    refusal.title(|en, ja| self.text(en, ja))
                                 } else if self.session.usb_permission.is_some() {
                                     self.text("Allow USB access", "USBアクセスを許可してください")
                                 } else if error.contains("WinUSB") {
@@ -969,11 +1046,8 @@ impl eframe::App for App {
                                     "The certificate fingerprint does not match your phone. Re-check all 64 characters.",
                                     "証明書のフィンガープリントがスマホと一致しません。64桁すべてを再確認してください。",
                                 )
-                            } else if error.contains("was not authorized") {
-                                self.text(
-                                    "The phone rejected the access key. Re-check all 32 characters; a rotated key revokes the old one.",
-                                    "スマホが接続キーを拒否しました。32桁を再確認してください。ローテーション後のスマホでは旧キーは無効です。",
-                                )
+                            } else if let Some(refusal) = refusal(error) {
+                                refusal.guidance(|en, ja| self.text(en, ja))
                             } else if error.contains("explicit recovery required") {
                                 self.text(
                                     "The stored PC key cannot be read. It has been left untouched. Replacing it moves that file aside permanently and every phone that approved this PC must approve it again.",
@@ -1237,6 +1311,39 @@ impl Drop for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_refusal_reason_is_recognised() {
+        // These are the strings `client_auth::reason_text` produces; each one needs a
+        // different action from the user, so none of them may fall through to "the key
+        // was rejected".
+        assert_eq!(
+            refusal("this PC's access was revoked on the phone"),
+            Some(Refusal::Revoked)
+        );
+        assert_eq!(
+            refusal("this PC's authorization expired on the phone"),
+            Some(Refusal::Expired)
+        );
+        assert_eq!(
+            refusal("the phone already authorizes too many PCs"),
+            Some(Refusal::TooMany)
+        );
+        assert_eq!(
+            refusal("the phone rejected this PC's signature"),
+            Some(Refusal::Signature)
+        );
+        assert_eq!(
+            refusal("this PC is not known to the phone"),
+            Some(Refusal::Unknown)
+        );
+        // Not refusals: they keep their own guidance.
+        assert_eq!(refusal("connection refused"), None);
+        assert_eq!(
+            refusal("Wi-Fi phone certificate fingerprint mismatch"),
+            None
+        );
+    }
 
     #[test]
     fn retries_back_off_and_stay_bounded() {

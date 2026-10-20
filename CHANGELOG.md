@@ -21,6 +21,13 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Say which refusal it was. The phone already answered with a reason — revoked,
+  expired, too many PCs, signature rejected — but the PC reported every one of them
+  as "access key rejected", sending the user to re-check a key that is not the
+  problem. Each reason now has its own title and its own one-line instruction
+  (approve again, renew, remove a PC, replace the PC key), from a single classifier
+  both come from.
+
 - Put the stream on the main screen. While a stream runs the PC now shows the
   confirmed mode and the device to pick in other apps
   (`1280×720 · 30 fps → /dev/video10`), with resolution, frame rate and Apply right
