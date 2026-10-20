@@ -712,6 +712,14 @@ impl eframe::App for App {
             }
             _ => {}
         }
+        // A running session needs the window to keep waking up even when nothing
+        // arrives: the preview reads a fixed-rate record, and the silence banner is a
+        // function of time, not of an event. Without this the UI sleeps after the last
+        // stats line and both freeze — measured on a real phone, where stopping the
+        // camera left "camera connected" on screen with no banner ever appearing.
+        if self.session.running() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
         // The preview is a fixed-rate record the worker publishes, so it does not
         // depend on how often this window repaints, and it works before any other
         // application has attached to the virtual camera.
