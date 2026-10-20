@@ -21,6 +21,16 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Wait for the phone instead of asking. With a complete pairing the PC connects at
+  launch, and if the phone is not answering yet it retries with a bounded backoff
+  (2 s, 4 s, 8 s, then 15 s; eight attempts) while the status reads
+  `Waiting for the phone (retrying)` — a phone that has not been opened or has just
+  been restarted is the ordinary case, and it used to need a manual Connect.
+  Failures no retry can heal (rejected key, fingerprint mismatch, recovery
+  required) stop immediately, and Disconnect suppresses retries until the next
+  press. Verified with a listener that appears after the first attempt: the app
+  connected to it on its own.
+
 - Show state, hide procedure. Both screens now say what is happening and keep
   the rest one disclosure away: the phone's status is a short state rather than an
   address plus a how-to, the key rotation (which disconnects every Wi-Fi client)

@@ -79,6 +79,17 @@ struct App {
     confirm_replace_identity: bool,
     /// The one automatic connection attempt per launch.
     auto_connect_attempted: bool,
+    /// The next automatic reconnect, while the phone is not answering yet.
+    auto_retry: Option<std::time::Instant>,
+    /// How many automatic attempts have been made since the last success.
+    auto_retries: u32,
+    /// The user pressed Disconnect: stop retrying until they ask again.
+    auto_retry_suppressed: bool,
+    /// An automatic attempt has been started and its outcome not yet seen.
+    ///
+    /// `Session::connect` returns before it knows anything: the failure arrives
+    /// later as a state transition, so the retry has to be scheduled from there.
+    auto_attempt_pending: bool,
     /// Where the unusable key was moved, shown after a replacement.
     recovery_note: Option<String>,
     #[cfg(feature = "capture")]
@@ -118,6 +129,7 @@ impl App {
         {
             return;
         }
+        self.auto_attempt_pending = true;
         #[cfg(target_os = "linux")]
         let result =
             self.session
@@ -126,9 +138,36 @@ impl App {
         let result = self
             .session
             .start(self.settings.clone(), self.selected.clone(), ctx.clone());
-        if let Err(error) = result {
-            self.session.state = State::Failed(error.to_string());
+        match result {
+            Ok(()) => {
+                self.auto_retries = 0;
+                self.auto_retry = None;
+            }
+            Err(error) => {
+                self.session.state = State::Failed(error.to_string());
+                self.schedule_retry(&error.to_string());
+            }
         }
+    }
+
+    /// Try again later when the failure is the phone not being there yet.
+    ///
+    /// A phone that has not been opened, or has just been restarted, is the
+    /// ordinary case: the PC is already running and waiting. Retrying with a
+    /// bounded backoff removes the "press Connect again" step, and stops for good
+    /// on failures that no retry can fix (a rejected key or a fingerprint that does
+    /// not match) or after a minute of trying.
+    fn schedule_retry(&mut self, error: &str) {
+        if self.auto_retry_suppressed || !auto_retry_is_useful(error) {
+            self.auto_retry = None;
+            return;
+        }
+        self.auto_retries = self.auto_retries.saturating_add(1);
+        if self.auto_retries > AUTO_RETRY_LIMIT {
+            self.auto_retry = None;
+            return;
+        }
+        self.auto_retry = Some(std::time::Instant::now() + auto_retry_delay(self.auto_retries));
     }
 
     fn pairing_inputs(&mut self, ui: &mut egui::Ui) {
@@ -274,6 +313,10 @@ impl App {
             confirm_forget_phone: false,
             confirm_replace_identity: false,
             auto_connect_attempted: false,
+            auto_retry: None,
+            auto_retries: 0,
+            auto_retry_suppressed: false,
+            auto_attempt_pending: false,
             recovery_note: None,
             #[cfg(feature = "capture")]
             capture_requested: false,
@@ -456,6 +499,39 @@ impl App {
     }
 }
 
+/// How many automatic reconnects are attempted before the PC waits for a press.
+const AUTO_RETRY_LIMIT: u32 = 8;
+
+/// Backoff between automatic attempts: quick at first (a phone that is opening),
+/// then patient (a phone that is being unlocked), capped so it never stalls.
+fn auto_retry_delay(attempt: u32) -> std::time::Duration {
+    let seconds = match attempt {
+        0 | 1 => 2,
+        2 => 4,
+        3 => 8,
+        _ => 15,
+    };
+    std::time::Duration::from_secs(seconds)
+}
+
+/// Whether another attempt can plausibly succeed.
+///
+/// A phone that is not listening yet is worth retrying; a rejected access key or a
+/// certificate that does not match the pinned fingerprint is not — retrying those
+/// only hides the real fix behind a spinner.
+fn auto_retry_is_useful(error: &str) -> bool {
+    let lowered = error.to_lowercase();
+    const HOPELESS: [&str; 6] = [
+        "fingerprint",
+        "access key",
+        "explicit recovery",
+        "pairing",
+        "not authorized",
+        "unauthorized",
+    ];
+    !HOPELESS.iter().any(|needle| lowered.contains(needle))
+}
+
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // A confirmation armed in one failure must not carry into a different
@@ -467,9 +543,31 @@ impl eframe::App for App {
         // so connect instead of asking for a press the user makes every session.
         // A capture fixture counts as running by design, so the screenshot runs
         // never reach this branch.
+        // Resolve an automatic attempt from what the session reports, not from what
+        // `connect` returned: the outcome arrives as a state transition.
+        match &self.session.state {
+            State::Waiting | State::Streaming => {
+                self.auto_attempt_pending = false;
+                self.auto_retries = 0;
+                self.auto_retry = None;
+            }
+            State::Failed(error) if self.auto_attempt_pending => {
+                let error = error.clone();
+                self.auto_attempt_pending = false;
+                self.schedule_retry(&error);
+            }
+            _ => {}
+        }
         if !self.auto_connect_attempted {
             self.auto_connect_attempted = true;
             self.auto_connect(ctx);
+        } else if let Some(at) = self.auto_retry {
+            if std::time::Instant::now() >= at {
+                self.auto_retry = None;
+                self.auto_connect(ctx);
+            } else {
+                ctx.request_repaint_after(at - std::time::Instant::now());
+            }
         }
         #[cfg(feature = "capture")]
         if let Some(path) = std::env::var_os("MW_SCREENSHOT") {
@@ -694,8 +792,13 @@ impl eframe::App for App {
                         if ui.add_enabled(allowed, button).clicked() {
                             self.save();
                             if running {
+                                self.auto_retry = None;
+                                self.auto_retry_suppressed = true;
                                 self.session.stop(ui.ctx());
                             } else {
+                                // A deliberate press clears the earlier "stop".
+                                self.auto_retry_suppressed = false;
+                                self.auto_retries = 0;
                                 #[cfg(target_os = "linux")]
                                 let result = if self.settings.transport == "usb"
                                     && self.session.usb_permission.is_some()
@@ -738,7 +841,12 @@ impl eframe::App for App {
                             State::Streaming => self.text("Camera connected", "カメラ接続中"),
                             State::Stopping => self.text("Disconnecting…", "切断中…"),
                             State::Failed(error) => {
-                                if error.contains("v4l2loopback") || error.contains("host setup is not included")
+                                if self.auto_retry.is_some() {
+                                    // Retrying by itself: say so instead of leaving the
+                                    // failure looking final, which is what makes people
+                                    // press Connect again.
+                                    self.text("Waiting for the phone (retrying)", "スマホを待っています（自動で再接続）")
+                                } else if error.contains("v4l2loopback") || error.contains("host setup is not included")
                                 {
                                     self.text("Camera driver unavailable", "カメラドライバーを利用できません")
                                 } else if error.contains("fingerprint mismatch") {
@@ -1029,6 +1137,48 @@ impl Drop for App {
         self.usb_thread.unpark();
         if self.dirty.is_some() {
             self.save();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retries_back_off_and_stay_bounded() {
+        assert_eq!(auto_retry_delay(1).as_secs(), 2);
+        assert_eq!(auto_retry_delay(2).as_secs(), 4);
+        assert_eq!(auto_retry_delay(3).as_secs(), 8);
+        assert_eq!(auto_retry_delay(4).as_secs(), 15);
+        assert_eq!(auto_retry_delay(99).as_secs(), 15);
+    }
+
+    #[test]
+    fn only_failures_that_can_heal_are_retried() {
+        // The ordinary case: the phone is not open yet, or was restarted.
+        for transient in [
+            "connection refused",
+            "Connection reset by peer",
+            "timed out waiting for the phone",
+            "the phone closed the connection",
+        ] {
+            assert!(
+                auto_retry_is_useful(transient),
+                "{transient} should be retried"
+            );
+        }
+        // No amount of waiting fixes these, and a spinner would hide the real fix.
+        for hopeless in [
+            "Wi-Fi phone certificate fingerprint mismatch",
+            "The phone rejected the access key",
+            "explicit recovery required",
+            "pairing is incomplete",
+        ] {
+            assert!(
+                !auto_retry_is_useful(hopeless),
+                "{hopeless} must not be retried"
+            );
         }
     }
 }
