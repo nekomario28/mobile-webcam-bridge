@@ -21,6 +21,11 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Say who is receiving. While streaming, the phone's status names the PC
+  (`yuu へ配信中（申告名）` / `Streaming to yuu (self-declared)`) instead of a bare
+  "streaming". The name is marked as the PC's own claim; the verified identity stays
+  the client id shown at approval and in Authorized PCs.
+
 - Put the numbers where the question is. The phone's `Authorized PCs` button now
   says how many are approved ("none yet", "2"), and the pairing key hides itself as
   soon as the first PC is approved — it exists to get that approval, and afterwards

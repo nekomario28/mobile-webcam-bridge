@@ -43,6 +43,12 @@ The Linux sink chooses USB or LAN before entering one common frame/decode loop.
 Every socket transport shares one AMB1 framing and pairing implementation;
 transport-specific code is limited to connect and the optional security layer.
 
+**The phone says who is receiving.** While streaming its status names the PC, and
+marks the name as the PC's own claim (`yuu へ配信中（申告名）`) rather than presenting
+it as an identity: the verified identity is the client id, which the approval
+dialog and Authorized PCs show. "Who am I sending video to?" was previously
+unanswerable from the phone.
+
 **The pairing key leaves the screen when it has done its job.** The key exists to
 get the first PC approved, so it is revealed while nothing is approved and hidden
 again the moment the first approval lands; the button brings it back for a second

@@ -121,6 +121,18 @@ class PhoneAuthorization(
 
         fun isAuthorized(): Boolean = synchronized(lock) { checkAuthorized() }
 
+        /**
+         * The self-declared name of the PC this session is streaming to, or null.
+         *
+         * The phone shows it so "who am I sending video to?" has an answer, but the
+         * name is the PC's own claim — the verified identity is the client id — so
+         * callers are expected to say so rather than present it as verified.
+         */
+        fun authorizedLabel(): String? = synchronized(lock) {
+            if (!checkAuthorized()) return@synchronized null
+            candidate?.label
+        }
+
         internal fun checkAuthorized(): Boolean {
             if (phase != Phase.AUTHORIZED || active !== this || failed || closed) return false
             val key = checkNotNull(candidate)
