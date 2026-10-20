@@ -73,7 +73,7 @@ class SessionServiceWiringTest {
             pause.contains("stopCamera("),
         )
         assertTrue("the pairing key must still be hidden when the app leaves the foreground",
-            pause.contains("pairInfo.visibility = View.GONE"))
+            pause.contains("pairingKeyVisible = false") && pause.contains("applySecondaryVisibility()"))
         assertTrue("the secure flag must still be cleared when the app leaves the foreground",
             pause.contains("FLAG_SECURE"))
     }

@@ -103,6 +103,19 @@ class SecondarySurfaceWiringTest {
     }
 
     @Test
+    fun the_details_rule_has_exactly_one_owner() {
+        // Measured: updateControls set pairAction.visibility on its own and overruled
+        // the disclosure, so the key button was back on the main screen while every
+        // test stayed green.
+        val source = source()
+        val controls = bodyOf(source, "private fun updateControls()")
+        for (control in listOf("pairAction", "pairInfo", "storageAction", "rotateAction", "lanHelp")) {
+            assertFalse("updateControls must not decide $control's visibility",
+                controls.contains("$control.visibility"))
+        }
+    }
+
+    @Test
     fun every_control_is_actually_in_the_layout() {
         // Measured: `rotateAction` was built and given a visibility rule, but the
         // addView call had been dropped when the Details group was reorganised, so
@@ -121,11 +134,23 @@ class SecondarySurfaceWiringTest {
     }
 
     @Test
-    fun the_pairing_key_is_shown_without_a_tap_when_nothing_is_approved() {
-        val start = bodyOf(source(), "private fun startLanMode()")
-        assertTrue("an unpaired phone must reveal the key by itself",
-            start.contains("authorization.clients().isEmpty()") && start.contains("setPairingKeyVisible(true)"))
-        val reveal = bodyOf(source(), "private fun setPairingKeyVisible(")
+    fun the_pairing_key_is_a_fallback_behind_details_and_never_appears_by_itself() {
+        // The PC takes the pairing itself over the cable, so the key is not the next
+        // thing the user needs and must not be pushed onto the main screen.
+        val source = source()
+        val start = bodyOf(source, "private fun startLanMode()")
+        assertFalse("nothing may reveal the key on its own",
+            start.contains("setPairingKeyVisible(true)"))
+        val secondary = bodyOf(source, "private fun applySecondaryVisibility()")
+        assertTrue("the key controls must follow the Details disclosure",
+            secondary.contains("pairAction.visibility =") && secondary.contains("pairInfo.visibility ="))
+        assertTrue("the key itself is shown only in Details and only when revealed",
+            secondary.contains("pairInfo.visibility = if (open && pairingKeyVisible)"))
+        assertTrue(
+            "erasing the record is destructive and belongs behind Details, except when a failed read needs its remedy reachable",
+            secondary.contains("storageAction.visibility = if (open || storageFailed)"),
+        )
+        val reveal = bodyOf(source, "private fun setPairingKeyVisible(")
         assertTrue("hiding must clear the text and the secure flag",
             reveal.contains("pairInfo.text = \"\"") && reveal.contains("FLAG_SECURE"))
     }

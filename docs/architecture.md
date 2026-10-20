@@ -43,6 +43,15 @@ The Linux sink chooses USB or LAN before entering one common frame/decode loop.
 Every socket transport shares one AMB1 framing and pairing implementation;
 transport-specific code is limited to connect and the optional security layer.
 
+**If the machine can do it, the user is not asked to.** The PC on a USB cable takes
+the phone's fingerprint and access key itself, so the phone does not present them: the
+reveal control, the key block, key rotation and "erase authorization data" sit behind
+Details, and nothing reveals the key on its own. The manual path stays documented where
+it is needed — a PC that cannot use the cable — as a fallback rather than a step. The
+same reading applies to tests: `updateControls` had been deciding that button's
+visibility on its own and overruling the disclosure, which no test noticed, so the rule
+now has one owner (`applySecondaryVisibility`) and a test that fails if another appears.
+
 **Nothing on screen says the same thing twice.** The mode line carries the applied
 target, so a second "applied target" line was removed; the Details row names itself,
 so the hint about editing under Details is gone; the preview is a picture, so it needs

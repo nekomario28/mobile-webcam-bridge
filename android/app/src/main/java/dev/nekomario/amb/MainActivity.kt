@@ -79,6 +79,8 @@ class MainActivity : Activity() {
     /** Hands the Wi-Fi pairing details to the PC over the USB cable. */
     private lateinit var sendPairingAction: Button
     private var lanHelpText = ""
+    /** Whether the pairing key is revealed; only meaningful while Details is open. */
+    private var pairingKeyVisible = false
     /** How many PCs were approved at the last update, to notice the first one. */
     private var approvedCount = 0
     private var cameraStartRequested = false
@@ -209,7 +211,7 @@ class MainActivity : Activity() {
             // The pairing controls belong to the Wi-Fi flow; startUsbMode hides them.
             visibility = View.GONE
             setOnClickListener {
-                setPairingKeyVisible(pairInfo.visibility != View.VISIBLE)
+                setPairingKeyVisible(!pairingKeyVisible)
             }
         }
         storageAction = Button(this).apply {
@@ -304,10 +306,7 @@ class MainActivity : Activity() {
                             lanIdentity?.rotate()
                             lanServer?.close()
                             lanServer = null
-                            pairInfo.visibility = View.GONE
-                            pairInfo.text = ""
-                            pairAction.text = ui("Show pairing key", "接続キーを表示")
-                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                            setPairingKeyVisible(false)
                             startLanMode()
                         }.onFailure { show("Wi-Fi key rotation failed: " + it.message) }
                     }
@@ -334,15 +333,18 @@ class MainActivity : Activity() {
                 addView(approvalUi.root, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(cameraButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(12) })
                 addView(cameras, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
-                addView(pairAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                // Everything below appears only while Details is open: the address and
+                // the how-to are instructions, the pairing key is the fallback for a PC
+                // that cannot take it over the cable, and both destructive controls
+                // (rotate, erase) belong behind a disclosure. Each must be added here:
+                // a control that is built but never added is a button the user can
+                // never reach.
                 addView(lanHelp, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                addView(storageAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                addView(pairAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(pairInfo, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                // Everything below appears only while Details is open. Both of these
-                // must be added here: a control that is built but never added is a
-                // button the user can never reach.
                 addView(sendPairingAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(rotateAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                addView(storageAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(details, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             })
         }
@@ -409,10 +411,11 @@ class MainActivity : Activity() {
         // only what must not survive in the task switcher.
         handler.removeCallbacks(rediscoverRunnable)
         // Never leave the secret visible in the task switcher or on return.
-        pairInfo.visibility = View.GONE
+        pairingKeyVisible = false
         pairInfo.text = ""
         pairAction.text = ui("Show pairing key", "接続キーを表示")
         window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        applySecondaryVisibility()
         super.onPause()
     }
 
@@ -551,12 +554,7 @@ class MainActivity : Activity() {
         lanServer?.close()
         lanServer = null
         lanIdentity = null
-        pairInfo.visibility = View.GONE
-        pairInfo.text = ""
-        pairAction.text = ui("Show pairing key", "接続キーを表示")
-        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        pairAction.visibility = View.GONE
-        rotateAction.visibility = View.GONE
+        setPairingKeyVisible(false)
         closeSession()
         connectionMode = ConnectionMode.USB
         usbPermissionDeclined = false
@@ -573,10 +571,9 @@ class MainActivity : Activity() {
         connectionMode = ConnectionMode.LAN
         clearUsbPermissionRequest()
         saveConnectionMode()
-        pairAction.visibility = View.VISIBLE
-        // Nothing approved yet means the key is the next thing the user needs, so
-        // show it rather than asking for a tap that reveals what is necessary.
-        if (authorization.clients().isEmpty()) setPairingKeyVisible(true)
+        // Nothing is auto-revealed: the PC takes the pairing itself over the cable,
+        // and the key behind Details is the fallback for a PC that cannot.
+        setPairingKeyVisible(false)
         lanServer?.close()
         refreshQualityCapabilities()
         val identity = lanIdentity ?: SecureLanIdentity(this).also { lanIdentity = it }
@@ -637,12 +634,12 @@ class MainActivity : Activity() {
             append(addresses.joinToString("\n"))
             append(ui(
                 "\nTLS 1.3 is required. The pairing key above is what the PC needs.",
-                "\nTLS 1.3必須。PCに入力するのは上の接続キーです。"
+                "\nTLS 1.3必須。USBケーブルならPCが自動で受け取ります。手動なら「接続キーを表示」で指紋とキーを確認できます。"
             ))
             if (!detail.isNullOrBlank()) append("\n").append(detail)
         }
         lanHelp.text = lanHelpText
-        lanHelp.visibility = if (details.visibility == View.VISIBLE) View.VISIBLE else View.GONE
+        applySecondaryVisibility()
         show(ui("Wi-Fi · waiting for the PC", "Wi-Fi · PCの接続を待っています"))
     }
 
@@ -890,7 +887,6 @@ class MainActivity : Activity() {
         // does. Any other control change disarms it, so a single press can never
         // erase the data after an interruption the user did not see.
         if (!storageFailed) disarmStorageAction()
-        storageAction.visibility = if (storageFailed) View.VISIBLE else View.GONE
         for ((button, mode) in listOf(usbMode to ConnectionMode.USB, lanMode to ConnectionMode.LAN)) {
             button.isEnabled = authorizationOwner != null
             val selected = connectionMode == mode
@@ -898,7 +894,6 @@ class MainActivity : Activity() {
             button.backgroundTintList = ColorStateList.valueOf(getColor(if (selected) R.color.app_accent else R.color.app_inactive))
             button.setTextColor(if (selected) Color.WHITE else getColor(R.color.app_text))
         }
-        pairAction.visibility = if (connectionMode == ConnectionMode.LAN) View.VISIBLE else View.GONE
         applySecondaryVisibility()
         if (connectionMode != ConnectionMode.LAN) {
             setPairingKeyVisible(false)
@@ -907,7 +902,7 @@ class MainActivity : Activity() {
         // it on screen is clutter and a secret with no purpose; the button still
         // brings it back for a second PC.
         val approved = runCatching { authorizationOwner?.clients()?.size ?: 0 }.getOrDefault(0)
-        if (approved > 0 && approvedCount == 0 && pairInfo.visibility == View.VISIBLE) {
+        if (approved > 0 && approvedCount == 0 && pairingKeyVisible) {
             setPairingKeyVisible(false)
         }
         approvedCount = approved
@@ -946,27 +941,31 @@ class MainActivity : Activity() {
      */
     private fun setPairingKeyVisible(visible: Boolean) {
         if (!visible) {
-            pairInfo.visibility = View.GONE
+            pairingKeyVisible = false
             pairInfo.text = ""
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             pairAction.text = ui("Show pairing key", "接続キーを表示")
+            applySecondaryVisibility()
             return
         }
         val identity = lanIdentity ?: return
         runCatching {
             pairInfo.text = ui(
-                "Verify phone certificate SHA-256 on PC:\n" + identity.fingerprint() +
-                "\n\nEnter this 128-bit access key on PC:\n" + identity.pairingCode() +
-                "\n\nKeep the key private. On a USB cable, Details → Send Wi-Fi pairing to PC skips this typing.",
-                "PCでスマホ証明書のSHA-256を確認:\n" + identity.fingerprint() +
-                "\n\nPCに128ビット接続キーを入力:\n" + identity.pairingCode() +
-                "\n\n接続キーは秘密にしてください。USBケーブルでPCにつないでいる場合は「詳細」→「Wi-Fi設定をPCへ送る」で入力は不要です。"
+                "On a USB cable the PC takes these itself: Details → Send Wi-Fi pairing to PC.\n\n" +
+                    "For a PC that cannot — enter these on it:\nPhone certificate SHA-256:\n" +
+                    identity.fingerprint() + "\n\n128-bit access key:\n" + identity.pairingCode() +
+                    "\n\nKeep the key private.",
+                "USBケーブルならPCが自動で受け取ります: 「詳細」→「Wi-Fi設定をPCへ送る」。\n\n" +
+                    "それが使えないPCには以下を入力してください:\nスマホ証明書SHA-256:\n" +
+                    identity.fingerprint() + "\n\n128ビット接続キー:\n" + identity.pairingCode() +
+                    "\n\n接続キーは秘密にしてください。"
             )
             // Block screenshots and Android's recent-app snapshot while the bearer
             // key is on screen.
             window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-            pairInfo.visibility = View.VISIBLE
+            pairingKeyVisible = true
             pairAction.text = ui("Hide pairing key", "接続キーを隠す")
+            applySecondaryVisibility()
         }.onFailure { show("Wi-Fi identity error: " + it.message) }
     }
 
@@ -978,6 +977,12 @@ class MainActivity : Activity() {
     private fun applySecondaryVisibility() {
         val open = details.visibility == View.VISIBLE
         lanHelp.visibility = if (open && lanHelpText.isNotEmpty()) View.VISIBLE else View.GONE
+        pairAction.visibility =
+            if (open && connectionMode == ConnectionMode.LAN) View.VISIBLE else View.GONE
+        pairInfo.visibility = if (open && pairingKeyVisible) View.VISIBLE else View.GONE
+        // A failed read is not procedure: its only remedy must not be hidden behind a
+        // disclosure the failure itself would prevent the user from finding.
+        storageAction.visibility = if (open || storageFailed) View.VISIBLE else View.GONE
         rotateAction.visibility =
             if (open && connectionMode == ConnectionMode.LAN) View.VISIBLE else View.GONE
         // Sending pairing details needs the cable and a live session to send them on.

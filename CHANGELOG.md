@@ -41,6 +41,16 @@
   window opens tall enough (420x620) to show its status, the guidance and, while
   streaming, the mode controls without scrolling first.
 
+- The pairing key is a fallback, so it is no longer on the main screen. A PC on a
+  USB cable takes the fingerprint and key itself (`Details → Send Wi-Fi pairing to
+  PC`), so the phone stopped pushing them at the user: the reveal control, the key
+  block, the key rotation and "erase authorization data" now live behind Details, and
+  nothing reveals the key on its own any more. The how-to leads with the cable and
+  names the manual path second. Measured while doing it: `updateControls` set the key
+  button's visibility itself and overruled the disclosure, so the button was back on
+  the main screen with every test green — the rule now has a single owner and a test
+  that fails if a second one appears.
+
 - Take the repeated lines off the screen. The applied capture target said what the
   mode line above it already said; "edit or remove the pairing under Details" was
   restated on every visit; and "Preview" labelled a picture that plainly is one. All
