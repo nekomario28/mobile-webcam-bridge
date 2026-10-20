@@ -85,6 +85,10 @@ struct App {
     auto_retries: u32,
     /// The user pressed Disconnect: stop retrying until they ask again.
     auto_retry_suppressed: bool,
+    /// When the stats last advanced, and what they were, to notice a stream that
+    /// stopped without the session ending.
+    last_stats: Option<(u64, u64)>,
+    last_stats_at: Option<std::time::Instant>,
     /// Pairing details received from the phone over USB, shown until the user
     /// decides to move to Wi-Fi (the USB stream may still be the one they want).
     pairing_received: Option<String>,
@@ -322,6 +326,8 @@ impl App {
             auto_retries: 0,
             auto_retry_suppressed: false,
             auto_attempt_pending: false,
+            last_stats: None,
+            last_stats_at: None,
             pairing_received: None,
             pending_switch_to_lan: false,
             recovery_note: None,
@@ -524,6 +530,27 @@ fn auto_retry_delay(attempt: u32) -> std::time::Duration {
     std::time::Duration::from_secs(seconds)
 }
 
+/// "3分前" style age, which is what a person wants from a last-seen stamp.
+fn human_age(seconds: u64, japanese: bool) -> String {
+    let (value, unit) = match seconds {
+        0..=59 => {
+            return if japanese {
+                "たった今".into()
+            } else {
+                "just now".into()
+            };
+        }
+        60..=3_599 => (seconds / 60, if japanese { "分" } else { " min" }),
+        3_600..=86_399 => (seconds / 3_600, if japanese { "時間" } else { " h" }),
+        _ => (seconds / 86_400, if japanese { "日" } else { " d" }),
+    };
+    if japanese {
+        format!("{value}{unit}前")
+    } else {
+        format!("{value}{unit} ago")
+    }
+}
+
 /// Why the phone refused this PC, in the words the protocol already carries.
 ///
 /// The reasons need different actions — revoking or expiring needs a tap on the
@@ -645,6 +672,32 @@ impl eframe::App for App {
             }
             _ => {}
         }
+        let snapshot = match &self.session.stats {
+            Some(Event::Stats {
+                decoded, submitted, ..
+            }) => Some((*decoded, *submitted)),
+            _ => None,
+        };
+        if snapshot != self.last_stats {
+            self.last_stats = snapshot;
+            if snapshot.is_some_and(|(decoded, _)| decoded > 0) {
+                self.last_stats_at = Some(std::time::Instant::now());
+                // Only the first stats of a session move the stamp, not every second.
+                if matches!(self.session.state, State::Streaming)
+                    && self.settings.last_connected
+                        != std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|elapsed| elapsed.as_secs() / 60 * 60)
+                            .unwrap_or(0)
+                {
+                    self.settings.last_connected = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|elapsed| elapsed.as_secs())
+                        .unwrap_or(0);
+                    self.save();
+                }
+            }
+        }
         if let Some(info) = self.session.take_pairing_info()
             && let Some(address) = info.preferred_address()
         {
@@ -695,6 +748,10 @@ impl eframe::App for App {
         self.session.poll(ctx);
         if was_running && !self.session.running() {
             self.quality_draft = self.settings.quality_wish().tuple();
+            // A new session starts its own clock; an old stamp would claim the new
+            // stream had stalled before it delivered anything.
+            self.last_stats = None;
+            self.last_stats_at = None;
         }
         while let Ok(result) = self.usb_events.try_recv() {
             match result {
@@ -826,6 +883,19 @@ impl eframe::App for App {
                                         self.text("Paired with", "ペアリング済み"),
                                         &fingerprint[..8.min(fingerprint.len())],
                                     ));
+                                    if self.settings.last_connected > 0 {
+                                        let now = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .map(|elapsed| elapsed.as_secs())
+                                            .unwrap_or(0);
+                                        let age = now.saturating_sub(self.settings.last_connected);
+                                        let label = if japanese() {
+                                            format!("最終接続: {}", human_age(age, true))
+                                        } else {
+                                            format!("Last connected: {}", human_age(age, false))
+                                        };
+                                        ui.weak(label);
+                                    }
                                     ui.weak(self.text(
                                         "Edit or remove the pairing under Details.",
                                         "変更・削除は「詳細」から行えます。",
@@ -1021,6 +1091,24 @@ impl eframe::App for App {
                                 // not an advanced detail.
                                 ui.weak(format!("→ {}", self.settings.output.trim()));
                             });
+                            // Silence is not an error the protocol reports: when the
+                            // phone stops the camera the session stays up and frames
+                            // simply stop. Saying "camera connected" forever would be a
+                            // lie, so name the silence and the likely cause.
+                            let stalled = matches!(self.session.state, State::Streaming)
+                                && self.session.quality.pending.is_none()
+                                && self
+                                    .last_stats_at
+                                    .is_some_and(|at| at.elapsed() >= std::time::Duration::from_secs(3));
+                            if stalled {
+                                ui.colored_label(
+                                    egui::Color32::YELLOW,
+                                    self.text(
+                                        "No video is arriving. The camera may have been stopped on the phone.",
+                                        "映像が届いていません。スマホ側で停止した可能性があります。",
+                                    ),
+                                );
+                            }
                             ui.add_space(6.0);
                             let modes_known = self.session
                                 .quality
@@ -1311,6 +1399,18 @@ impl Drop for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ages_read_like_someone_says_them() {
+        assert_eq!(human_age(0, false), "just now");
+        assert_eq!(human_age(59, true), "たった今");
+        assert_eq!(human_age(60, false), "1 min ago");
+        assert_eq!(human_age(180, true), "3分前");
+        assert_eq!(human_age(3_600, false), "1 h ago");
+        assert_eq!(human_age(86_400 * 2, false), "2 d ago");
+        // Never negative or "0 ago": the clock can move backwards across a reboot.
+        assert_eq!(human_age(0, false), "just now");
+    }
 
     #[test]
     fn each_refusal_reason_is_recognised() {

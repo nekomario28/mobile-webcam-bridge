@@ -43,6 +43,14 @@ The Linux sink chooses USB or LAN before entering one common frame/decode loop.
 Every socket transport shares one AMB1 framing and pairing implementation;
 transport-specific code is limited to connect and the optional security layer.
 
+**Silence is reported, not glossed over.** When the phone stops the camera the
+session stays up and frames simply stop, so "camera connected" would be a lie. The
+PC keeps the time the counters last advanced and, after three seconds of silence
+outside a quality switch, says that no video is arriving and that the camera may
+have been stopped on the phone. The paired line also carries when this PC last
+really streamed (`Last connected: 3 min ago`), which is information a person uses to
+tell "it worked yesterday" from "it has never worked".
+
 **A refusal says which refusal it was.** The phone's answer carries a reason —
 revoked, expired, too many PCs, signature rejected, unknown — and each one needs a
 different action: a tap on the phone, a renewal, a removal, a new PC key. Reporting
