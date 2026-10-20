@@ -340,7 +340,10 @@ impl App {
         }
     }
 
-    fn quality_controls(&mut self, ui: &mut egui::Ui, running: bool) {
+    /// Resolution, frame rate and Apply: the controls a webcam user touches while
+    /// it is running, which is why they are the only ones allowed on the main
+    /// screen. Everything else stays under Details.
+    fn quality_mode_controls(&mut self, ui: &mut egui::Ui, running: bool) {
         let busy = self.session.quality.pending.is_some();
         let stopping = matches!(self.session.state, State::Stopping);
         let modes = self.session.quality.modes.clone().unwrap_or_default();
@@ -922,6 +925,35 @@ impl eframe::App for App {
                                 ui.label(egui::RichText::new(status).strong());
                             }
                         }
+                        if self.session.running() {
+                            let applied = self.session.quality.applied;
+                            let decoded = match &self.session.stats {
+                                Some(Event::Stats { width, height, .. }) if *width > 0 && *height > 0 => {
+                                    Some((*width as u16, *height as u16))
+                                }
+                                _ => None,
+                            };
+                            let mode = applied
+                                .map(|(width, height, fps)| format!("{width}×{height} · {fps} fps"))
+                                .or_else(|| decoded.map(|(width, height)| format!("{width}×{height}")));
+                            ui.horizontal_wrapped(|ui| {
+                                if let Some(mode) = mode {
+                                    ui.label(egui::RichText::new(mode).monospace());
+                                }
+                                // The device the user must pick in their video app is
+                                // not an advanced detail.
+                                ui.weak(format!("→ {}", self.settings.output.trim()));
+                            });
+                            ui.add_space(6.0);
+                            let modes_known = self.session
+                                .quality
+                                .modes
+                                .as_ref()
+                                .is_some_and(|modes| !modes.is_empty());
+                            if modes_known {
+                                self.quality_mode_controls(ui, true);
+                            }
+                        }
                         if let State::ApprovalPending(client_id) = &self.session.state {
                             let grouped = client_id.as_bytes().chunks(4)
                                 .map(|part| std::str::from_utf8(part).expect("validated ASCII PC ID"))
@@ -1032,6 +1064,14 @@ impl eframe::App for App {
                                     && std::env::var_os("MW_CAPTURE_DETAILS").is_some(),
                             )
                             .show(ui, |ui| {
+                                // While a stream is running the mode controls are on the
+                                // main screen; before that they live here, where setting
+                                // the wish for the next session belongs.
+                                let modes_on_main = self.session.quality.modes.as_ref().is_some_and(|modes| !modes.is_empty())
+                                    && self.session.running();
+                                if !modes_on_main {
+                                    self.quality_mode_controls(ui, running);
+                                }
                                 if self.settings.transport == "lan" {
                                     // Editing always lives here, even when the main
                                     // screen shows only the paired summary.
@@ -1078,7 +1118,7 @@ impl eframe::App for App {
                                     }
                                     ui.add_space(8.0);
                                 }
-                                self.quality_controls(ui, running);
+
                                 if let State::Failed(error) = &self.session.state {
                                     ui.label(error);
                                 }

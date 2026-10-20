@@ -43,6 +43,15 @@ The Linux sink chooses USB or LAN before entering one common frame/decode loop.
 Every socket transport shares one AMB1 framing and pairing implementation;
 transport-specific code is limited to connect and the optional security layer.
 
+**While it streams, the PC shows the stream, not the setup.** The main screen
+carries the confirmed mode and the camera device the user must pick in their video
+app (`1280×720 · 30 fps → /dev/video10`) plus the resolution, frame rate and Apply
+controls, because changing resolution mid-call is the ordinary action rather than
+an advanced one. Everything else — output path, decode, rotation, mirror, the
+counters — stays under Details. Before a stream exists the mode controls stay
+where they are only useful: under Details, where a wish for the next session is
+set.
+
 **Screens show state; procedure and destructive actions live behind Details.**
 Both apps follow one rule: the first screen answers "what is happening", and
 everything else is one disclosure away. The phone's status is a short state
