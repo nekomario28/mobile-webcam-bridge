@@ -43,6 +43,13 @@ The Linux sink chooses USB or LAN before entering one common frame/decode loop.
 Every socket transport shares one AMB1 framing and pairing implementation;
 transport-specific code is limited to connect and the optional security layer.
 
+**Nothing on screen says the same thing twice.** The mode line carries the applied
+target, so a second "applied target" line was removed; the Details row names itself,
+so the hint about editing under Details is gone; the preview is a picture, so it needs
+no caption. The same rule decides what may stay: an element earns its place by being
+the only place a fact appears, and a preview frozen beside a "waiting for the camera"
+line is gone rather than dimmed.
+
 **The preview is a record the worker publishes, not something the GUI reads back.**
 The GUI is a separate process from the worker and the control channel is a JSON
 line capped at 16 KiB, so frames cannot ride it. They travel through a small
