@@ -831,7 +831,15 @@ class MainActivity : Activity() {
                 handler.post {
                     if (cameraBridge === bridge) {
                         details.text = message
-                        showConnectionStatus(ui("Camera running", "カメラ配信中"))
+                        // Say who is receiving the video; the name is the PC's own
+                        // claim, so it is marked as such rather than presented as an
+                        // identity (the verified id is in Authorized PCs).
+                        val label = activeSession.clientAuthorization?.authorizedLabel()
+                        showConnectionStatus(if (label != null) {
+                            ui("Streaming to $label (self-declared)", "${label} へ配信中（申告名）")
+                        } else {
+                            ui("Camera running", "カメラ配信中")
+                        })
                     }
                 }
             },

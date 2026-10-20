@@ -166,6 +166,23 @@ class PhoneAuthorizationTest {
         }
     }
 
+    @Test fun the_authorized_label_names_the_pc_only_while_it_is_authorized() {
+        Harness().use { h ->
+            h.open()
+            assertNull("nothing is authorized yet", h.session.authorizedLabel())
+            h.receive(h.proof(keyPair(), label = "yuu-pc"))
+            // Pending is not permission: the name must not be presented as a stream target.
+            assertNotNull(h.session.pending())
+            assertNull(h.session.authorizedLabel())
+            h.session.approve()
+            assertEquals("yuu-pc", h.session.authorizedLabel())
+            h.owner.revoke(ClientAuthorization.deriveClientId(h.challenge.nonce)) // not the PC; no effect
+            assertEquals("yuu-pc", h.session.authorizedLabel())
+            h.session.close()
+            assertNull("a closed session names nobody", h.session.authorizedLabel())
+        }
+    }
+
     @Test fun a_known_pc_must_still_prove_possession_for_every_connection() {
         val key = keyPair()
         Harness(listOf(record(key.first))).use { h ->
