@@ -25,7 +25,9 @@ pub fn run() -> eframe::Result {
     // The only mutation is the capture-only position pin below.
     #[cfg_attr(not(feature = "capture"), allow(unused_mut))]
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([420.0, 440.0])
+        // Tall enough for the main screen with its status, guidance and (while
+        // streaming) the mode controls; Details still scrolls.
+        .with_inner_size([420.0, 620.0])
         .with_min_inner_size([360.0, 360.0]);
     // Without a window manager the server places the window wherever it likes,
     // which on a headless display can be off-screen entirely. A capture pins
