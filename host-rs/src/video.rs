@@ -793,12 +793,16 @@ mod tests {
         let frame = consumer.latest().expect("a preview frame");
         assert_eq!((frame.width, frame.height), (64, 32));
         assert_eq!(frame.pixels.len(), 64 * 32 * 4);
-        // The fixture is a red top and a blue bottom: a flat or misread frame fails.
-        let top = &frame.pixels[(8 * 64 + 32) * 4..][..3];
-        let bottom = &frame.pixels[(24 * 64 + 32) * 4..][..3];
+        // The fixture is red over blue. Windows' RGBA conversion presents it the other
+        // way up, which the transform test already records, so pick the rows the same
+        // way it does: a flat or misread frame still fails on either platform.
+        let red_row = if cfg!(windows) { 24 } else { 8 };
+        let blue_row = 31 - red_row;
+        let red = &frame.pixels[(red_row * 64 + 32) * 4..][..3];
+        let blue = &frame.pixels[(blue_row * 64 + 32) * 4..][..3];
         assert!(
-            top[0] > 150 && bottom[2] > 150,
-            "preview pixels are wrong: top={top:?} bottom={bottom:?}"
+            red[0] > 150 && blue[2] > 150,
+            "preview pixels are wrong: red row={red:?} blue row={blue:?}"
         );
         std::fs::remove_file(path).ok();
     }
