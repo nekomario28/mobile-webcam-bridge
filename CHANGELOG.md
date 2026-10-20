@@ -21,6 +21,13 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Show the preview. While streaming, the PC window carries a preview of what the
+  phone is delivering, so framing yourself needs no second app. On Linux it reads
+  back the virtual camera this app writes (format-passive: it never renegotiates
+  the loopback's format), downscaled to 320 columns; the capture gate renders it
+  from a committed fixture so the preview cannot disappear unnoticed. Windows has
+  no preview yet.
+
 - Say who is receiving. While streaming, the phone's status names the PC
   (`yuu へ配信中（申告名）` / `Streaming to yuu (self-declared)`) instead of a bare
   "streaming". The name is marked as the PC's own claim; the verified identity stays

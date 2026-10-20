@@ -87,6 +87,10 @@ struct App {
     auto_retries: u32,
     /// The user pressed Disconnect: stop retrying until they ask again.
     auto_retry_suppressed: bool,
+    /// The PC's own preview, read back from the device the worker writes.
+    preview: Option<crate::preview::Reader>,
+    preview_texture: Option<egui::TextureHandle>,
+    preview_retry: Option<std::time::Instant>,
     /// When the stats last advanced, and what they were, to notice a stream that
     /// stopped without the session ending.
     last_stats: Option<(u64, u64)>,
@@ -328,6 +332,9 @@ impl App {
             auto_retries: 0,
             auto_retry_suppressed: false,
             auto_attempt_pending: false,
+            preview: None,
+            preview_texture: None,
+            preview_retry: None,
             last_stats: None,
             last_stats_at: None,
             pairing_received: None,
@@ -673,6 +680,54 @@ impl eframe::App for App {
                 self.schedule_retry(&error);
             }
             _ => {}
+        }
+        // The preview reads the device the worker writes, so it only exists while a
+        // session is running. With exclusive_caps=1 the device exposes capture only
+        // once a producer has queued frames, which is why opening is retried.
+        if !self.session.running() {
+            self.preview = None;
+            self.preview_texture = None;
+            self.preview_retry = None;
+        } else if self.preview.is_none()
+            && self
+                .preview_retry
+                .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(2))
+        {
+            self.preview_retry = Some(std::time::Instant::now());
+            // A refused open is expected before the first frame and on platforms
+            // without a readable output, so it is retried rather than reported.
+            if let Ok(reader) = crate::preview::Reader::open(self.settings.output.trim()) {
+                self.preview = Some(reader);
+            }
+        }
+        if let Some(reader) = &mut self.preview {
+            // Drain what accumulated while the window was busy; only the newest frame
+            // is worth a texture upload.
+            let mut newest = None;
+            for _ in 0..4 {
+                match reader.read() {
+                    Some(frame) => newest = Some(frame),
+                    None => break,
+                }
+            }
+            if let Some(frame) = newest {
+                let image = egui::ColorImage::from_rgba_unmultiplied(
+                    [frame.width, frame.height],
+                    &frame.pixels,
+                );
+                // Update the existing texture when it already has this size: the
+                // preview runs for hours and a texture per frame would allocate one
+                // every poll.
+                match &mut self.preview_texture {
+                    Some(texture) if texture.size() == [frame.width, frame.height] => {
+                        texture.set(image, egui::TextureOptions::LINEAR);
+                    }
+                    _ => {
+                        self.preview_texture =
+                            Some(ctx.load_texture("preview", image, egui::TextureOptions::LINEAR));
+                    }
+                }
+            }
         }
         let snapshot = match &self.session.stats {
             Some(Event::Stats {
@@ -1093,6 +1148,19 @@ impl eframe::App for App {
                                 // not an advanced detail.
                                 ui.weak(format!("→ {}", self.settings.output.trim()));
                             });
+                            if let Some(texture) = &self.preview_texture {
+                                // The framebuffer is the whole point of a webcam; showing
+                                // it here answers "is the phone pointing at me?" without
+                                // opening another app.
+                                let width = ui.available_width().min(360.0);
+                                let size = texture.size_vec2();
+                                let height = (width * size.y / size.x.max(1.0)).max(1.0);
+                                ui.add(
+                                    egui::Image::new(texture)
+                                        .fit_to_exact_size(egui::vec2(width, height)),
+                                );
+                                ui.weak(self.text("Preview", "プレビュー"));
+                            }
                             // Silence is not an error the protocol reports: when the
                             // phone stops the camera the session stays up and frames
                             // simply stop. Saying "camera connected" forever would be a

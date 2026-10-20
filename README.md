@@ -26,6 +26,11 @@ the Android APK and the desktop app for your OS.
    and allow camera access. Approval alone never starts capture.
 4. Select **Mobile Webcam** in your camera application.
 
+While it streams, the PC window shows a preview of what the camera
+delivers, so you can frame yourself without opening another app. On Linux the
+preview reads back the virtual camera this app writes; Windows has no preview
+yet.
+
 Windows: run **Setup.exe** once to install the virtual camera. The ZIP is
 portable after setup. Linux: make the AppImage executable and launch it.
 
