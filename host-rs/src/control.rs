@@ -49,6 +49,13 @@ pub enum Event {
         target_fps: u32,
         decoder: String,
     },
+    /// The phone sent its Wi-Fi pairing details over the USB cable, because the
+    /// user asked it to. The PC may now connect over Wi-Fi without typing anything.
+    PairingInfo {
+        addresses: Vec<String>,
+        fingerprint: String,
+        key: String,
+    },
     /// The phone advertised its supported modes and permission state.
     QualityCapabilities {
         permission: u8,

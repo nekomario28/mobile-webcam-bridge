@@ -73,6 +73,24 @@ class SecondarySurfaceWiringTest {
     }
 
     @Test
+    fun every_control_is_actually_in_the_layout() {
+        // Measured: `rotateAction` was built and given a visibility rule, but the
+        // addView call had been dropped when the Details group was reorganised, so
+        // the button existed and could never be reached — no behavioural test and no
+        // visibility assertion noticed.
+        val source = source()
+        for (control in listOf(
+            "sendPairingAction", "rotateAction", "lanHelp", "storageAction", "pairAction",
+            "pairInfo", "cameraButton", "details", "usbMode", "lanMode", "cameras",
+        )) {
+            assertTrue(
+                "$control is built but never added to the layout",
+                source.contains("addView($control"),
+            )
+        }
+    }
+
+    @Test
     fun the_pairing_key_is_shown_without_a_tap_when_nothing_is_approved() {
         val start = bodyOf(source(), "private fun startLanMode()")
         assertTrue("an unpaired phone must reveal the key by itself",

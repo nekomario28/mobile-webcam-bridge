@@ -21,6 +21,16 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Pair over the cable instead of typing 96 hex characters. On a USB session the
+  phone can send its Wi-Fi details (address, certificate SHA-256, 128-bit access
+  key) as a `PAIRING_INFO` frame; the PC stores them exactly as if they had been
+  entered, shows what it received, and moves to Wi-Fi on one click. It is not an
+  authorization (the phone still approves each PC) and the button is explicit,
+  because it puts the access key on the cable — the same trust limit USB already
+  has. Found while doing it: the Wi-Fi key-rotation control had been built and
+  given a visibility rule but its `addView` had been dropped, so it was
+  unreachable; a wiring test now requires every control to be in the layout.
+
 - Wait for the phone instead of asking. With a complete pairing the PC connects at
   launch, and if the phone is not answering yet it retries with a bounded backoff
   (2 s, 4 s, 8 s, then 15 s; eight attempts) while the status reads

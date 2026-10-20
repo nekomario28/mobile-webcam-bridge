@@ -27,6 +27,10 @@ object Wire {
     const val TYPE_CLIENT_CHALLENGE: Byte = 0x0a
     const val TYPE_CLIENT_AUTH: Byte = 0x0b
     const val TYPE_CLIENT_AUTH_RESULT: Byte = 0x0c
+    /** Phone -> PC over the USB cable: the Wi-Fi pairing details, so nothing is typed. */
+    const val TYPE_PAIRING_INFO: Byte = 0x0d
+    const val PAIRING_INFO_VERSION: Byte = 1
+    const val MAX_PAIRING_ADDRESSES = 4
 
     const val TYPE_VIDEO_CONFIG: Byte = 0x10
     const val TYPE_VIDEO_AU: Byte = 0x11
@@ -107,6 +111,9 @@ object Wire {
     const val CLIENT_AUTH_VERSION = 2
     const val CLIENT_PUBLIC_KEY_BYTES = 65
     const val PHONE_BINDING_BYTES = 32
+    /** SHA-256 of the phone certificate, and the 128-bit Wi-Fi access key. */
+    const val FINGERPRINT_BYTES = 32
+    const val ACCESS_KEY_BYTES = 16
     const val AUTH_USB = 0
     const val AUTH_LAN = 1
     const val CLIENT_AUTH_MIN_BYTES = 1 + CLIENT_PUBLIC_KEY_BYTES + 1 + SIGNATURE_BYTES
@@ -351,6 +358,57 @@ object Wire {
     }
 
     /** Paused and CommitQuality share the epoch frame shape. */
+    /**
+     * Payload for [TYPE_PAIRING_INFO]: version, an address count, that many IPv4
+     * addresses, the SHA-256 of the phone certificate and the 128-bit access key.
+     *
+     * This is exactly the three fields the PC asks the user to type, so receiving
+     * it and typing it are the same act — one of them just needs a cable.
+     */
+    fun encodePairingInfo(addresses: List<String>, fingerprint: String, key: String): ByteArray {
+        val parsed = addresses.mapNotNull(::parseIpv4).take(MAX_PAIRING_ADDRESSES)
+        require(parsed.isNotEmpty()) { "no IPv4 address is available to send" }
+        val fingerprintBytes = hexBytes(fingerprint, FINGERPRINT_BYTES)
+        val keyBytes = hexBytes(key, ACCESS_KEY_BYTES)
+        val payload = ByteArray(2 + parsed.size * 4 + FINGERPRINT_BYTES + ACCESS_KEY_BYTES)
+        payload[0] = PAIRING_INFO_VERSION
+        payload[1] = parsed.size.toByte()
+        var at = 2
+        for (address in parsed) {
+            address.copyInto(payload, at)
+            at += 4
+        }
+        fingerprintBytes.copyInto(payload, at)
+        at += FINGERPRINT_BYTES
+        keyBytes.copyInto(payload, at)
+        return payload
+    }
+
+    private fun parseIpv4(text: String): ByteArray? {
+        val parts = text.trim().split('.')
+        if (parts.size != 4) return null
+        val bytes = ByteArray(4)
+        for ((index, part) in parts.withIndex()) {
+            // No leading zeros: "01" and "1" are the same address to some parsers and
+            // different to others, so refuse the ambiguity instead of picking one.
+            if (part.isEmpty() || part.length > 3 || (part.length > 1 && part[0] == '0')) return null
+            val value = part.toIntOrNull() ?: return null
+            if (value !in 0..255) return null
+            bytes[index] = value.toByte()
+        }
+        return bytes
+    }
+
+    private fun hexBytes(text: String, bytes: Int): ByteArray {
+        val trimmed = text.trim()
+        require(trimmed.length == bytes * 2 && trimmed.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }) {
+            "pairing detail must be ${bytes * 2} hex characters"
+        }
+        return ByteArray(bytes) { index ->
+            trimmed.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+        }
+    }
+
     fun encodeEpoch(epoch: Epoch): ByteArray {
         val buffer = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
         buffer.putInt(epoch.requestId.toInt())

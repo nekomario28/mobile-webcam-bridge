@@ -18,6 +18,10 @@ pub const COMMIT_QUALITY: u8 = 0x09;
 pub const CLIENT_CHALLENGE: u8 = 0x0a;
 pub const CLIENT_AUTH: u8 = 0x0b;
 pub const CLIENT_AUTH_RESULT: u8 = 0x0c;
+/// The phone hands the PC its Wi-Fi pairing details over the USB cable, so the
+/// first Wi-Fi session needs nothing typed. User-initiated on the phone; the
+/// question it answers is "what do I type", not "is this phone trusted".
+pub const PAIRING_INFO: u8 = 0x0d;
 pub const VIDEO_CONFIG: u8 = 0x10;
 pub const VIDEO_AU: u8 = 0x11;
 pub const IDR_REQUEST: u8 = 0x12;
@@ -490,6 +494,8 @@ impl Header {
             CLIENT_CHALLENGE => length == 2 + PHONE_BINDING_BYTES + NONCE_BYTES,
             CLIENT_AUTH => (CLIENT_AUTH_MIN_BYTES..=CLIENT_AUTH_MAX_BYTES).contains(&length),
             CLIENT_AUTH_RESULT => length == ClientAuthResult::BYTES,
+            // version + count + 4-byte addresses + SHA-256 + 128-bit key.
+            PAIRING_INFO => PairingInfo::fits(length),
             QUALITY_CAPABILITIES => (1..=MAX_CONTROL_PAYLOAD).contains(&length),
             PREPARE_QUALITY | QUALITY_RESULT => length == 14,
             PAUSED | COMMIT_QUALITY | PING | PONG => length == 8,
@@ -558,6 +564,56 @@ impl Frame {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pairing_info_round_trips_and_rejects_malformed_payloads() {
+        let mut payload = vec![PairingInfo::VERSION, 2];
+        payload.extend_from_slice(&[192, 168, 1, 3]);
+        payload.extend_from_slice(&[100, 66, 21, 23]);
+        payload.extend_from_slice(&[0xab; 32]);
+        payload.extend_from_slice(&[0xcd; 16]);
+        let info = PairingInfo::decode(&payload).unwrap();
+        assert_eq!(
+            info.addresses,
+            vec![
+                std::net::Ipv4Addr::new(192, 168, 1, 3),
+                std::net::Ipv4Addr::new(100, 66, 21, 23)
+            ]
+        );
+        assert_eq!(info.fingerprint, "ab".repeat(32));
+        assert_eq!(info.key, "cd".repeat(16));
+        // The private address wins over the tunnel address even when listed second.
+        assert_eq!(
+            info.preferred_address(),
+            Some(std::net::Ipv4Addr::new(192, 168, 1, 3))
+        );
+
+        // Wrong version, truncated, trailing bytes and a zero count are all refused.
+        let mut wrong_version = payload.clone();
+        wrong_version[0] = 2;
+        assert!(PairingInfo::decode(&wrong_version).is_err());
+        assert!(PairingInfo::decode(&payload[..payload.len() - 1]).is_err());
+        let mut trailing = payload.clone();
+        trailing.push(0);
+        assert!(PairingInfo::decode(&trailing).is_err());
+        let mut no_addresses = vec![PairingInfo::VERSION, 0];
+        no_addresses.extend_from_slice(&[0xab; 32]);
+        no_addresses.extend_from_slice(&[0xcd; 16]);
+        assert!(PairingInfo::decode(&no_addresses).is_err());
+    }
+
+    #[test]
+    fn the_length_check_matches_the_decoder() {
+        let good = 2 + 4 + PairingInfo::FINGERPRINT_BYTES + PairingInfo::KEY_BYTES;
+        assert!(PairingInfo::fits(good));
+        assert!(!PairingInfo::fits(good - 1));
+        assert!(!PairingInfo::fits(good + 1));
+        let four = 2 + 4 * 4 + PairingInfo::FINGERPRINT_BYTES + PairingInfo::KEY_BYTES;
+        assert!(PairingInfo::fits(four));
+        assert!(!PairingInfo::fits(
+            2 + 5 * 4 + PairingInfo::FINGERPRINT_BYTES + PairingInfo::KEY_BYTES
+        ));
+    }
+
     use super::*;
     #[test]
     fn frozen_cpp_header_and_unsigned_pts() {
@@ -888,4 +944,89 @@ mod tests {
         assert_eq!(Epoch::BYTES, 8);
         assert!(Epoch::decode(&[0; 7]).is_err());
     }
+}
+
+/// The Wi-Fi pairing details a phone sends over the USB cable.
+///
+/// The payload is deliberately tiny and self-describing: a version, up to four
+/// IPv4 addresses (a phone can be multi-homed), the SHA-256 of the phone's TLS
+/// certificate and the 128-bit access key. It carries exactly what the PC's three
+/// pairing fields want, so receiving it is equivalent to the user typing them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingInfo {
+    pub addresses: Vec<std::net::Ipv4Addr>,
+    pub fingerprint: String,
+    pub key: String,
+}
+
+impl PairingInfo {
+    pub const VERSION: u8 = 1;
+    pub const MAX_ADDRESSES: usize = 4;
+    pub const KEY_BYTES: usize = 16;
+    pub const FINGERPRINT_BYTES: usize = 32;
+
+    fn fits(length: usize) -> bool {
+        // 1 version + 1 count + addresses + fingerprint + key
+        if length < 2 + 4 + Self::FINGERPRINT_BYTES + Self::KEY_BYTES {
+            return false;
+        }
+        let count = length.saturating_sub(2 + Self::FINGERPRINT_BYTES + Self::KEY_BYTES) / 4;
+        (1..=Self::MAX_ADDRESSES).contains(&count)
+            && length == 2 + count * 4 + Self::FINGERPRINT_BYTES + Self::KEY_BYTES
+    }
+
+    pub fn decode(payload: &[u8]) -> crate::Result<Self> {
+        if payload.len() < 2 {
+            return Err("pairing info is too short".into());
+        }
+        if payload[0] != Self::VERSION {
+            return Err("unexpected pairing info version".into());
+        }
+        let count = payload[1] as usize;
+        if !(1..=Self::MAX_ADDRESSES).contains(&count) {
+            return Err("pairing info carries an unusable address count".into());
+        }
+        let expected = 2 + count * 4 + Self::FINGERPRINT_BYTES + Self::KEY_BYTES;
+        if payload.len() != expected {
+            return Err("pairing info has trailing or missing bytes".into());
+        }
+        let mut addresses = Vec::with_capacity(count);
+        for index in 0..count {
+            let at = 2 + index * 4;
+            addresses.push(std::net::Ipv4Addr::new(
+                payload[at],
+                payload[at + 1],
+                payload[at + 2],
+                payload[at + 3],
+            ));
+        }
+        let fingerprint_at = 2 + count * 4;
+        let key_at = fingerprint_at + Self::FINGERPRINT_BYTES;
+        Ok(Self {
+            addresses,
+            fingerprint: hex(&payload[fingerprint_at..key_at]),
+            key: hex(&payload[key_at..]),
+        })
+    }
+
+    /// The address to try first: a private LAN address beats a tunnel or a public
+    /// one, because the phone and the PC are on the same network in the ordinary
+    /// case and the other addresses are usually VPNs.
+    pub fn preferred_address(&self) -> Option<std::net::Ipv4Addr> {
+        let private =
+            |address: &std::net::Ipv4Addr| address.is_private() || address.is_link_local();
+        self.addresses
+            .iter()
+            .find(|address| private(address))
+            .or_else(|| self.addresses.first())
+            .copied()
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push_str(&format!("{byte:02x}"));
+    }
+    text
 }

@@ -76,6 +76,8 @@ class MainActivity : Activity() {
     private lateinit var details: TextView
     /** Phone address and the how-to; shown only while Details is open. */
     private lateinit var lanHelp: TextView
+    /** Hands the Wi-Fi pairing details to the PC over the USB cable. */
+    private lateinit var sendPairingAction: Button
     private var lanHelpText = ""
     private var cameraStartRequested = false
     /** Authorization storage is unusable until the user deliberately resets it. */
@@ -250,6 +252,39 @@ class MainActivity : Activity() {
                 }
             }
         }
+        sendPairingAction = Button(this).apply {
+            text = ui("Send Wi-Fi pairing to PC", "Wi-Fi設定をPCへ送る")
+            setAllCaps(false)
+            visibility = View.GONE
+            setOnClickListener {
+                val usbSession = session
+                if (usbSession == null) {
+                    show(ui("Connect the PC over USB first", "先にUSBでPCへ接続してください"))
+                    return@setOnClickListener
+                }
+                runCatching {
+                    val identity = lanIdentity ?: SecureLanIdentity(this@MainActivity).also {
+                        lanIdentity = it
+                    }
+                    Wire.encodePairingInfo(
+                        LanServer.localIpv4Addresses(),
+                        identity.fingerprint(),
+                        identity.pairingCode(),
+                    )
+                }.onSuccess { payload ->
+                    usbSession.sendPairingInfo(payload)
+                    show(ui(
+                        "Wi-Fi pairing sent to the PC. Nothing to type there.",
+                        "Wi-Fi設定をPCへ送りました。PC側の入力は不要です。"
+                    ))
+                }.onFailure {
+                    show(ui(
+                        "Could not send the pairing details: ${it.message}",
+                        "Wi-Fi設定を送れませんでした: ${it.message}"
+                    ))
+                }
+            }
+        }
         rotateAction = Button(this).apply {
             text = ui("Rotate Wi-Fi access key", "Wi-Fi接続キーを変更")
             setAllCaps(false)
@@ -301,6 +336,11 @@ class MainActivity : Activity() {
                 addView(lanHelp, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(storageAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(pairInfo, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                // Everything below appears only while Details is open. Both of these
+                // must be added here: a control that is built but never added is a
+                // button the user can never reach.
+                addView(sendPairingAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                addView(rotateAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(details, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             })
         }
@@ -922,6 +962,9 @@ class MainActivity : Activity() {
         lanHelp.visibility = if (open && lanHelpText.isNotEmpty()) View.VISIBLE else View.GONE
         rotateAction.visibility =
             if (open && connectionMode == ConnectionMode.LAN) View.VISIBLE else View.GONE
+        // Sending pairing details needs the cable and a live session to send them on.
+        sendPairingAction.visibility =
+            if (open && connectionMode == ConnectionMode.USB && session != null) View.VISIBLE else View.GONE
     }
 
     private fun saveConnectionMode() {

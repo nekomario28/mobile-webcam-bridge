@@ -86,6 +86,29 @@ Pending, then one separate Authorized or Rejected result after phone action.
 The host polls for Stop while waiting. Repeated Pending, media/capabilities
 before Authorized or another proof on the same challenge is a protocol error.
 
+### PAIRING_INFO — phone → PC, type `0x0d` (USB only)
+
+The phone's Wi-Fi pairing details, sent over the USB cable when the user asks for
+it, so the first Wi-Fi session needs nothing typed on the PC:
+
+```text
+version_u8 (=1) || address_count_u8 (1..=4) || address_count * ipv4_4
+|| certificate_sha256_32 || access_key_16
+```
+
+- It carries exactly what the PC's three pairing fields ask for: an address, the
+  SHA-256 of the phone certificate and the 128-bit access key.
+- The PC prefers a private or link-local address when the phone sends several,
+  because the other ones are usually tunnels.
+- It is **not** an authorization. The PC still proves its key on the Wi-Fi
+  session and the phone still approves that PC; this frame only answers "what do
+  I type". A phone sends it only when the user presses the button, and only on a
+  USB session.
+- Trust boundary: the cable is trusted to carry the access key when the user asks
+  for that. This is the same limit USB already has — there is no phone attestation
+  and no claim to defeat an active relay — and it is why sending is explicit
+  rather than automatic.
+
 ## Budgets and teardown
 
 The phone independently closes a stalled proof after five seconds and a pending
