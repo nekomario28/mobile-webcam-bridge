@@ -72,6 +72,14 @@ again the moment the first approval lands; the button brings it back for a secon
 PC. The `Authorized PCs` button also carries the count ("none yet", "2"), because
 that is the fastest answer to "is my PC registered?".
 
+**The window wakes on a clock while a session runs.** Everything else here is
+event-driven, which is the right default — but a preview and a silence banner are
+functions of time, not of an event. Measured on a real phone: after the camera
+stopped, the last stats line had already been painted, so the window slept and kept
+saying "camera connected" forever. A running session now requests a repaint every
+100 ms, which is also what makes the preview follow the worker's fixed rate instead
+of the event rate.
+
 **Silence is reported, not glossed over.** When the phone stops the camera the
 session stays up and frames simply stop, so "camera connected" would be a lie. The
 PC keeps the time the counters last advanced and, after three seconds of silence

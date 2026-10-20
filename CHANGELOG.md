@@ -41,6 +41,13 @@
   window opens tall enough (420x620) to show its status, the guidance and, while
   streaming, the mode controls without scrolling first.
 
+- Keep the window awake while a session runs. Measured on the real phone: after the
+  phone stopped the camera the PC still said "camera connected", because the UI only
+  woke for events and no more arrived. A running session now requests a repaint every
+  100 ms, so the preview follows the worker's 10 Hz record (measured: consecutive
+  frames 0.00 apart before, 1.8–3.2 after) and a stop shows up immediately as the
+  waiting state it is.
+
 - Report silence. When the phone stops the camera the session stays up and frames
   stop, so the PC used to say "camera connected" indefinitely; after three seconds
   of silence outside a quality switch it now says no video is arriving and that the
