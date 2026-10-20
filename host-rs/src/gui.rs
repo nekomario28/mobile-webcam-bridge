@@ -518,12 +518,9 @@ impl App {
                 )
             });
         }
-        if let Some((width, height, fps)) = self.session.quality.applied {
-            ui.weak(format!(
-                "{}: {width}×{height}, {fps} fps",
-                self.text("Applied capture target", "適用済み撮影目標")
-            ));
-        }
+        // No "applied target" line: the mode line above shows the same numbers, and
+        // the dropdowns show what is being asked for — the pair is the distinction,
+        // and a third copy of the target is not.
         if let Some(error) = &self.session.quality.error {
             ui.colored_label(egui::Color32::LIGHT_RED, error);
         }
@@ -991,10 +988,7 @@ impl eframe::App for App {
                                         };
                                         ui.weak(label);
                                     }
-                                    ui.weak(self.text(
-                                        "Edit or remove the pairing under Details.",
-                                        "変更・削除は「詳細」から行えます。",
-                                    ));
+
                                 } else {
                                     self.pairing_inputs(ui);
                                 }
@@ -1186,10 +1180,12 @@ impl eframe::App for App {
                                 // not an advanced detail.
                                 ui.weak(format!("→ {}", self.settings.output.trim()));
                             });
-                            if let Some(texture) = &self.preview_texture {
-                                // The framebuffer is the whole point of a webcam; showing
-                                // it here answers "is the phone pointing at me?" without
-                                // opening another app.
+                            // Only while frames are arriving: a frozen picture beside a
+                            // status line that says the camera is waiting would be a
+                            // contradiction, and a caption naming the obvious is noise.
+                            if matches!(self.session.state, State::Streaming)
+                                && let Some(texture) = &self.preview_texture
+                            {
                                 let width = ui.available_width().min(360.0);
                                 let size = texture.size_vec2();
                                 let height = (width * size.y / size.x.max(1.0)).max(1.0);
@@ -1197,7 +1193,6 @@ impl eframe::App for App {
                                     egui::Image::new(texture)
                                         .fit_to_exact_size(egui::vec2(width, height)),
                                 );
-                                ui.weak(self.text("Preview", "プレビュー"));
                             }
                             // Silence is not an error the protocol reports: when the
                             // phone stops the camera the session stays up and frames

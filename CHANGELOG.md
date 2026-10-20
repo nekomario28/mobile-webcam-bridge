@@ -41,6 +41,13 @@
   window opens tall enough (420x620) to show its status, the guidance and, while
   streaming, the mode controls without scrolling first.
 
+- Take the repeated lines off the screen. The applied capture target said what the
+  mode line above it already said; "edit or remove the pairing under Details" was
+  restated on every visit; and "Preview" labelled a picture that plainly is one. All
+  three are gone. The preview is now also shown only while frames are arriving, so a
+  stopped stream cannot leave a frozen image beside a status line that says the
+  camera is waiting — the capture gate gained a `stopped` state so that stays true.
+
 - Write the roadmap down. `docs/roadmap.md` records where each area stands and what
   evidence backs it, the three things that block a release (independent security
   assessment, version/edition reconciliation, real-phone switching acceptance), and
