@@ -7,6 +7,7 @@ pub mod identity;
 #[cfg(feature = "video")]
 pub mod output;
 pub mod platform;
+pub mod preview;
 pub mod quality;
 pub mod secure;
 #[cfg(feature = "gui")]

@@ -43,6 +43,17 @@ The Linux sink chooses USB or LAN before entering one common frame/decode loop.
 Every socket transport shares one AMB1 framing and pairing implementation;
 transport-specific code is limited to connect and the optional security layer.
 
+**The preview reads back what the app writes.** The GUI is a separate process from
+the worker, and the control channel is a JSON line capped at 16 KiB, so frames
+cannot ride it without a second protocol. Instead the window opens the virtual
+camera it is already filling and reads it: v4l2loopback serves consumers what the
+producer wrote, and the read is format-passive — never `S_FMT`, because a consumer
+that renegotiates the loopback format changes what every other app sees. Frames are
+downscaled to 320 columns for framing, not for grading, and the open is retried
+because `exclusive_caps=1` only exposes capture once a producer has queued frames.
+Windows reads its virtual camera through DirectShow and has no such compat path, so
+the preview is unavailable there rather than emulated badly.
+
 **The phone says who is receiving.** While streaming its status names the PC, and
 marks the name as the PC's own claim (`yuu へ配信中（申告名）`) rather than presenting
 it as an identity: the verified identity is the client id, which the approval

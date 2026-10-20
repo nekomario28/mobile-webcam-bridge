@@ -64,6 +64,7 @@ for lang in en ja; do
     if [ "$lang" = ja ]; then locale_env=(LANGUAGE=ja_JP:ja LC_ALL=ja_JP.UTF-8); else locale_env=(LANGUAGE=en_US:en LC_ALL=C); fi
     env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET DISPLAY=":$display" "${locale_env[@]}" \
       MW_CAPTURE_FIXTURE="$fixture" MW_CAPTURE_DETAILS=1 MW_CAPTURE_POSITION=0,0 \
+      MW_PREVIEW_YUYV="$root/tests/fixtures/capture/preview.yuyv" MW_PREVIEW_SIZE=320x180 \
       MW_SCREENSHOT="$out/$lang-$name.png" timeout 60 "$binary" >"$out/gui-$lang-$name.log" 2>&1 || true
     if [ ! -s "$out/$lang-$name.png" ]; then
       echo "capture missing after 60s: $lang-$name (see $out/gui-$lang-$name.log)" >&2
