@@ -51,6 +51,16 @@ the access key — which disconnects every Wi-Fi client — sits behind `Details
 with the address and instructions. The PC's main screen shows `Paired with
 <address>` once the pairing is stored and keeps the three pairing fields, the
 how-to and "Forget paired phone" inside `Details`, where they are still editable.
+Waiting is automatic too: when the stored pairing is complete the PC connects at
+launch, and if the phone is not answering yet it keeps trying with a bounded
+backoff (2 s, 4 s, 8 s, then 15 s, eight attempts) while the status says
+`Waiting for the phone (retrying)`. A phone that has not been opened, or has just
+been restarted, is the ordinary case rather than an error, so the user should not
+have to press Connect again for it. Failures no retry can heal — a rejected access
+key, a fingerprint that does not match the pinned certificate, storage that needs
+recovery — end the retries immediately, and pressing Disconnect stops them until
+the user asks again.
+
 Steps that involve no decision are automated instead of shown: the phone reveals
 its pairing key by itself while no PC is approved, and the PC connects on launch
 when a complete pairing is stored (the phone still approves each PC, and capture
