@@ -48,6 +48,8 @@ pub struct Session {
     /// stays alive so the fixture's silence is not read as a closed channel.
     #[cfg(feature = "capture")]
     capture_fixture: Option<mpsc::Sender<Event>>,
+    /// Where the worker publishes its preview record; set before `connect`.
+    preview_path: Option<std::path::PathBuf>,
     /// Pairing details the phone sent over USB, waiting for the UI to consume them.
     pairing_info: Option<crate::wire::PairingInfo>,
     pub state: State,
@@ -84,6 +86,11 @@ impl Session {
         session.state = State::Connecting;
         session
     }
+    /// Tell the worker where to publish its preview; call before `connect`.
+    pub fn set_preview_path(&mut self, path: Option<std::path::PathBuf>) {
+        self.preview_path = path;
+    }
+
     pub fn new(executable: std::path::PathBuf) -> Self {
         Self {
             executable,
@@ -96,6 +103,7 @@ impl Session {
             writer: None,
             #[cfg(feature = "capture")]
             capture_fixture: None,
+            preview_path: None,
             pairing_info: None,
             state: State::Idle,
             stats: None,
@@ -150,6 +158,9 @@ impl Session {
         {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000);
+        }
+        if let Some(path) = &self.preview_path {
+            command.env(crate::preview::PATH_ENV, path);
         }
         let mut child = command.spawn()?;
         #[cfg(windows)]

@@ -43,16 +43,22 @@ The Linux sink chooses USB or LAN before entering one common frame/decode loop.
 Every socket transport shares one AMB1 framing and pairing implementation;
 transport-specific code is limited to connect and the optional security layer.
 
-**The preview reads back what the app writes.** The GUI is a separate process from
-the worker, and the control channel is a JSON line capped at 16 KiB, so frames
-cannot ride it without a second protocol. Instead the window opens the virtual
-camera it is already filling and reads it: v4l2loopback serves consumers what the
-producer wrote, and the read is format-passive — never `S_FMT`, because a consumer
-that renegotiates the loopback format changes what every other app sees. Frames are
-downscaled to 320 columns for framing, not for grading, and the open is retried
-because `exclusive_caps=1` only exposes capture once a producer has queued frames.
-Windows reads its virtual camera through DirectShow and has no such compat path, so
-the preview is unavailable there rather than emulated badly.
+**The preview is a record the worker publishes, not something the GUI reads back.**
+The GUI is a separate process from the worker and the control channel is a JSON
+line capped at 16 KiB, so frames cannot ride it. They travel through a small
+private file instead: a seqlock record (magic, sequence, size, RGBA payload) that
+the worker truncates into existence, creates `0600`, and publishes at a fixed 10 Hz.
+Publishing is a property of the *stream*, not of the sink — the worker converts even
+when no application has attached to the virtual camera, so the preview shows the
+picture before Zoom is opened. The GUI reads the newest complete frame at whatever
+rate it repaints, and a mismatched sequence number means "keep the frame you have",
+never a torn image; a failed publish never ends a session. Because the record is
+plain file I/O with per-platform positional read/write, the same path serves Linux
+and Windows, where reading the DirectShow filter back would have meant an
+untestable COM consumer graph.
+
+Frames are downscaled to 320 columns for framing, not for grading, with correct
+YUYV luma pairing on Linux and RGBA on Windows (the sinks' own layouts).
 
 **The phone says who is receiving.** While streaming its status names the PC, and
 marks the name as the PC's own claim (`yuu へ配信中（申告名）`) rather than presenting

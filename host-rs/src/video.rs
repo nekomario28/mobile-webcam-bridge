@@ -112,6 +112,7 @@ pub fn worker(parent: u32) -> crate::Result<()> {
         &stop,
         &changes,
         &quality_request,
+        std::env::var_os(crate::preview::PATH_ENV).map(Into::into),
         |event| control::write(&mut stdout, &event).map_err(Into::into),
     );
     if let Err(error) = &result {
@@ -153,6 +154,7 @@ fn receive(
     stop: &AtomicBool,
     changes: &Mutex<Option<Transform>>,
     quality_request: &Mutex<Option<(u16, u16, u16)>>,
+    preview_path: Option<std::path::PathBuf>,
     event: impl FnMut(Event) -> crate::Result<()>,
 ) -> crate::Result<()> {
     let mut event = event;
@@ -202,21 +204,41 @@ fn receive(
         settings,
         transport,
         stop,
-        changes,
-        quality_request,
+        Seams {
+            changes,
+            quality_request,
+            preview_path,
+        },
         event,
         |c| crate::output::Camera::open(&output_path, c.width, c.height, c.fps),
     )
 }
+/// The inputs a session reads while it streams, kept together so the seam stays one
+/// argument as it grows.
+struct Seams<'a> {
+    changes: &'a Mutex<Option<Transform>>,
+    quality_request: &'a Mutex<Option<(u16, u16, u16)>>,
+    preview_path: Option<std::path::PathBuf>,
+}
+
 fn receive_stream<S: crate::output::Sink>(
     settings: Settings,
     mut transport: Box<dyn Transport>,
     stop: &AtomicBool,
-    changes: &Mutex<Option<Transform>>,
-    quality_request: &Mutex<Option<(u16, u16, u16)>>,
+    seams: Seams,
     mut event: impl FnMut(Event) -> crate::Result<()>,
     mut create_output: impl FnMut(Config) -> crate::Result<S>,
 ) -> crate::Result<()> {
+    let Seams {
+        changes,
+        quality_request,
+        preview_path,
+    } = seams;
+    // The preview is a property of the stream, not of the sink: it is published at a
+    // fixed rate whether or not an application has attached to the virtual camera.
+    let mut preview = preview_path.and_then(|path| crate::preview::Producer::open(&path).ok());
+    let preview_period = Duration::from_millis(1000 / crate::preview::PREVIEW_HZ.max(1));
+    let mut preview_due_at = Instant::now();
     let mut decoder = Some(decoder::Decoder::open(&settings.decode)?);
     let idr = transport.send(
         &wire::Frame::new(wire::IDR_REQUEST, 2, Vec::new())?,
@@ -510,15 +532,32 @@ fn receive_stream<S: crate::output::Sink>(
             }
             let camera = output.as_mut().unwrap();
             let active = camera.ready()?;
-            if active {
+            let preview_due = preview.is_some() && Instant::now() >= preview_due_at;
+            if active || preview_due {
                 let (stride, size) = camera.layout();
                 let bytes = pixels.convert(&frame, c, stride, size, transform)?;
-                camera.submit(bytes, c.width, c.height)?;
-                submitted += 1;
-                report_quality(
-                    switch.step(now_ms(), crate::quality::Event::OutputReady),
-                    &mut event,
-                )?;
+                if active {
+                    camera.submit(bytes, c.width, c.height)?;
+                    submitted += 1;
+                    report_quality(
+                        switch.step(now_ms(), crate::quality::Event::OutputReady),
+                        &mut event,
+                    )?;
+                }
+                if preview_due {
+                    let shot = crate::preview::from_sink(
+                        bytes,
+                        c.width as usize,
+                        c.height as usize,
+                        stride,
+                    );
+                    if let Some(producer) = &mut preview {
+                        // A failed publish must not end a session; the preview is
+                        // an affordance, not the product.
+                        let _ = producer.publish(&shot);
+                    }
+                    preview_due_at = Instant::now() + preview_period;
+                }
             }
             if report.elapsed() >= Duration::from_secs(1) {
                 event(Event::Stats {
@@ -648,6 +687,126 @@ mod tests {
         }
         assert!(!decoder.receive(&mut frame).unwrap());
     }
+    #[test]
+    fn the_worker_publishes_a_preview_while_it_streams() {
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        };
+        struct Source {
+            frames: std::collections::VecDeque<wire::Frame>,
+        }
+        impl Transport for Source {
+            fn receive(&mut self, timeout: Duration) -> crate::Result<wire::Frame> {
+                self.poll_receive(timeout)?.ok_or_else(|| "no frame".into())
+            }
+            fn send(&mut self, _frame: &wire::Frame, _timeout: Duration) -> crate::Result<()> {
+                Ok(())
+            }
+            fn poll_receive(&mut self, _timeout: Duration) -> crate::Result<Option<wire::Frame>> {
+                Ok(self.frames.pop_front())
+            }
+        }
+        struct Sink64 {
+            submitted: Arc<Mutex<usize>>,
+        }
+        impl crate::output::Sink for Sink64 {
+            fn layout(&self) -> (usize, usize) {
+                let bpp = if cfg!(windows) { 4 } else { 2 };
+                (64 * bpp, 64 * 32 * bpp)
+            }
+            fn ready(&mut self) -> crate::Result<bool> {
+                Ok(true)
+            }
+            fn submit(&mut self, bytes: &[u8], _w: u32, _h: u32) -> crate::Result<()> {
+                let bpp = if cfg!(windows) { 4 } else { 2 };
+                assert_eq!(bytes.len(), 64 * 32 * bpp);
+                *self.submitted.lock().unwrap() += 1;
+                Ok(())
+            }
+        }
+        let mut config = [0u8; 16];
+        config[..2].copy_from_slice(&64u16.to_le_bytes());
+        config[2..4].copy_from_slice(&32u16.to_le_bytes());
+        config[4..6].copy_from_slice(&30u16.to_le_bytes());
+        config[12] = 1;
+        config[13] = 1;
+        let mut frames = std::collections::VecDeque::new();
+        frames.push_back(wire::Frame::new(wire::VIDEO_CONFIG, 0, config.to_vec()).unwrap());
+        let mut access_unit = wire::Frame::new(
+            wire::VIDEO_AU,
+            0,
+            include_bytes!("../tests/fixtures/red-blue.h264").to_vec(),
+        )
+        .unwrap();
+        access_unit.header.flags = wire::KEYFRAME | wire::CONFIG_INCLUDED;
+        frames.push_back(access_unit);
+        let path = crate::preview::create_path().unwrap();
+        let consumer = crate::preview::Consumer::open(&path).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let watcher = stop.clone();
+        let watcher_consumer = crate::preview::Consumer::open(&path).unwrap();
+        let watchdog = std::thread::spawn(move || {
+            for _ in 0..300 {
+                if watcher_consumer.latest().is_some() {
+                    watcher.store(true, Ordering::Release);
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            false
+        });
+        let submitted = Arc::new(Mutex::new(0usize));
+        let counter = submitted.clone();
+        let settings = Settings {
+            decode: "off".into(),
+            transport: "usb".into(),
+            output: "unused".into(),
+            ..Settings::default()
+        };
+        let result = receive_stream(
+            settings,
+            Box::new(Source { frames }),
+            &stop,
+            Seams {
+                changes: &Mutex::new(None),
+                quality_request: &Mutex::new(None),
+                preview_path: Some(path.clone()),
+            },
+            |_| Ok(()),
+            move |_| {
+                Ok(Sink64 {
+                    submitted: counter.clone(),
+                })
+            },
+        );
+        let published = watchdog.join().unwrap();
+        // Either outcome is reported as the cause, so a failure names itself.
+        assert!(
+            published,
+            "the worker never published a preview: {result:?}"
+        );
+        assert!(
+            *submitted.lock().unwrap() > 0,
+            "the sink was never handed a frame"
+        );
+        let frame = consumer.latest().expect("a preview frame");
+        assert_eq!((frame.width, frame.height), (64, 32));
+        assert_eq!(frame.pixels.len(), 64 * 32 * 4);
+        // The fixture is red over blue. Windows' RGBA conversion presents it the other
+        // way up, which the transform test already records, so pick the rows the same
+        // way it does: a flat or misread frame still fails on either platform.
+        let red_row = if cfg!(windows) { 24 } else { 8 };
+        let blue_row = 31 - red_row;
+        let red = &frame.pixels[(red_row * 64 + 32) * 4..][..3];
+        let blue = &frame.pixels[(blue_row * 64 + 32) * 4..][..3];
+        assert!(
+            red[0] > 150 && blue[2] > 150,
+            "preview pixels are wrong: red row={red:?} blue row={blue:?}"
+        );
+        std::fs::remove_file(path).ok();
+    }
+
     #[test]
     fn minimal_runtime_closure_when_requested() {
         if std::env::var("MOBILE_WEBCAM_REQUIRE_MINIMAL").as_deref() != Ok("1") {

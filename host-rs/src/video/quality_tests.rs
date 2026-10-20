@@ -381,8 +381,11 @@ fn pipeline(case: Case) {
         },
         Box::new(client),
         &stop,
-        &changes,
-        &request,
+        Seams {
+            changes: &changes,
+            quality_request: &request,
+            preview_path: None,
+        },
         |event| {
             match event {
                 Event::QualityProgress { staged: true } if case == Case::IdleStage => {
