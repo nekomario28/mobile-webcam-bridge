@@ -41,6 +41,11 @@
   window opens tall enough (420x620) to show its status, the guidance and, while
   streaming, the mode controls without scrolling first.
 
+- Write the roadmap down. `docs/roadmap.md` records where each area stands and what
+  evidence backs it, the three things that block a release (independent security
+  assessment, version/edition reconciliation, real-phone switching acceptance), and
+  for every remaining item the test that would close it.
+
 - Keep the window awake while a session runs. Measured on the real phone: after the
   phone stopped the camera the PC still said "camera connected", because the UI only
   woke for events and no more arrived. A running session now requests a repaint every

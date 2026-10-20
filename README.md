@@ -35,6 +35,7 @@ Windows: run **Setup.exe** once to install the virtual camera. The ZIP is
 portable after setup. Linux: make the AppImage executable and launch it.
 
 [Connection and setup](host-rs/README.md) ·
+[Roadmap and TODO](docs/roadmap.md) ·
 [Build and verification](specs/rust-host-rewrite/implementation.md) ·
 [Classic Qt v0.1.2](docs/classic-qt.md)
 
