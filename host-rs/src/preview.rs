@@ -1,48 +1,230 @@
-//! The PC's own preview: read back what this app is writing to the virtual camera.
+//! The PC's own preview: a small, fixed-rate copy of what the sink is being fed.
 //!
-//! The GUI runs in its own process, and the control channel is JSON lines capped at
-//! 16 KiB, so frames cannot come from the worker without a second protocol. Reading
-//! the output device instead needs no protocol at all: v4l2loopback serves consumers
-//! what the producer wrote, and this app is both. The read is deliberately
-//! format-passive — it never calls `S_FMT`, because a consumer that renegotiates the
-//! loopback's format changes what every other app sees.
+//! The GUI runs in its own process and the control channel is a JSON line capped at
+//! 16 KiB, so frames cannot ride it. They travel through a small file instead — a
+//! seqlock record the worker publishes at a fixed rate and the GUI reads at
+//! whatever rate it repaints. That keeps the preview independent of GUI polling,
+//! works on every platform (no device-specific read-back), and still shows the
+//! picture when no application has attached to the virtual camera yet.
 //!
-//! The preview is for framing ("is the phone pointing at me?"), so frames are
-//! downscaled to at most [`PREVIEW_WIDTH`] columns with nearest-neighbour sampling.
+//! The record is written by one process and read by another, so the reader can
+//! catch a half-written frame; a mismatched sequence number means "keep the frame
+//! you have", never a torn image.
+
+use std::{
+    fs::{File, OpenOptions},
+    io,
+    path::{Path, PathBuf},
+};
+
+/// Where the worker is told to publish; set by the GUI when it spawns it.
+pub const PATH_ENV: &str = "AMB_PREVIEW_PATH";
 
 /// Widest preview kept for the UI; the source is usually 1280 or 1920 wide.
 pub const PREVIEW_WIDTH: usize = 320;
+/// How often the worker publishes, independent of the frame rate and the GUI.
+pub const PREVIEW_HZ: u64 = 10;
+
+const MAGIC: [u8; 4] = *b"MBWP";
+const VERSION: u32 = 1;
+const HEADER: usize = 32;
+/// Room for 320x1024 RGBA — far beyond any preview shape, small on disk.
+const CAPACITY: usize = PREVIEW_WIDTH * 1024 * 4;
 
 /// One downscaled frame, RGBA8, tightly packed.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<u8>,
 }
 
-// The reader is V4L2, which only exists with the `video` feature: a GUI-only build
-// has no bindings to include and no device to read, so it gets the stub.
-#[cfg(all(target_os = "linux", feature = "video"))]
-pub use linux::Reader;
-#[cfg(not(all(target_os = "linux", feature = "video")))]
-pub use stub::Reader;
+/// Create a fresh private record file and return its path.
+///
+/// `create_new` refuses any existing path, so a pre-planted symlink or file in the
+/// temp directory cannot redirect the preview.
+pub fn create_path() -> io::Result<PathBuf> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let path = std::env::temp_dir().join(format!(
+        "mobile-webcam-preview-{}-{nanos}.bin",
+        std::process::id()
+    ));
+    let file = private_create(&path)?;
+    file.set_len((HEADER + CAPACITY) as u64)?;
+    Ok(path)
+}
 
-#[cfg(not(all(target_os = "linux", feature = "video")))]
-mod stub {
-    /// Windows reads its virtual camera through DirectShow and has no compat path
-    /// for this app's own output, so the preview is unavailable rather than absent.
-    pub struct Reader;
-    impl Reader {
-        pub fn open(_path: &str) -> std::io::Result<Self> {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "preview reads the V4L2 loopback device only",
-            ))
+#[cfg(unix)]
+fn private_create(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn private_create(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(path)
+}
+
+#[cfg(unix)]
+fn write_at(file: &File, offset: u64, bytes: &[u8]) -> io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    file.write_all_at(bytes, offset)
+}
+
+#[cfg(unix)]
+fn read_at(file: &File, offset: u64, bytes: &mut [u8]) -> io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    file.read_exact_at(bytes, offset)
+}
+
+#[cfg(windows)]
+fn write_at(file: &File, offset: u64, bytes: &[u8]) -> io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    let mut done = 0;
+    while done < bytes.len() {
+        done += file.seek_write(&bytes[done..], offset + done as u64)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn read_at(file: &File, offset: u64, bytes: &mut [u8]) -> io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    let mut done = 0;
+    while done < bytes.len() {
+        let read = file.seek_read(&mut bytes[done..], offset + done as u64)?;
+        if read == 0 {
+            return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
         }
-        pub fn read(&mut self) -> Option<super::Frame> {
-            None
+        done += read;
+    }
+    Ok(())
+}
+
+/// A sequence number that is odd while a write is in progress.
+fn header(seq: u64, width: usize, height: usize, len: usize) -> [u8; HEADER] {
+    let mut bytes = [0u8; HEADER];
+    bytes[..4].copy_from_slice(&MAGIC);
+    bytes[4..8].copy_from_slice(&VERSION.to_le_bytes());
+    bytes[8..16].copy_from_slice(&seq.to_le_bytes());
+    bytes[16..20].copy_from_slice(&(width as u32).to_le_bytes());
+    bytes[20..24].copy_from_slice(&(height as u32).to_le_bytes());
+    bytes[24..28].copy_from_slice(&(len as u32).to_le_bytes());
+    bytes
+}
+
+struct Parsed {
+    seq: u64,
+    width: usize,
+    height: usize,
+    len: usize,
+}
+
+fn parse_header(bytes: &[u8; HEADER]) -> Option<Parsed> {
+    if bytes[..4] != MAGIC || u32::from_le_bytes(bytes[4..8].try_into().ok()?) != VERSION {
+        return None;
+    }
+    let seq = u64::from_le_bytes(bytes[8..16].try_into().ok()?);
+    let width = u32::from_le_bytes(bytes[16..20].try_into().ok()?) as usize;
+    let height = u32::from_le_bytes(bytes[20..24].try_into().ok()?) as usize;
+    let len = u32::from_le_bytes(bytes[24..28].try_into().ok()?) as usize;
+    if width == 0 || height == 0 || len != width * height * 4 || len > CAPACITY {
+        return None;
+    }
+    Some(Parsed {
+        seq,
+        width,
+        height,
+        len,
+    })
+}
+
+/// The worker's end: publish the newest frame for the GUI to read.
+pub struct Producer {
+    file: File,
+    seq: u64,
+}
+
+impl Producer {
+    /// Open (or create) the record the GUI asked for.
+    pub fn open(path: &Path) -> io::Result<Self> {
+        let file = match private_create(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                // The GUI created it first; it is ours by construction.
+                OpenOptions::new().read(true).write(true).open(path)?
+            }
+            Err(error) => return Err(error),
+        };
+        let body = file.metadata()?.len();
+        if body < (HEADER + CAPACITY) as u64 {
+            file.set_len((HEADER + CAPACITY) as u64)?;
         }
+        Ok(Self { file, seq: 0 })
+    }
+
+    /// Write `frame` so that a reader sees either this one or the previous one.
+    pub fn publish(&mut self, frame: &Frame) -> io::Result<()> {
+        if frame.pixels.len() != frame.width * frame.height * 4 || frame.pixels.len() > CAPACITY {
+            return Ok(());
+        }
+        self.seq = self.seq.wrapping_add(1) | 1;
+        write_at(
+            &self.file,
+            0,
+            &header(self.seq, frame.width, frame.height, frame.pixels.len()),
+        )?;
+        write_at(&self.file, HEADER as u64, &frame.pixels)?;
+        self.seq = self.seq.wrapping_add(1) & !1;
+        write_at(&self.file, 8, &self.seq.to_le_bytes())
+    }
+}
+
+/// The GUI's end: the newest complete frame, or `None` while one is being written.
+pub struct Consumer {
+    file: File,
+}
+
+impl Consumer {
+    pub fn open(path: &Path) -> io::Result<Self> {
+        Ok(Self {
+            file: OpenOptions::new().read(true).open(path)?,
+        })
+    }
+
+    pub fn latest(&self) -> Option<Frame> {
+        let mut raw = [0u8; HEADER];
+        read_at(&self.file, 0, &mut raw).ok()?;
+        let parsed = parse_header(&raw)?;
+        if parsed.seq % 2 == 1 {
+            return None;
+        }
+        let mut pixels = vec![0u8; parsed.len];
+        read_at(&self.file, HEADER as u64, &mut pixels).ok()?;
+        // The writer may have started again while this frame was being copied;
+        // a changed sequence number means the copy may be torn.
+        let mut check = [0u8; HEADER];
+        read_at(&self.file, 0, &mut check).ok()?;
+        if parse_header(&check)?.seq != parsed.seq {
+            return None;
+        }
+        Some(Frame {
+            width: parsed.width,
+            height: parsed.height,
+            pixels,
+        })
     }
 }
 
@@ -102,6 +284,47 @@ pub fn yuyv_to_rgba(
     (out_width, out_height, out)
 }
 
+/// RGBA (the Windows sink's layout) to RGBA, sampled at `step` columns and rows.
+pub fn rgba_to_rgba(
+    src: &[u8],
+    width: usize,
+    height: usize,
+    stride: usize,
+    step: usize,
+) -> (usize, usize, Vec<u8>) {
+    let step = step.max(1);
+    let (out_width, out_height) = (width / step, height / step);
+    let mut out = vec![0u8; out_width * out_height * 4];
+    for oy in 0..out_height {
+        let y = oy * step + step / 2;
+        for ox in 0..out_width {
+            let x = ox * step + step / 2;
+            let index = y.saturating_mul(stride) + x * 4;
+            let out_index = (oy * out_width + ox) * 4;
+            match src.get(index..index + 4) {
+                Some(pixel) => out[out_index..out_index + 4].copy_from_slice(pixel),
+                None => out[out_index..out_index + 4].copy_from_slice(&[0, 0, 0, 255]),
+            }
+        }
+    }
+    (out_width, out_height, out)
+}
+
+/// Downscale whatever the sink was just handed, in the sink's own layout.
+pub fn from_sink(bytes: &[u8], width: usize, height: usize, stride: usize) -> Frame {
+    let step = step_for(width);
+    let (width, height, pixels) = if cfg!(windows) {
+        rgba_to_rgba(bytes, width, height, stride, step)
+    } else {
+        yuyv_to_rgba(bytes, width, height, stride, step)
+    };
+    Frame {
+        width,
+        height,
+        pixels,
+    }
+}
+
 /// The sampling step that keeps a frame at or under [`PREVIEW_WIDTH`] columns.
 pub fn step_for(width: usize) -> usize {
     if width <= PREVIEW_WIDTH {
@@ -111,168 +334,78 @@ pub fn step_for(width: usize) -> usize {
     }
 }
 
-#[cfg(all(target_os = "linux", feature = "video"))]
-mod linux {
-    use std::{fs::File, io::Read, os::fd::AsRawFd, os::unix::fs::OpenOptionsExt};
-
-    #[allow(
-        non_upper_case_globals,
-        non_camel_case_types,
-        non_snake_case,
-        dead_code
-    )]
-    mod abi {
-        include!(concat!(env!("OUT_DIR"), "/v4l2.rs"));
-    }
-    use abi::*;
-
-    /// A capture-side view of the loopback device.
-    pub struct Reader {
-        file: File,
-        width: usize,
-        height: usize,
-        stride: usize,
-        buffer: Vec<u8>,
-        /// The capture fixture replays a synthetic frame instead of a device.
-        #[cfg(feature = "capture")]
-        replay: Option<Vec<u8>>,
-    }
-
-    fn ioctl<T>(file: &File, request: u64, value: &mut T) -> std::io::Result<i32> {
-        loop {
-            // The generated UAPI type and request code bind this pointer to the
-            // kernel ABI, exactly as the output path does.
-            let result =
-                unsafe { libc::ioctl(file.as_raw_fd(), request as libc::c_ulong, &mut *value) };
-            if result >= 0 {
-                return Ok(result);
-            }
-            let error = std::io::Error::last_os_error();
-            if error.kind() != std::io::ErrorKind::Interrupted {
-                return Err(error);
-            }
-        }
-    }
-
-    impl Reader {
-        /// Open the output device for reading without changing its format.
-        ///
-        /// With `exclusive_caps=1` the device only advertises capture while a
-        /// producer is streaming, so callers are expected to retry.
-        pub fn open(path: &str) -> std::io::Result<Self> {
-            #[cfg(feature = "capture")]
-            if let Some(replay) = capture_replay() {
-                return Ok(replay);
-            }
-            // Read-only and non-blocking: no frame yet must never stall the GUI, and
-            // the descriptor must not be able to renegotiate the format.
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NONBLOCK)
-                .open(path)?;
-            let mut capability = v4l2_capability::default();
-            ioctl(&file, AMB_QUERYCAP, &mut capability)?;
-            let caps = if capability.capabilities & V4L2_CAP_DEVICE_CAPS != 0 {
-                capability.device_caps
-            } else {
-                capability.capabilities
-            };
-            if caps & V4L2_CAP_VIDEO_CAPTURE == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "device does not expose capture",
-                ));
-            }
-            let mut format = v4l2_format {
-                type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
-                ..Default::default()
-            };
-            ioctl(&file, AMB_G_FMT, &mut format)?;
-            let pix = unsafe { format.fmt.pix };
-            if pix.pixelformat != AMB_YUYV || pix.width == 0 || pix.height == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "preview expects the YUYV format this app writes",
-                ));
-            }
-            let width = pix.width as usize;
-            let height = pix.height as usize;
-            let stride = (pix.bytesperline as usize).max(width * 2);
-            let size = (pix.sizeimage as usize).max(stride * height);
-            Ok(Self {
-                file,
-                width,
-                height,
-                stride,
-                buffer: vec![0u8; size],
-                #[cfg(feature = "capture")]
-                replay: None,
-            })
-        }
-
-        /// The next frame, or `None` while the producer has not written one yet.
-        pub fn read(&mut self) -> Option<super::Frame> {
-            #[cfg(feature = "capture")]
-            if self.replay.is_some() {
-                // The fixture frame is served fresh each poll so the UI keeps its
-                // texture without needing a device.
-                return self.decode();
-            }
-            match self.file.read(&mut self.buffer) {
-                Ok(0) | Err(_) => None,
-                Ok(_) => self.decode(),
-            }
-        }
-
-        fn decode(&mut self) -> Option<super::Frame> {
-            let (width, height, pixels) = super::yuyv_to_rgba(
-                &self.buffer,
-                self.width,
-                self.height,
-                self.stride,
-                super::step_for(self.width),
-            );
-            if pixels.is_empty() {
-                return None;
-            }
-            Some(super::Frame {
-                width,
-                height,
-                pixels,
-            })
-        }
-    }
-
-    #[cfg(feature = "capture")]
-    fn capture_replay() -> Option<Reader> {
-        use std::io::Read as _;
-        let path = std::env::var("MW_PREVIEW_YUYV").ok()?;
-        let size = std::env::var("MW_PREVIEW_SIZE").ok()?;
-        let (width, height) = size.split_once('x')?;
-        let (width, height): (usize, usize) = (width.parse().ok()?, height.parse().ok()?);
-        let mut raw = Vec::new();
-        std::fs::File::open(path).ok()?.read_to_end(&mut raw).ok()?;
-        if raw.len() < width * height * 2 {
-            return None;
-        }
-        Some(Reader {
-            file: std::fs::File::open("/dev/null").ok()?,
-            width,
-            height,
-            stride: width * 2,
-            buffer: raw,
-            replay: Some(Vec::new()),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn frame(width: usize, height: usize, value: u8) -> Frame {
+        Frame {
+            width,
+            height,
+            pixels: vec![value; width * height * 4],
+        }
+    }
+
+    fn record() -> (PathBuf, Producer, Consumer) {
+        let path = create_path().unwrap();
+        let producer = Producer::open(&path).unwrap();
+        let consumer = Consumer::open(&path).unwrap();
+        (path, producer, consumer)
+    }
+
+    #[test]
+    fn a_published_frame_is_read_back_whole() {
+        let (path, mut producer, consumer) = record();
+        producer.publish(&frame(4, 2, 7)).unwrap();
+        let read = consumer.latest().expect("a complete frame");
+        assert_eq!((read.width, read.height), (4, 2));
+        assert!(read.pixels.iter().all(|value| *value == 7));
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn a_write_in_progress_is_never_read_as_a_frame() {
+        let (path, _producer, consumer) = record();
+        // Exactly what a crashed writer leaves behind: an odd sequence number.
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        write_at(&file, 0, &header(7, 4, 2, 32)).unwrap();
+        assert!(consumer.latest().is_none());
+        // And an even one is readable again.
+        write_at(&file, 0, &header(8, 4, 2, 32)).unwrap();
+        assert!(consumer.latest().is_some());
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn a_record_that_disagrees_with_itself_is_rejected() {
+        let (path, _producer, consumer) = record();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        // Sequence says even, payload length says a frame that cannot exist.
+        write_at(&file, 0, &header(2, 4, 2, 999)).unwrap();
+        assert!(consumer.latest().is_none());
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn the_latest_frame_wins() {
+        let (path, mut producer, consumer) = record();
+        for value in 1..=3u8 {
+            producer.publish(&frame(4, 2, value)).unwrap();
+        }
+        assert!(consumer.latest().unwrap().pixels.iter().all(|v| *v == 3));
+        std::fs::remove_file(path).ok();
+    }
+
     #[test]
     fn grey_stays_grey_through_the_bt709_matrix() {
-        // Limited-range mid grey: Y=126, neutral chroma.
         let (r, g, b) = yuv_to_rgb(126, 128, 128);
         assert_eq!((r, g, b), (128, 128, 128));
     }
@@ -285,7 +418,6 @@ mod tests {
 
     #[test]
     fn a_red_frame_decodes_to_red() {
-        // BT.709 limited red: Y=63, U=102, V=240.
         let (r, g, b) = yuv_to_rgb(63, 102, 240);
         assert!(r > 200, "r={r}");
         assert!(g < 40, "g={g}");
@@ -294,7 +426,6 @@ mod tests {
 
     #[test]
     fn yuyv_pairs_share_chroma_and_keep_their_own_luma() {
-        // Two pixels: dark then bright, one shared chroma pair (neutral).
         let src = [32u8, 128, 224, 128];
         let (width, height, pixels) = yuyv_to_rgba(&src, 2, 1, 4, 1);
         assert_eq!((width, height), (2, 1));
@@ -308,9 +439,10 @@ mod tests {
         let packed = [32u8, 128, 224, 128];
         let mut padded = vec![0u8; 8];
         padded[..4].copy_from_slice(&packed);
-        let a = yuyv_to_rgba(&packed, 2, 1, 4, 1);
-        let b = yuyv_to_rgba(&padded, 2, 1, 8, 1);
-        assert_eq!(a.2, b.2);
+        assert_eq!(
+            yuyv_to_rgba(&packed, 2, 1, 4, 1).2,
+            yuyv_to_rgba(&padded, 2, 1, 8, 1).2
+        );
     }
 
     #[test]
@@ -321,45 +453,21 @@ mod tests {
     }
 
     #[test]
+    fn rgba_samples_keep_their_colour_and_alpha() {
+        let src = [10u8, 20, 30, 255, 40, 50, 60, 255];
+        let (width, height, pixels) = rgba_to_rgba(&src, 2, 1, 8, 1);
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(&pixels[..4], &[10, 20, 30, 255]);
+        assert_eq!(&pixels[4..], &[40, 50, 60, 255]);
+    }
+
+    #[test]
     fn the_step_keeps_the_preview_at_or_below_the_target_width() {
         assert_eq!(step_for(320), 1);
         assert_eq!(step_for(640), 2);
         assert_eq!(step_for(1280), 4);
         assert_eq!(step_for(1920), 6);
-        assert!(1280 / step_for(1280) <= PREVIEW_WIDTH);
         assert!(1920 / step_for(1920) <= PREVIEW_WIDTH);
-    }
-
-    /// End-to-end against a live loopback, when one is available.
-    ///
-    /// Run with `AMB_PREVIEW_DEVICE=/dev/video10` while something feeds that device
-    /// (`ffmpeg -f lavfi -i testsrc ... -f v4l2 /dev/video10`). Without the variable
-    /// it skips, because a CI runner has no v4l2loopback.
-    #[test]
-    fn live_preview_reads_the_loopback() {
-        let Ok(device) = std::env::var("AMB_PREVIEW_DEVICE") else {
-            return;
-        };
-        let mut reader = Reader::open(&device).expect("open the loopback for capture");
-        let mut frame = None;
-        for _ in 0..100 {
-            if let Some(next) = reader.read() {
-                frame = Some(next);
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        let frame = frame.expect("a live producer should deliver a frame within 5s");
-        assert!(frame.pixels.len() == frame.width * frame.height * 4);
-        assert!(frame.width <= PREVIEW_WIDTH);
-        // A flat synthetic frame would still pass the size checks; require some
-        // variation so a blank read is not mistaken for a working preview.
-        let first = frame.pixels.chunks(4).next().unwrap().to_vec();
-        let varies = frame
-            .pixels
-            .chunks(4)
-            .any(|pixel| pixel != first.as_slice());
-        assert!(varies, "preview frame is a single flat colour");
     }
 
     #[test]
@@ -368,5 +476,18 @@ mod tests {
         let (width, height, pixels) = yuyv_to_rgba(&src, 1280, 720, 2560, step_for(1280));
         assert_eq!((width, height), (320, 180));
         assert_eq!(pixels.len(), 320 * 180 * 4);
+    }
+
+    #[test]
+    fn the_record_refuses_a_frame_larger_than_it_can_hold() {
+        let (path, mut producer, consumer) = record();
+        let too_wide = Frame {
+            width: 4096,
+            height: 1024,
+            pixels: vec![0; 4096 * 1024 * 4],
+        };
+        producer.publish(&too_wide).unwrap();
+        assert!(consumer.latest().is_none(), "an oversized frame is dropped");
+        std::fs::remove_file(path).ok();
     }
 }

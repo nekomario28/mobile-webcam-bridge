@@ -88,9 +88,10 @@ struct App {
     /// The user pressed Disconnect: stop retrying until they ask again.
     auto_retry_suppressed: bool,
     /// The PC's own preview, read back from the device the worker writes.
-    preview: Option<crate::preview::Reader>,
+    preview: Option<crate::preview::Consumer>,
     preview_texture: Option<egui::TextureHandle>,
-    preview_retry: Option<std::time::Instant>,
+    /// The record the worker publishes into, created before the worker starts.
+    preview_path: Option<std::path::PathBuf>,
     /// When the stats last advanced, and what they were, to notice a stream that
     /// stopped without the session ending.
     last_stats: Option<(u64, u64)>,
@@ -127,6 +128,32 @@ fn capture_session() -> Session {
 #[cfg(not(feature = "capture"))]
 fn capture_session() -> Session {
     Session::default()
+}
+
+/// The capture fixture's stand-in for a worker: one synthetic frame.
+#[cfg(feature = "capture")]
+fn capture_preview_frame() -> Option<crate::preview::Frame> {
+    let path = std::env::var_os("MW_PREVIEW_YUYV")?;
+    let size = std::env::var("MW_PREVIEW_SIZE").ok()?;
+    let (width, height) = size.split_once('x')?;
+    let width: usize = width.parse().ok()?;
+    let height: usize = height.parse().ok()?;
+    let raw = std::fs::read(path).ok()?;
+    if raw.len() < width * height * 2 {
+        return None;
+    }
+    let (width, height, pixels) = crate::preview::yuyv_to_rgba(
+        &raw,
+        width,
+        height,
+        width * 2,
+        crate::preview::step_for(width),
+    );
+    Some(crate::preview::Frame {
+        width,
+        height,
+        pixels,
+    })
 }
 
 impl App {
@@ -308,13 +335,17 @@ impl App {
             settings.quality_height,
             settings.quality_fps,
         );
+        let mut session = capture_session();
+        // Created before the session starts: the worker is told where to publish.
+        let preview_path = crate::preview::create_path().ok();
+        session.set_preview_path(preview_path.clone());
         Self {
             settings,
             store,
             save_error,
             load_error,
             dirty: None,
-            session: capture_session(),
+            session,
             ja: japanese(),
             devices: Vec::new(),
             selected: None,
@@ -334,7 +365,7 @@ impl App {
             auto_attempt_pending: false,
             preview: None,
             preview_texture: None,
-            preview_retry: None,
+            preview_path,
             last_stats: None,
             last_stats_at: None,
             pairing_received: None,
@@ -681,35 +712,34 @@ impl eframe::App for App {
             }
             _ => {}
         }
-        // The preview reads the device the worker writes, so it only exists while a
-        // session is running. With exclusive_caps=1 the device exposes capture only
-        // once a producer has queued frames, which is why opening is retried.
+        // The preview is a fixed-rate record the worker publishes, so it does not
+        // depend on how often this window repaints, and it works before any other
+        // application has attached to the virtual camera.
         if !self.session.running() {
             self.preview = None;
             self.preview_texture = None;
-            self.preview_retry = None;
-        } else if self.preview.is_none()
-            && self
-                .preview_retry
-                .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(2))
-        {
-            self.preview_retry = Some(std::time::Instant::now());
-            // A refused open is expected before the first frame and on platforms
-            // without a readable output, so it is retried rather than reported.
-            if let Ok(reader) = crate::preview::Reader::open(self.settings.output.trim()) {
-                self.preview = Some(reader);
+        } else if self.preview.is_none() {
+            self.preview = self
+                .preview_path
+                .as_ref()
+                .and_then(|path| crate::preview::Consumer::open(path).ok());
+        }
+        #[cfg(feature = "capture")]
+        if self.session.running() && self.preview_texture.is_none() {
+            // The capture fixture has no worker, so it replays a synthetic frame.
+            if let Some(frame) = capture_preview_frame() {
+                self.preview_texture = Some(ctx.load_texture(
+                    "preview",
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [frame.width, frame.height],
+                        &frame.pixels,
+                    ),
+                    egui::TextureOptions::LINEAR,
+                ));
             }
         }
-        if let Some(reader) = &mut self.preview {
-            // Drain what accumulated while the window was busy; only the newest frame
-            // is worth a texture upload.
-            let mut newest = None;
-            for _ in 0..4 {
-                match reader.read() {
-                    Some(frame) => newest = Some(frame),
-                    None => break,
-                }
-            }
+        if let Some(consumer) = &self.preview {
+            let newest = consumer.latest();
             if let Some(frame) = newest {
                 let image = egui::ColorImage::from_rgba_unmultiplied(
                     [frame.width, frame.height],
@@ -1462,6 +1492,10 @@ impl Drop for App {
         self.usb_thread.unpark();
         if self.dirty.is_some() {
             self.save();
+        }
+        if let Some(path) = &self.preview_path {
+            // Private record, nothing to keep once this window is gone.
+            let _ = std::fs::remove_file(path);
         }
     }
 }
