@@ -21,12 +21,14 @@ pub struct Frame {
     pub pixels: Vec<u8>,
 }
 
-#[cfg(target_os = "linux")]
+// The reader is V4L2, which only exists with the `video` feature: a GUI-only build
+// has no bindings to include and no device to read, so it gets the stub.
+#[cfg(all(target_os = "linux", feature = "video"))]
 pub use linux::Reader;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", feature = "video")))]
 pub use stub::Reader;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", feature = "video")))]
 mod stub {
     /// Windows reads its virtual camera through DirectShow and has no compat path
     /// for this app's own output, so the preview is unavailable rather than absent.
@@ -109,7 +111,7 @@ pub fn step_for(width: usize) -> usize {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "video"))]
 mod linux {
     use std::{fs::File, io::Read, os::fd::AsRawFd, os::unix::fs::OpenOptionsExt};
 
