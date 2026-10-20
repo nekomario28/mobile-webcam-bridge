@@ -79,6 +79,8 @@ class MainActivity : Activity() {
     /** Hands the Wi-Fi pairing details to the PC over the USB cable. */
     private lateinit var sendPairingAction: Button
     private var lanHelpText = ""
+    /** How many PCs were approved at the last update, to notice the first one. */
+    private var approvedCount = 0
     private var cameraStartRequested = false
     /** Authorization storage is unusable until the user deliberately resets it. */
     private var storageFailed = false
@@ -893,6 +895,14 @@ class MainActivity : Activity() {
         if (connectionMode != ConnectionMode.LAN) {
             setPairingKeyVisible(false)
         }
+        // The pairing key exists to get the first PC approved. Once one is, leaving
+        // it on screen is clutter and a secret with no purpose; the button still
+        // brings it back for a second PC.
+        val approved = runCatching { authorizationOwner?.clients()?.size ?: 0 }.getOrDefault(0)
+        if (approved > 0 && approvedCount == 0 && pairInfo.visibility == View.VISIBLE) {
+            setPairingKeyVisible(false)
+        }
+        approvedCount = approved
         cameraButton.isEnabled = session?.clientAuthorization?.isAuthorized() == true || cameraBridge != null || cameraStartRequested
         if (::approvalUi.isInitialized) approvalUi.refresh()
         cameraButton.backgroundTintList = ColorStateList.valueOf(getColor(if (cameraButton.isEnabled) R.color.app_accent else R.color.app_inactive))

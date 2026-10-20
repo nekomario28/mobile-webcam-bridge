@@ -29,15 +29,17 @@ class ClientApprovalUi(
         addView(message)
         visibility = View.GONE
     }
+    private val clientsButton = Button(activity).apply {
+        id = R.id.authorized_clients
+        text = ui("Authorized PCs", "許可したPC")
+        setAllCaps(false)
+        setOnClickListener { showClients() }
+    }
+    private var shownCount = -1
     val root = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
         addView(panel)
-        addView(Button(activity).apply {
-            id = R.id.authorized_clients
-            text = ui("Authorized PCs", "許可したPC")
-            setAllCaps(false)
-            setOnClickListener { showClients() }
-        })
+        addView(clientsButton)
     }
 
     fun refresh() {
@@ -58,6 +60,17 @@ class ClientApprovalUi(
             }
         }
         panel.visibility = if (pending == null) View.GONE else View.VISIBLE
+        // The count is the fastest answer to "is my PC registered?", so it belongs on
+        // the button rather than inside the dialog.
+        val count = runCatching { checkNotNull(owner()).clients().size }.getOrDefault(-1)
+        if (count != shownCount) {
+            shownCount = count
+            clientsButton.text = when {
+                count < 0 -> ui("Authorized PCs", "許可したPC")
+                count == 0 -> ui("Authorized PCs (none yet)", "許可したPC（まだなし）")
+                else -> ui("Authorized PCs ($count)", "許可したPC（${count}台）")
+            }
+        }
     }
 
     private fun actionButton(viewId: Int, label: String, action: () -> Unit) = Button(activity).apply {

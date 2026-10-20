@@ -43,6 +43,12 @@ The Linux sink chooses USB or LAN before entering one common frame/decode loop.
 Every socket transport shares one AMB1 framing and pairing implementation;
 transport-specific code is limited to connect and the optional security layer.
 
+**The pairing key leaves the screen when it has done its job.** The key exists to
+get the first PC approved, so it is revealed while nothing is approved and hidden
+again the moment the first approval lands; the button brings it back for a second
+PC. The `Authorized PCs` button also carries the count ("none yet", "2"), because
+that is the fastest answer to "is my PC registered?".
+
 **Silence is reported, not glossed over.** When the phone stops the camera the
 session stays up and frames simply stop, so "camera connected" would be a lie. The
 PC keeps the time the counters last advanced and, after three seconds of silence

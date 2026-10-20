@@ -21,6 +21,13 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Put the numbers where the question is. The phone's `Authorized PCs` button now
+  says how many are approved ("none yet", "2"), and the pairing key hides itself as
+  soon as the first PC is approved — it exists to get that approval, and afterwards
+  it is clutter and a secret with nothing to do (the button brings it back). The PC
+  window opens tall enough (420x620) to show its status, the guidance and, while
+  streaming, the mode controls without scrolling first.
+
 - Report silence. When the phone stops the camera the session stays up and frames
   stop, so the PC used to say "camera connected" indefinitely; after three seconds
   of silence outside a quality switch it now says no video is arriving and that the

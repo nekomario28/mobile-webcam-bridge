@@ -73,6 +73,36 @@ class SecondarySurfaceWiringTest {
     }
 
     @Test
+    fun the_pairing_key_leaves_the_screen_once_a_pc_is_approved() {
+        // The key exists to get the first PC approved; leaving it up afterwards is
+        // clutter and a secret with nothing left to do.
+        val source = source()
+        val controls = bodyOf(source, "private fun updateControls()")
+        assertTrue(
+            "updateControls must hide the key when the first PC is approved",
+            controls.contains("approved > 0 && approvedCount == 0") &&
+                controls.contains("setPairingKeyVisible(false)"),
+        )
+        assertTrue("the count must be remembered across updates", source.contains("private var approvedCount"))
+    }
+
+    @Test
+    fun the_approved_list_says_how_many() {
+        val ui = generateSequence(File(checkNotNull(System.getProperty("user.dir")))) { it.parentFile }
+            .flatMap { root ->
+                listOf(
+                    File(root, "android/app/src/main/java/dev/nekomario/amb/ClientApprovalUi.kt"),
+                    File(root, "app/src/main/java/dev/nekomario/amb/ClientApprovalUi.kt"),
+                ).asSequence()
+            }
+            .firstOrNull { it.isFile }
+            ?.readText()
+            ?: error("ClientApprovalUi.kt not found")
+        assertTrue("the Authorized PCs button must carry the count", ui.contains("Authorized PCs (\u0024count)"))
+        assertTrue("an empty list must say so", ui.contains("none yet"))
+    }
+
+    @Test
     fun every_control_is_actually_in_the_layout() {
         // Measured: `rotateAction` was built and given a visibility rule, but the
         // addView call had been dropped when the Details group was reorganised, so
