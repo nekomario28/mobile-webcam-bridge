@@ -96,6 +96,9 @@ class FramedOutbound(
         sendControl(Wire.TYPE_PAUSED, Wire.encodeEpoch(epoch))
     }
 
+    /** The phone's Wi-Fi pairing details, sent on request from the app's UI. */
+    fun sendPairingInfo(payload: ByteArray) = sendControl(Wire.TYPE_PAIRING_INFO, payload)
+
     private fun sendControl(type: Byte, payload: ByteArray) = enqueueControl(
         Frame(Wire.Header(type, 0, nextSequence(), payload.size, 0), payload),
     )

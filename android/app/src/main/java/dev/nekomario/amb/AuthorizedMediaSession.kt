@@ -81,6 +81,8 @@ abstract class AuthorizedMediaSession(
         if (permitted()) outbound.pauseQuality(epoch)
     }
     override fun droppedVideoFrames() = outbound.droppedVideoFrames.get()
+    override fun sendPairingInfo(payload: ByteArray) = outbound.sendPairingInfo(payload)
+
     override fun updateCapabilities() {
         if (permitted()) capabilities?.invoke()?.let { outbound.sendCapabilities(it) }
     }

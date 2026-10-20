@@ -51,6 +51,15 @@ the access key — which disconnects every Wi-Fi client — sits behind `Details
 with the address and instructions. The PC's main screen shows `Paired with
 <address>` once the pairing is stored and keeps the three pairing fields, the
 how-to and "Forget paired phone" inside `Details`, where they are still editable.
+First-time pairing does not have to be typed either: on a USB session the phone
+can hand the PC its Wi-Fi details (address, certificate SHA-256 and access key) as
+a `PAIRING_INFO` frame, and the PC stores them exactly as if they had been entered.
+The user presses that button on the phone; the PC shows what it received and
+switches to Wi-Fi on one click, because dropping a working USB stream is a
+decision rather than a step. It is not an authorization — the phone still approves
+each PC — and it makes the cable part of the pairing's trust boundary, which is
+the limit USB already has.
+
 Waiting is automatic too: when the stored pairing is complete the PC connects at
 launch, and if the phone is not answering yet it keeps trying with a bounded
 backoff (2 s, 4 s, 8 s, then 15 s, eight attempts) while the status says

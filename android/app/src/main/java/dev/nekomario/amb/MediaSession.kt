@@ -14,4 +14,7 @@ interface MediaSession : AutoCloseable {
     fun droppedVideoFrames(): Long
     /** Re-advertise the quality capabilities after the list changes. */
     fun updateCapabilities()
+
+    /** Send the Wi-Fi pairing details to the PC over this session's transport. */
+    fun sendPairingInfo(payload: ByteArray)
 }

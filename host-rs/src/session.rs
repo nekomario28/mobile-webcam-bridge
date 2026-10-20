@@ -48,6 +48,8 @@ pub struct Session {
     /// stays alive so the fixture's silence is not read as a closed channel.
     #[cfg(feature = "capture")]
     capture_fixture: Option<mpsc::Sender<Event>>,
+    /// Pairing details the phone sent over USB, waiting for the UI to consume them.
+    pairing_info: Option<crate::wire::PairingInfo>,
     pub state: State,
     pub stats: Option<Event>,
     stats_at: Option<Instant>,
@@ -94,6 +96,7 @@ impl Session {
             writer: None,
             #[cfg(feature = "capture")]
             capture_fixture: None,
+            pairing_info: None,
             state: State::Idle,
             stats: None,
             stats_at: None,
@@ -292,6 +295,11 @@ impl Session {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
     }
+    /// Take the pairing details the phone sent, if any arrived since the last call.
+    pub fn take_pairing_info(&mut self) -> Option<crate::wire::PairingInfo> {
+        self.pairing_info.take()
+    }
+
     pub fn poll(&mut self, ctx: &egui::Context) {
         #[cfg(target_os = "linux")]
         if self.auxiliary.is_some() {
@@ -337,6 +345,30 @@ impl Session {
             while let Ok(event) = receiver.try_recv() {
                 let stopping = matches!(self.state, State::Stopping) || finished;
                 match &event {
+                    Event::PairingInfo {
+                        addresses,
+                        fingerprint,
+                        key,
+                    } if !stopping => {
+                        // Rebuild the typed form from the event so the wire struct stays
+                        // the only place that knows the payload layout.
+                        let parsed: Vec<std::net::Ipv4Addr> = addresses
+                            .iter()
+                            .filter_map(|address| address.parse().ok())
+                            .collect();
+                        if !parsed.is_empty()
+                            && fingerprint.len() == 64
+                            && key.len() == 32
+                            && crate::secure::is_hex(fingerprint, 32)
+                            && crate::secure::is_hex(key, 16)
+                        {
+                            self.pairing_info = Some(crate::wire::PairingInfo {
+                                addresses: parsed,
+                                fingerprint: fingerprint.clone(),
+                                key: key.clone(),
+                            });
+                        }
+                    }
                     Event::Connecting {} if !stopping => self.state = State::Connecting,
                     Event::Waiting {} if !stopping => self.state = State::Waiting,
                     Event::AuthorizationPending { client_id } if !stopping => {

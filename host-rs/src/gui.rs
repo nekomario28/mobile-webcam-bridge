@@ -85,6 +85,11 @@ struct App {
     auto_retries: u32,
     /// The user pressed Disconnect: stop retrying until they ask again.
     auto_retry_suppressed: bool,
+    /// Pairing details received from the phone over USB, shown until the user
+    /// decides to move to Wi-Fi (the USB stream may still be the one they want).
+    pairing_received: Option<String>,
+    /// The user asked to move to Wi-Fi: do it once the current session has stopped.
+    pending_switch_to_lan: bool,
     /// An automatic attempt has been started and its outcome not yet seen.
     ///
     /// `Session::connect` returns before it knows anything: the failure arrives
@@ -317,6 +322,8 @@ impl App {
             auto_retries: 0,
             auto_retry_suppressed: false,
             auto_attempt_pending: false,
+            pairing_received: None,
+            pending_switch_to_lan: false,
             recovery_note: None,
             #[cfg(feature = "capture")]
             capture_requested: false,
@@ -558,6 +565,24 @@ impl eframe::App for App {
             }
             _ => {}
         }
+        if let Some(info) = self.session.take_pairing_info()
+            && let Some(address) = info.preferred_address()
+        {
+            // Exactly what typing the three fields would have produced.
+            self.settings.lan_host = address.to_string();
+            self.settings.lan_fingerprint = info.fingerprint.clone();
+            self.settings.lan_key = info.key.clone();
+            self.pairing_received = Some(address.to_string());
+            self.save();
+        }
+        if self.pending_switch_to_lan && !self.session.running() {
+            self.pending_switch_to_lan = false;
+            self.settings.transport = "lan".into();
+            self.save();
+            self.auto_retries = 0;
+            self.auto_retry_suppressed = false;
+            self.auto_connect(ctx);
+        }
         if !self.auto_connect_attempted {
             self.auto_connect_attempted = true;
             self.auto_connect(ctx);
@@ -654,6 +679,34 @@ impl eframe::App for App {
                                 ),
                             );
                             ui.add_space(8.0);
+                        }
+                        if let Some(address) = self.pairing_received.clone() {
+                            egui::Frame::new()
+                                .fill(ui.visuals().selection.bg_fill.linear_multiply(0.25))
+                                .inner_margin(10.0)
+                                .corner_radius(6.0)
+                                .show(ui, |ui| {
+                                    ui.label(self.text(
+                                        "Wi-Fi pairing received from the phone. Nothing to type.",
+                                        "スマホからWi-Fi設定を受け取りました。入力は不要です。",
+                                    ));
+                                    ui.weak(address);
+                                    ui.add_space(6.0);
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .button(self.text("Switch to Wi-Fi", "Wi-Fiに切り替える"))
+                                            .clicked()
+                                        {
+                                            self.session.stop(ui.ctx());
+                                            self.pending_switch_to_lan = true;
+                                            self.pairing_received = None;
+                                        }
+                                        if ui.button(self.text("Later", "あとで")).clicked() {
+                                            self.pairing_received = None;
+                                        }
+                                    });
+                                });
+                            ui.add_space(10.0);
                         }
                         ui.add_enabled_ui(!self.session.running(), |ui| {
                             ui.horizontal(|ui| {

@@ -331,6 +331,19 @@ fn receive_stream<S: crate::output::Sink>(
         };
         // The quality control plane (slice 02); unknown types keep being
         // ignored by the VIDEO_AU guard below.
+        if incoming.header.kind == wire::PAIRING_INFO {
+            let info = wire::PairingInfo::decode(&incoming.payload)?;
+            event(Event::PairingInfo {
+                addresses: info
+                    .addresses
+                    .iter()
+                    .map(|address| address.to_string())
+                    .collect(),
+                fingerprint: info.fingerprint,
+                key: info.key,
+            })?;
+            continue;
+        }
         let quality_event = match incoming.header.kind {
             wire::QUALITY_CAPABILITIES => {
                 if incoming.payload.first() != Some(&1) {
