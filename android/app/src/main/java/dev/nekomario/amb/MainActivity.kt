@@ -939,10 +939,10 @@ class MainActivity : Activity() {
             pairInfo.text = ui(
                 "Verify phone certificate SHA-256 on PC:\n" + identity.fingerprint() +
                 "\n\nEnter this 128-bit access key on PC:\n" + identity.pairingCode() +
-                "\n\nKeep the key private.",
+                "\n\nKeep the key private. On a USB cable, Details → Send Wi-Fi pairing to PC skips this typing.",
                 "PCでスマホ証明書のSHA-256を確認:\n" + identity.fingerprint() +
                 "\n\nPCに128ビット接続キーを入力:\n" + identity.pairingCode() +
-                "\n\n接続キーは秘密にしてください。"
+                "\n\n接続キーは秘密にしてください。USBケーブルでPCにつないでいる場合は「詳細」→「Wi-Fi設定をPCへ送る」で入力は不要です。"
             )
             // Block screenshots and Android's recent-app snapshot while the bearer
             // key is on screen.

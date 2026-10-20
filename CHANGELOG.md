@@ -21,6 +21,14 @@
   without an error and both the record and its key were present again immediately,
   which made the recovery action look ineffective.
 
+- Put the stream on the main screen. While a stream runs the PC now shows the
+  confirmed mode and the device to pick in other apps
+  (`1280×720 · 30 fps → /dev/video10`), with resolution, frame rate and Apply right
+  there — changing resolution mid-call is the ordinary action, not an advanced one.
+  The rest (output path, decode, rotation, mirror, counters) stays under Details,
+  which also keeps the mode controls before a stream exists. The phone's pairing
+  block now says that a USB cable makes the typing unnecessary.
+
 - Pair over the cable instead of typing 96 hex characters. On a USB session the
   phone can send its Wi-Fi details (address, certificate SHA-256, 128-bit access
   key) as a `PAIRING_INFO` frame; the PC stores them exactly as if they had been
