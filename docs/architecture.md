@@ -43,6 +43,13 @@ The Linux sink chooses USB or LAN before entering one common frame/decode loop.
 Every socket transport shares one AMB1 framing and pairing implementation;
 transport-specific code is limited to connect and the optional security layer.
 
+**A refusal says which refusal it was.** The phone's answer carries a reason —
+revoked, expired, too many PCs, signature rejected, unknown — and each one needs a
+different action: a tap on the phone, a renewal, a removal, a new PC key. Reporting
+all of them as "the access key was rejected" sends the user to check the one thing
+that is not the problem, so the title and the guidance both come from one
+`refusal()` classifier.
+
 **While it streams, the PC shows the stream, not the setup.** The main screen
 carries the confirmed mode and the camera device the user must pick in their video
 app (`1280×720 · 30 fps → /dev/video10`) plus the resolution, frame rate and Apply
