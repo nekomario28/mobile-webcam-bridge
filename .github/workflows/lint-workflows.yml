@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - '.github/workflows/**'
+      - 'zizmor.yml'
   push:
     branches:
       - main
     paths:
       - '.github/workflows/**'
+      - 'zizmor.yml'
 
 permissions:
   contents: read
@@ -21,4 +23,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: rhysd/actionlint@v1.7.12
+      - uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+
+  zizmor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # The security-relevant properties actionlint does not look at: expression
+      # injection, credential handling, over-broad permissions, unpinned actions,
+      # and caches a pull request could poison before a privileged job reads them.
+      - uses: zizmorcore/zizmor-action@e673c3917a1aef3c65c972347ed84ccd013ecda4 # v0.2.0
+        with:
+          advanced-security: false

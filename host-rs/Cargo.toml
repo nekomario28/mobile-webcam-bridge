@@ -41,6 +41,11 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl
 
 [dev-dependencies]
 tempfile = "=3.27.0"
+# Same version as eframe: drives the real widget tree through AccessKit, so the host
+# UI can be tested without a display, a window manager or synthetic clicks.
+egui_kittest = { version = "=0.36.2", features = ["eframe"] }
+# The harness takes and returns egui types, so the test crate needs the same egui.
+egui = { version = "=0.36.2", features = ["default_fonts"] }
 
 [build-dependencies]
 bindgen = { version = "=0.72.1", optional = true }

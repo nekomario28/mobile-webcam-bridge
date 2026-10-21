@@ -41,6 +41,27 @@
   window opens tall enough (420x620) to show its status, the guidance and, while
   streaming, the mode controls without scrolling first.
 
+- Take three of the survey's suggestions. The host window now has real UI tests:
+  `egui_kittest` drives the actual widget tree through AccessKit, so "a paired host
+  hides the pairing fields", "clicking Details reveals them" and "a revoked PC is told
+  it was revoked" are assertions instead of screenshots. `zizmor`, `typos` and an
+  offline `lychee` link check are gates; the first pass pinned third-party actions to
+  commits (GitHub's own `actions/*` stay on tags by policy), stopped the release job
+  from reading a Gradle cache a pull request could have written, and taught the typo
+  gate the kernel's `S_PARM` and NSIS's `StrCpy`.
+
+- **Security:** `rustls-webpki` 0.103.15 → **0.103.16** (RUSTSEC-2026-0382, "certificate
+  verification may accept distrusted intermediates"). The advisory is newer than the
+  last lockfile change, so the audit only saw it when this branch touched
+  `Cargo.lock` — every TLS handshake this app makes went through the affected code. The host window now has real UI tests:
+  `egui_kittest` drives the actual widget tree through AccessKit, so "a paired host
+  hides the pairing fields", "clicking Details reveals them" and "a revoked PC is told
+  it was revoked" are assertions instead of screenshots. `zizmor`, `typos` and an
+  offline `lychee` link check are gates; the first pass pinned third-party actions to
+  commits (GitHub's own `actions/*` stay on tags by policy), stopped the release job
+  from reading a Gradle cache a pull request could have written, and taught the typo
+  gate the kernel's `S_PARM` and NSIS's `StrCpy`.
+
 - Survey what other OSS projects could be taken from. `docs/upstream-options.md`
   records the crates and projects worth adopting (headless egui tests, a PipeWire
   camera that needs no kernel module, mutation and fuzz gates, JVM phone screenshots,
