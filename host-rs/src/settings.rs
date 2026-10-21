@@ -113,6 +113,9 @@ impl Settings {
         {
             return Err("invalid saved address or output".into());
         }
+        // Without the `video` feature there is no output module to ask: nothing can
+        // stream, so only the stored name is checked.
+        #[cfg(feature = "video")]
         match crate::output::Backend::parse(&self.output_kind) {
             None => return Err("invalid output backend".into()),
             Some(backend) if !backend.available() => {
@@ -123,6 +126,10 @@ impl Settings {
                 .into());
             }
             Some(_) => {}
+        }
+        #[cfg(not(feature = "video"))]
+        if !["loopback", "pipewire"].contains(&self.output_kind.trim()) {
+            return Err("invalid output backend".into());
         }
         Ok(())
     }
