@@ -1,0 +1,23 @@
+[package]
+name = "mobile-webcam-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.10"
+mobile-webcam = { path = ".." }
+
+# A fuzz crate in its own workspace: `cargo test` at the crate root must not try to
+# build a libFuzzer binary.
+[workspace]
+
+[[bin]]
+name = "wire_decode"
+path = "fuzz_targets/wire_decode.rs"
+test = false
+doc = false
+bench = false

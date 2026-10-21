@@ -121,6 +121,11 @@ injection, credential handling, unpinned actions, over-broad `permissions`.
   drives the real window: a paired host shows its pairing and hides the fields, clicking
   Details reveals them, and a revoked PC is told it was revoked rather than that the key
   is wrong. No display, no window manager, no synthetic clicks.
+- **`proptest` + `cargo-fuzz`** — `host-rs/tests/parsers.rs` throws arbitrary bytes at
+  every decoder on stable in CI (768 cases × 2 properties per run), and
+  `host-rs/fuzz/` runs the same shapes under libFuzzer on a weekly schedule. Measured
+  on the first run: **19.6 million executions in 180 s, 513 edges, no crashes**. The
+  corpus is committed so a rerun starts where the last one finished.
 - **`zizmor`**, **`typos`**, **`lychee`** — `lint-workflows.yml` and `lint-text.yml`.
   Setup for the first pass: third-party actions are now pinned to commits (GitHub's own
   `actions/*` stay on tags by policy, in `zizmor.yml`), the release job builds without a

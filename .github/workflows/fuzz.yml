@@ -1,0 +1,34 @@
+name: fuzz
+
+# Not per pull request: a coverage-guided run needs minutes to be worth anything, and
+# the stable property tests in host-rs/tests/parsers.rs already guard every PR.
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wire-decode:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install nightly and cargo-fuzz
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly --profile minimal
+          cargo install --locked cargo-fuzz
+      - name: Fuzz every decoder reachable from the network
+        working-directory: host-rs
+        run: cargo +nightly fuzz run wire_decode -- -max_total_time=300 -print_final_stats=1
+      - name: Keep the crashing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: host-rs/fuzz/artifacts

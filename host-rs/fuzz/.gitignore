@@ -1,0 +1,4 @@
+# Crash inputs are evidence, not sources: the workflow uploads them.
+artifacts/
+# The fuzz crate builds its own copy of the workspace.
+target/

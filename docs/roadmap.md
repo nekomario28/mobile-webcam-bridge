@@ -100,7 +100,8 @@ the claim each one would let us make.
 
 `host-ci` / `rust-host-ci` (unit, clippy, fmt, Windows target), `android-ci`, the
 emulator conformance run, the GUI capture gate, `lint-workflows` (actionlint + zizmor),
-and `lint-text` (typos + offline link check). The host UI itself is now covered by
+`lint-text` (typos + offline link check), and a weekly `fuzz` run (the decoders carry
+a committed corpus; the stable property tests run per pull request). The host UI itself is now covered by
 AccessKit-driven tests, so "clicking this opens that" no longer needs a screenshot.
 
 ## How a claim gets accepted

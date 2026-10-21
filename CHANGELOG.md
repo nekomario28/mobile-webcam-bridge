@@ -41,6 +41,14 @@
   window opens tall enough (420x620) to show its status, the guidance and, while
   streaming, the mode controls without scrolling first.
 
+- Fuzz the decoders. `host-rs/tests/parsers.rs` now runs every parser reachable from
+  the network — header, capabilities, quality, client challenge/auth/result, epoch,
+  pairing info and video config — over arbitrary bytes as a property test on stable,
+  and `host-rs/fuzz/` does the same under libFuzzer on a weekly schedule. First run:
+  **19.6 million executions in 180 s, 513 edges covered, no crashes**, with the corpus
+  committed so the next run continues from it. That is the precondition the security
+  review would otherwise have had to take on trust.
+
 - Take three of the survey's suggestions. The host window now has real UI tests:
   `egui_kittest` drives the actual widget tree through AccessKit, so "a paired host
   hides the pairing fields", "clicking Details reveals them" and "a revoked PC is told
