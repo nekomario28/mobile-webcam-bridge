@@ -52,6 +52,16 @@ same reading applies to tests: `updateControls` had been deciding that button's
 visibility on its own and overruling the disclosure, which no test noticed, so the rule
 now has one owner (`applySecondaryVisibility`) and a test that fails if another appears.
 
+**The virtual camera is a backend, not an assumption.** `v4l2loopback` is the
+portable answer and stays the default, but it is a kernel module to install and
+usually a `pkexec modprobe` to run. A PipeWire `Video/Source` node needs neither, so it
+is offered as a second backend (`--features pipewire`, `outputKind` in settings): the
+worker fills one node instead of a device, the `Sink` seam is unchanged, and the
+trade — fewer applications list a PipeWire camera today — is stated in the UI next to
+the switch. Measured end to end: node `mobile-webcam` visible as `Video/Source`, 60
+buffers consumed by `gst pipewiresrc`, and the five bars this probe generates arriving
+as red, green, blue, pink and grey at 640x480.
+
 **Nothing on screen says the same thing twice.** The mode line carries the applied
 target, so a second "applied target" line was removed; the Details row names itself,
 so the hint about editing under Details is gone; the preview is a picture, so it needs

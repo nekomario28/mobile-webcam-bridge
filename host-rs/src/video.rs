@@ -200,6 +200,8 @@ fn receive(
         crate::client_auth::Outcome::Rejected(reason) => return Err(reason.into()),
     }
     let output_path = settings.output.trim().to_string();
+    let backend =
+        crate::output::Backend::parse(&settings.output_kind).ok_or("invalid output backend")?;
     receive_stream(
         settings,
         transport,
@@ -210,7 +212,7 @@ fn receive(
             preview_path,
         },
         event,
-        |c| crate::output::Camera::open(&output_path, c.width, c.height, c.fps),
+        move |c| crate::output::open(backend, &output_path, c.width, c.height, c.fps),
     )
 }
 /// The inputs a session reads while it streams, kept together so the seam stays one

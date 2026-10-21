@@ -43,6 +43,30 @@ jobs:
           host-rs/target/qt-settings write host-rs/target/qt-fixture.conf
           cargo run --manifest-path host-rs/Cargo.toml --locked --example settings_fixture -- host-rs/target/qt-fixture.conf
           host-rs/target/qt-settings read host-rs/target/qt-fixture.conf
+  pipewire-backend:
+    # The PipeWire camera is an optional feature, so nothing else in CI compiles it.
+    # Without this job it would rot silently between releases.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Native dependencies and pinned Rust
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev libpipewire-0.3-dev
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.98.1
+      - name: Build and test the PipeWire backend
+        run: |
+          python3 host-rs/tools/build_ffmpeg.py linux --prefix "$PWD/host-rs/target/native-linux" --cache "$PWD/host-rs/target/ffmpeg-source"
+          export FFMPEG_DIR="$PWD/host-rs/target/native-linux"
+          export LD_LIBRARY_PATH="$FFMPEG_DIR/lib"
+          cargo clippy --manifest-path host-rs/Cargo.toml --all-targets --features pipewire --locked -- -D warnings
+          cargo test --manifest-path host-rs/Cargo.toml --features pipewire --locked
+          cargo build --manifest-path host-rs/Cargo.toml --features pipewire --locked --example pipewire_probe
+
   windows:
     runs-on: windows-2025
     # Time budget only; every check below is unchanged. d13face measured this

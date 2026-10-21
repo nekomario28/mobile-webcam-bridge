@@ -15,6 +15,8 @@ pub struct Settings {
     pub last_connected: u64,
     pub decode: String,
     pub output: String,
+    /// Which virtual camera to fill: "loopback" (default) or "pipewire".
+    pub output_kind: String,
     pub rotation: u16,
     pub mirror: bool,
     pub vertical_flip: bool,
@@ -57,6 +59,7 @@ impl Default for Settings {
                 "/dev/video10"
             }
             .into(),
+            output_kind: "loopback".into(),
             rotation: 0,
             mirror: true,
             vertical_flip: false,
@@ -110,6 +113,17 @@ impl Settings {
         {
             return Err("invalid saved address or output".into());
         }
+        match crate::output::Backend::parse(&self.output_kind) {
+            None => return Err("invalid output backend".into()),
+            Some(backend) if !backend.available() => {
+                return Err(format!(
+                    "the {} backend is not built into this host",
+                    backend.as_str()
+                )
+                .into());
+            }
+            Some(_) => {}
+        }
         Ok(())
     }
     fn values(&self) -> BTreeMap<String, String> {
@@ -120,6 +134,7 @@ impl Settings {
             ("lanKey", self.lan_key.trim().into()),
             ("decode", self.decode.clone()),
             ("output", self.output.trim().into()),
+            ("outputKind", self.output_kind.trim().into()),
             ("rotation", self.rotation.to_string()),
             ("mirror", self.mirror.to_string()),
             ("verticalFlip", self.vertical_flip.to_string()),
@@ -143,6 +158,7 @@ impl Settings {
                 "lanKey" => s.lan_key = value.clone(),
                 "decode" => s.decode = value.clone(),
                 "output" => s.output = value.clone(),
+                "outputKind" => s.output_kind = value.clone(),
                 "rotation" => s.rotation = value.parse()?,
                 "mirror" => s.mirror = parse_bool(value)?,
                 "verticalFlip" => s.vertical_flip = parse_bool(value)?,

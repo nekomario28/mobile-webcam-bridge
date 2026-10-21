@@ -10,9 +10,14 @@ default = ["gui", "video"]
 gui = ["dep:eframe", "dep:fontdb", "dep:sys-locale", "dep:wgpu"]
 video = ["dep:ffmpeg-sys-next", "dep:bindgen"]
 capture = ["gui", "dep:image"]
+# A Linux camera without v4l2loopback: a PipeWire Video/Source node. Off by default
+# because it needs libpipewire-0.3 headers at build time and only PipeWire-aware
+# consumers see the result.
+pipewire = ["dep:pipewire-vircam"]
 
 [dependencies]
 io-budget = { git = "https://github.com/nekomario28/io-budget", rev = "65df550" }
+pipewire-vircam = { version = "=0.7.1", optional = true }
 # 65df550 is io-budget main: it restores the pre-wrap socket timeouts when a
 # DeadlineStream is handed back (its issue #1) and takes io::Result end to end.
 # Already in the tree through rustls: no new crate/version. The per-PC key

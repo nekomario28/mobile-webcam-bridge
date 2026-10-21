@@ -41,6 +41,14 @@
   window opens tall enough (420x620) to show its status, the guidance and, while
   streaming, the mode controls without scrolling first.
 
+- A Linux camera that needs no kernel module. `--features pipewire` adds a PipeWire
+  `Video/Source` backend (`outputKind` in settings, switchable under Details): no
+  `v4l2loopback`, no `pkexec modprobe`, the same frames — with the honest caveat, in
+  the UI, that only PipeWire-aware applications list it today. Verified against a real
+  consumer: node `mobile-webcam` in `pw-dump` as `Video/Source`, 60 buffers captured by
+  `gst pipewiresrc`, and the probe's five bars arriving as red, green, blue, pink and
+  grey at 640x480.
+
 - Measure whether the tests catch bugs. `cargo-mutants` now runs weekly over the
   preview record, and its first two rounds are the point: **185 mutants, 137 caught
   (77%)** showed that loose bounds (`g < 40` hid a ±11 colour shift) and uniform
