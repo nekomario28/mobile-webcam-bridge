@@ -11,8 +11,9 @@ gui = ["dep:eframe", "dep:fontdb", "dep:sys-locale", "dep:wgpu"]
 video = ["dep:ffmpeg-sys-next", "dep:bindgen"]
 capture = ["gui", "dep:image"]
 # A Linux camera without v4l2loopback: a PipeWire Video/Source node. Off by default
-# because it needs libpipewire-0.3 headers at build time and only PipeWire-aware
-# consumers see the result.
+# because it needs libpipewire-0.3 headers at build time (1.4 or newer: libspa 0.10
+# uses SPA metadata that older headers do not define) and only PipeWire-aware consumers
+# see the result.
 pipewire = ["dep:pipewire-vircam"]
 
 [dependencies]
