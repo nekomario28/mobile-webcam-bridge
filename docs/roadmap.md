@@ -39,6 +39,13 @@ the device rows, on a real XQ-GE44 over Wi-Fi.
    matrix from #8 run against them, not the synthetic peer.
    *Closes when:* the #8 matrix passes on hardware and its evidence is attached.
 
+## What other projects offer
+
+[Upstream options](upstream-options.md) surveys crates and projects that could replace
+or strengthen what we built — headless egui tests, a PipeWire camera that needs no
+kernel module, mutation/fuzz gates, phone screenshot tests — with licence, cost and
+the claim each one would let us make.
+
 ## P1 — next, each with its closing test
 
 - **USB end to end on this branch.** The AOA path predates the auth work and has not

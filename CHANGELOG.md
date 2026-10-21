@@ -41,6 +41,12 @@
   window opens tall enough (420x620) to show its status, the guidance and, while
   streaming, the mode controls without scrolling first.
 
+- Survey what other OSS projects could be taken from. `docs/upstream-options.md`
+  records the crates and projects worth adopting (headless egui tests, a PipeWire
+  camera that needs no kernel module, mutation and fuzz gates, JVM phone screenshots,
+  workflow static analysis), the ones rejected and why — including the AGPL/GPL
+  projects that are reference-only — and the order to take the first ones in.
+
 - The pairing key is a fallback, so it is no longer on the main screen. A PC on a
   USB cable takes the fingerprint and key itself (`Details → Send Wi-Fi pairing to
   PC`), so the phone stopped pushing them at the user: the reveal control, the key
