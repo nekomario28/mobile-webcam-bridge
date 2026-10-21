@@ -126,6 +126,13 @@ injection, credential handling, unpinned actions, over-broad `permissions`.
   `host-rs/fuzz/` runs the same shapes under libFuzzer on a weekly schedule. Measured
   on the first run: **19.6 million executions in 180 s, 513 edges, no crashes**. The
   corpus is committed so a rerun starts where the last one finished.
+- **`cargo-mutants`** — a weekly run over the preview record, and the two rounds it
+  took to make it useful. First measurement: **185 mutants, 137 caught (77%)**.
+  Reading the survivors showed two kinds of weak test: loose bounds (`g < 40` hides a
+  ±11 shift in a colour channel) and uniform fixtures (every pixel the same, so index
+  arithmetic is invisible). After exact-value assertions and coordinate-carrying
+  fixtures: **159 caught, 19 missed (89%)**, the rest equivalent mutants around the
+  sequence number. That is the "a test fails before it passes" claim, measured.
 - **`zizmor`**, **`typos`**, **`lychee`** — `lint-workflows.yml` and `lint-text.yml`.
   Setup for the first pass: third-party actions are now pinned to commits (GitHub's own
   `actions/*` stay on tags by policy, in `zizmor.yml`), the release job builds without a
