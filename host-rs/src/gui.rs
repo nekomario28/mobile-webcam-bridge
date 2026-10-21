@@ -255,7 +255,7 @@ impl App {
     }
 
     /// Fix the interface language, so a test does not depend on the host locale.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn set_language(&mut self, japanese: bool) {
         self.ja = japanese;
     }
