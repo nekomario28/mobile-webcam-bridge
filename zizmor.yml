@@ -1,0 +1,10 @@
+# Third-party actions are pinned to a commit; GitHub's own `actions/*` may follow a
+# tag, because GitHub controls what those tags point at and the tag is what keeps a
+# bump readable in review. Everything else is flagged, which is how a new dependency
+# gets noticed.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        actions/*: ref-pin
+        "*": hash-pin

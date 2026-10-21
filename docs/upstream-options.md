@@ -115,6 +115,20 @@ injection, credential handling, unpinned actions, over-broad `permissions`.
   to look for; worth checking whether our DirectShow friendly name is discoverable by
   the apps that only list known virtual cameras.
 
+## Taken so far
+
+- **`egui_kittest` 0.36.2** — in the tree as a dev-dependency. `host-rs/src/gui/harness_tests.rs`
+  drives the real window: a paired host shows its pairing and hides the fields, clicking
+  Details reveals them, and a revoked PC is told it was revoked rather than that the key
+  is wrong. No display, no window manager, no synthetic clicks.
+- **`zizmor`**, **`typos`**, **`lychee`** — `lint-workflows.yml` and `lint-text.yml`.
+  Setup for the first pass: third-party actions are now pinned to commits (GitHub's own
+  `actions/*` stay on tags by policy, in `zizmor.yml`), the release job builds without a
+  Gradle cache so a pull request cannot poison what gets signed, `_typos.toml` allows the
+  kernel's `S_PARM` and NSIS's `StrCpy` (and the deliberately misspelled flag a test
+  feeds the parser), and the docs gate runs `lychee --offline` because relative links are
+  the ones this repository owns.
+
 ## Suggested order
 
 1. `egui_kittest` (unblocks trustworthy host-side UX tests immediately).

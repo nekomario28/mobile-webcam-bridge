@@ -58,7 +58,7 @@ pub fn run() -> eframe::Result {
         Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))),
     )
 }
-struct App {
+pub struct App {
     settings: Settings,
     store: Option<Store>,
     save_error: Option<String>,
@@ -251,7 +251,24 @@ impl App {
         }
     }
     fn new(ctx: &egui::Context) -> Self {
-        let store = Store::native();
+        Self::build(ctx, Store::native())
+    }
+
+    /// Fix the interface language, so a test does not depend on the host locale.
+    #[cfg(test)]
+    fn set_language(&mut self, japanese: bool) {
+        self.ja = japanese;
+    }
+
+    /// The same construction with a store the caller owns, for tests that must not
+    /// read or write the user's real settings.
+    #[cfg(test)]
+    fn new_at(ctx: &egui::Context, path: std::path::PathBuf) -> Self {
+        Self::build(ctx, Ok(Store::at(path)))
+    }
+
+    fn build(ctx: &egui::Context, store: crate::Result<Store>) -> Self {
+        let store = store;
         let mut save_error = None;
         let mut load_error = None;
         let (store, settings) = match store {
@@ -682,6 +699,9 @@ fn auto_retry_is_useful(error: &str) -> bool {
     ];
     !HOPELESS.iter().any(|needle| lowered.contains(needle))
 }
+
+#[cfg(test)]
+mod harness_tests;
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

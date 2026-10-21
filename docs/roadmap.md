@@ -96,6 +96,13 @@ the claim each one would let us make.
   from committed fixtures, including the preview frame, and fails on states that
   become indistinguishable.
 
+## Gates in place
+
+`host-ci` / `rust-host-ci` (unit, clippy, fmt, Windows target), `android-ci`, the
+emulator conformance run, the GUI capture gate, `lint-workflows` (actionlint + zizmor),
+and `lint-text` (typos + offline link check). The host UI itself is now covered by
+AccessKit-driven tests, so "clicking this opens that" no longer needs a screenshot.
+
 ## How a claim gets accepted
 
 1. A gate or a test that fails before and passes after (`docs/gates.md`).

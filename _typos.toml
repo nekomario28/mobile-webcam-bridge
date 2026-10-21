@@ -1,0 +1,17 @@
+# The kernel UAPI spells these this way (`VIDIOC_S_PARM`, `stride/parm`), NSIS has
+# `StrCpy`, and one test deliberately feeds a misspelled flag to prove the parser
+# names it.
+[default.extend-words]
+PARM = "PARM"
+parm = "parm"
+StrCpy = "StrCpy"
+Cpy = "Cpy"
+identiy = "identiy"
+
+[files]
+extend-exclude = [
+  "target/",
+  "android/.gradle/",
+  "android/app/build/",
+  "host-rs/target/",
+]
