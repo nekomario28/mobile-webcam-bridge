@@ -1417,6 +1417,28 @@ impl eframe::App for App {
                                         egui::TextEdit::singleline(&mut self.settings.output)
                                             .desired_width(f32::INFINITY),
                                     );
+                                    // A second backend is worth offering only where it
+                                    // was compiled in, and only with the honest caveat:
+                                    // it needs no kernel module but is seen by fewer apps.
+                                    #[cfg(feature = "pipewire")]
+                                    {
+                                        ui.horizontal_wrapped(|ui| {
+                                            for (kind, label) in [
+                                                ("loopback", self.text("Kernel module (v4l2loopback)", "カーネルモジュール（v4l2loopback）")),
+                                                ("pipewire", self.text("PipeWire camera", "PipeWireカメラ")),
+                                            ] {
+                                                let selected = self.settings.output_kind == kind;
+                                                if ui.add_enabled(!running, egui::RadioButton::new(selected, label)).clicked() {
+                                                    self.settings.output_kind = kind.into();
+                                                    self.dirty = Some(std::time::Instant::now());
+                                                }
+                                            }
+                                        });
+                                        ui.weak(self.text(
+                                            "The PipeWire camera needs no kernel module; only PipeWire-aware apps list it.",
+                                            "PipeWireカメラはカーネルモジュール不要ですが、表示できるのはPipeWire対応アプリだけです。",
+                                        ));
+                                    }
                                 }
                                 ui.label(self.text("Video decode", "デコード方式"));
                                 egui::ComboBox::from_id_salt("decoder")

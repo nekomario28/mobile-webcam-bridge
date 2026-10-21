@@ -126,6 +126,14 @@ injection, credential handling, unpinned actions, over-broad `permissions`.
   `host-rs/fuzz/` runs the same shapes under libFuzzer on a weekly schedule. Measured
   on the first run: **19.6 million executions in 180 s, 513 edges, no crashes**. The
   corpus is committed so a rerun starts where the last one finished.
+- **`pipewire-vircam` 0.7.1** — the second Linux camera backend, behind
+  `--features pipewire`. No kernel module and no `pkexec modprobe`, at the cost of
+  reach: only PipeWire-aware consumers list it today, which the settings UI says
+  plainly. It needs **PipeWire 1.4 or newer headers** (`libspa 0.10` uses SPA
+  metadata that 1.0.5 does not define), so the CI job checks the version and says it
+  skipped rather than failing or going quiet; measured against 1.6.9. The crate is driven by its own timer and *pulls* frames, so the worker's
+  push is bridged through one slot; it also requires its main loop on a thread named
+  `main` (an assertion inside the `pipewire` crate — measured, not documented).
 - **`cargo-mutants`** — a weekly run over the preview record, and the two rounds it
   took to make it useful. First measurement: **185 mutants, 137 caught (77%)**.
   Reading the survivors showed two kinds of weak test: loose bounds (`g < 40` hides a
