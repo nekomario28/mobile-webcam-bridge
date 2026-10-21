@@ -261,8 +261,9 @@ impl App {
     }
 
     /// The same construction with a store the caller owns, for tests that must not
-    /// read or write the user's real settings.
-    #[cfg(test)]
+    /// read or write the user's real settings. Unix only: the Windows store answers
+    /// paths itself, and these tests run in the Linux job.
+    #[cfg(all(test, unix))]
     fn new_at(ctx: &egui::Context, path: std::path::PathBuf) -> Self {
         Self::build(ctx, Ok(Store::at(path)))
     }
@@ -700,7 +701,7 @@ fn auto_retry_is_useful(error: &str) -> bool {
     !HOPELESS.iter().any(|needle| lowered.contains(needle))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod harness_tests;
 
 impl eframe::App for App {
