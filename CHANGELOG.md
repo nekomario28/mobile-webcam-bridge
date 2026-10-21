@@ -41,6 +41,16 @@
   window opens tall enough (420x620) to show its status, the guidance and, while
   streaming, the mode controls without scrolling first.
 
+- Measure whether the tests catch bugs. `cargo-mutants` now runs weekly over the
+  preview record, and its first two rounds are the point: **185 mutants, 137 caught
+  (77%)** showed that loose bounds (`g < 40` hid a ±11 colour shift) and uniform
+  fixtures (identical pixels make index arithmetic invisible) were propping up the
+  suite. With exact-value assertions and fixtures that carry their own coordinates,
+  **159 of 185 are caught (89%)** and the rest are equivalent mutants around the
+  sequence number. The record's positional I/O also moved to `preview/posio.rs`, so
+  a mutant in the platform shims — which the other platform cannot even compile —
+  does not distort the number.
+
 - Fuzz the decoders. `host-rs/tests/parsers.rs` now runs every parser reachable from
   the network — header, capabilities, quality, client challenge/auth/result, epoch,
   pairing info and video config — over arbitrary bytes as a property test on stable,

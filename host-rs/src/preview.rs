@@ -14,8 +14,13 @@
 use std::{
     fs::{File, OpenOptions},
     io,
-    path::{Path, PathBuf},
+    path::Path,
 };
+
+mod posio;
+
+pub use posio::create_path;
+use posio::{read_at, write_at};
 
 /// Where the worker is told to publish; set by the GUI when it spawns it.
 pub const PATH_ENV: &str = "AMB_PREVIEW_PATH";
@@ -37,80 +42,6 @@ pub struct Frame {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<u8>,
-}
-
-/// Create a fresh private record file and return its path.
-///
-/// `create_new` refuses any existing path, so a pre-planted symlink or file in the
-/// temp directory cannot redirect the preview.
-pub fn create_path() -> io::Result<PathBuf> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or(0);
-    let path = std::env::temp_dir().join(format!(
-        "mobile-webcam-preview-{}-{nanos}.bin",
-        std::process::id()
-    ));
-    let file = private_create(&path)?;
-    file.set_len((HEADER + CAPACITY) as u64)?;
-    Ok(path)
-}
-
-#[cfg(unix)]
-fn private_create(path: &Path) -> io::Result<File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-}
-
-#[cfg(not(unix))]
-fn private_create(path: &Path) -> io::Result<File> {
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(path)
-}
-
-#[cfg(unix)]
-fn write_at(file: &File, offset: u64, bytes: &[u8]) -> io::Result<()> {
-    use std::os::unix::fs::FileExt;
-    file.write_all_at(bytes, offset)
-}
-
-#[cfg(unix)]
-fn read_at(file: &File, offset: u64, bytes: &mut [u8]) -> io::Result<()> {
-    use std::os::unix::fs::FileExt;
-    file.read_exact_at(bytes, offset)
-}
-
-#[cfg(windows)]
-fn write_at(file: &File, offset: u64, bytes: &[u8]) -> io::Result<()> {
-    use std::os::windows::fs::FileExt;
-    let mut done = 0;
-    while done < bytes.len() {
-        done += file.seek_write(&bytes[done..], offset + done as u64)?;
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn read_at(file: &File, offset: u64, bytes: &mut [u8]) -> io::Result<()> {
-    use std::os::windows::fs::FileExt;
-    let mut done = 0;
-    while done < bytes.len() {
-        let read = file.seek_read(&mut bytes[done..], offset + done as u64)?;
-        if read == 0 {
-            return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
-        }
-        done += read;
-    }
-    Ok(())
 }
 
 /// A sequence number that is odd while a write is in progress.
@@ -160,7 +91,7 @@ pub struct Producer {
 impl Producer {
     /// Open (or create) the record the GUI asked for.
     pub fn open(path: &Path) -> io::Result<Self> {
-        let file = match private_create(path) {
+        let file = match posio::private_create(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 // The GUI created it first; it is ours by construction.
@@ -346,7 +277,7 @@ mod tests {
         }
     }
 
-    fn record() -> (PathBuf, Producer, Consumer) {
+    fn record() -> (std::path::PathBuf, Producer, Consumer) {
         let path = create_path().unwrap();
         let producer = Producer::open(&path).unwrap();
         let consumer = Consumer::open(&path).unwrap();
@@ -381,6 +312,44 @@ mod tests {
     }
 
     #[test]
+    fn a_header_that_lies_about_its_shape_is_rejected() {
+        let (path, _producer, consumer) = record();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        // Right version, wrong magic: only the magic check is exercised here.
+        let mut wrong_magic = header(2, 4, 2, 32);
+        wrong_magic[0] = b'X';
+        write_at(&file, 0, &wrong_magic).unwrap();
+        assert!(consumer.latest().is_none(), "wrong magic must be refused");
+        // Zero width and zero height are not shapes, even with a matching length.
+        write_at(&file, 0, &header(2, 0, 2, 0)).unwrap();
+        assert!(consumer.latest().is_none(), "zero width must be refused");
+        write_at(&file, 0, &header(2, 4, 0, 0)).unwrap();
+        assert!(consumer.latest().is_none(), "zero height must be refused");
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn the_record_accepts_a_frame_at_exactly_its_capacity() {
+        // 640x512 is the largest shape CAPACITY holds; the boundary must be
+        // inclusive or a legal frame would be dropped.
+        let (path, mut producer, consumer) = record();
+        let largest = Frame {
+            width: 640,
+            height: 512,
+            pixels: vec![9; 640 * 512 * 4],
+        };
+        assert_eq!(largest.pixels.len(), super::CAPACITY);
+        producer.publish(&largest).unwrap();
+        let read = consumer.latest().expect("a frame at capacity is legal");
+        assert_eq!((read.width, read.height), (640, 512));
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
     fn a_record_that_disagrees_with_itself_is_rejected() {
         let (path, _producer, consumer) = record();
         let file = OpenOptions::new()
@@ -411,6 +380,20 @@ mod tests {
     }
 
     #[test]
+    fn the_conversion_matches_the_published_coefficients() {
+        // Exact values for BT.709 limited-range, so a flipped sign, a changed
+        // constant or a swapped term in any of the three lines moves a channel.
+        // Measured: loose bounds (g < 40) let several such mutants survive.
+        assert_eq!(yuv_to_rgb(81, 90, 240), (255, 24, 0));
+        assert_eq!(yuv_to_rgb(145, 54, 34), (0, 216, 0));
+        assert_eq!(yuv_to_rgb(41, 240, 110), (0, 15, 255));
+        assert_eq!(yuv_to_rgb(100, 138, 120), (83, 100, 119));
+        assert_eq!(yuv_to_rgb(200, 140, 150), (254, 200, 240));
+        // Same luma, opposite chroma: the two must never coincide.
+        assert_ne!(yuv_to_rgb(126, 160, 128), yuv_to_rgb(126, 96, 128));
+    }
+
+    #[test]
     fn black_and_white_sit_at_the_ends_of_the_range() {
         assert_eq!(yuv_to_rgb(16, 128, 128), (0, 0, 0));
         assert_eq!(yuv_to_rgb(235, 128, 128), (255, 255, 255));
@@ -432,6 +415,81 @@ mod tests {
         assert!(pixels[0] < 40, "first pixel should be dark: {pixels:?}");
         assert!(pixels[4] > 200, "second pixel should be bright: {pixels:?}");
         assert_eq!(pixels[3], 255, "alpha is opaque");
+    }
+
+    #[test]
+    fn sampling_reads_the_pixel_it_says_it_reads() {
+        // A uniform image hides index arithmetic: every address looks the same. Each
+        // pixel here carries its own column as luma, so a wrong row, a wrong macro-pixel
+        // or an off-by-one lands on a different value. Measured: 30 of 185 mutants
+        // survived on the uniform fixtures, nearly all of them in these indices.
+        let mut yuyv = Vec::new();
+        for y in 0..2u8 {
+            for x in 0..4u8 {
+                yuyv.push(16 + x * 10 + y); // luma of this pixel
+                if x % 2 == 1 {
+                    yuyv.push(128); // neutral U
+                    yuyv.push(128); // neutral V
+                }
+            }
+        }
+        // Wait: YUYV is Y0 U Y1 V, so build it in that order instead.
+        let mut packed = Vec::new();
+        for y in 0..2u8 {
+            for x in (0..4u8).step_by(2) {
+                packed.push(16 + x * 10 + y);
+                packed.push(128);
+                packed.push(16 + (x + 1) * 10 + y);
+                packed.push(128);
+            }
+        }
+        let grey = |luma: u8| (luma as f32 - 16.0).mul_add(1.164_383, 0.0).round() as u8;
+
+        let (width, height, pixels) = yuyv_to_rgba(&packed, 4, 2, 8, 1);
+        assert_eq!((width, height), (4, 2));
+        for y in 0..2usize {
+            for x in 0..4usize {
+                let expected = grey(16 + x as u8 * 10 + y as u8);
+                assert_eq!(
+                    pixels[(y * 4 + x) * 4],
+                    expected,
+                    "step 1: pixel ({x},{y}) is not its own column"
+                );
+            }
+        }
+
+        // step 2 samples the middle column of each block: x=1 and x=3.
+        let (width, height, pixels) = yuyv_to_rgba(&packed, 4, 2, 8, 2);
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(pixels[0], grey(16 + 10 + 1), "step 2 samples x=1");
+        assert_eq!(pixels[4], grey(16 + 30 + 1), "step 2 samples x=3");
+        let _ = yuyv;
+    }
+
+    #[test]
+    fn rgba_sampling_reads_the_pixel_it_says_it_reads() {
+        // Same idea for the Windows layout: every pixel carries its own coordinates.
+        let mut rgba = Vec::new();
+        for y in 0..2u8 {
+            for x in 0..4u8 {
+                rgba.extend_from_slice(&[x * 40, y * 40, 7, 255]);
+            }
+        }
+        let (width, height, pixels) = rgba_to_rgba(&rgba, 4, 2, 16, 1);
+        assert_eq!((width, height), (4, 2));
+        for y in 0..2usize {
+            for x in 0..4usize {
+                let at = (y * 4 + x) * 4;
+                assert_eq!(pixels[at], (x as u8) * 40, "red is the column");
+                assert_eq!(pixels[at + 1], (y as u8) * 40, "green is the row");
+                assert_eq!(pixels[at + 3], 255);
+            }
+        }
+        let (_, _, pixels) = rgba_to_rgba(&rgba, 4, 2, 16, 2);
+        assert_eq!(pixels[0], 40, "step 2 samples x=1");
+        assert_eq!(pixels[4], 120, "step 2 samples x=3");
+        // The block's middle row is y = 0*2 + 1 = 1, not its first row.
+        assert_eq!(pixels[1], 40, "step 2 samples the middle row");
     }
 
     #[test]

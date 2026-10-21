@@ -1,0 +1,33 @@
+name: mutants
+
+# Weekly, not per pull request: a mutation run rebuilds and retests for every mutant,
+# and the value is a trend rather than a gate on one change. `--in-place` is required
+# because the tests include `protocol/fixtures` by a path outside the crate directory.
+on:
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview-record:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install cargo-mutants
+        run: cargo install --locked cargo-mutants
+      - name: Mutate the preview record against its own tests
+        working-directory: host-rs
+        # Quoted: YAML reads a plain scalar ending in `::` as the start of a mapping.
+        run: "cargo mutants --in-place --file src/preview.rs --timeout 25 -- --lib preview::"
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-report
+          path: host-rs/mutants.out
