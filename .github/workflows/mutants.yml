@@ -23,7 +23,8 @@ jobs:
         run: cargo install --locked cargo-mutants
       - name: Mutate the preview record against its own tests
         working-directory: host-rs
-        run: cargo mutants --in-place --file src/preview.rs --timeout 25 -- --lib preview::
+        # Quoted: YAML reads a plain scalar ending in `::` as the start of a mapping.
+        run: "cargo mutants --in-place --file src/preview.rs --timeout 25 -- --lib preview::"
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@v4
