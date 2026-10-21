@@ -2,6 +2,18 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- One version, and a gate that holds it. `VERSION` said **0.1.4** while
+  `host-rs/Cargo.toml` said **0.2.0**: the release names artifacts from `VERSION`
+  while the binary reports Cargo's, and `release.yml` refuses a tag that does not match
+  `VERSION` — so a release cut from this tree would have failed its own first check.
+  `VERSION` is now 0.2.0 and `host-rs/tests/version.rs` fails when the two disagree,
+  plus a test that the next build's `versionCode` out-ranks the field build's 1004.
+- Map the security work. `docs/reviews/security-coverage.md` records which review
+  covered what, which test proves each claim, the trust assumptions of everything added
+  since those reviews (the USB pairing hand-off trusts the cable; the preview record is
+  a 0600 file in the temp directory; the PipeWire node is session-readable), and the
+  list of components nobody has read. It is written by the implementer and says so.
+
 - Add the phone-side recovery for authorization data that cannot be read. The
   storage-failure screen offers one control, pressed twice (the label states what
   the second press does), which clears the encrypted record and this namespace's

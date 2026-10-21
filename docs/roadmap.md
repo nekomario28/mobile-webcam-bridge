@@ -21,7 +21,10 @@ the device rows, on a real XQ-GE44 over Wi-Fi.
 
 ## P0 — before calling anything released
 
-1. **Independent security assessment of the Wi-Fi pairing** (#9, #4). Two things the
+1. **Independent security assessment of the Wi-Fi pairing** (#9, #4). The existing
+   reviews and the surfaces added since them are mapped in
+   [reviews/security-coverage.md](reviews/security-coverage.md), including what nobody
+   has read yet. Two things the
    repository cannot self-certify: that the TLS/auth implementation resists review
    by someone who did not write it, and that the negative paths hold under an
    adversary rather than a test.
