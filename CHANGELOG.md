@@ -2,6 +2,14 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Audit what repeats, and write the ledger down. `docs/performance.md` lists every
+  per-second path with a five-run median: a received access unit costs 0.45 µs, the
+  preview conversion 366 µs, its publish 5 µs, the GUI's preview image 112 µs — about
+  0.5 % of one core together. Two optional trims are named with their ceiling (skip the
+  preview conversion when nobody watches, 0.37 %; reuse the image buffer, 0.11 %) and
+  refused with reasons. The earlier single-run 320 µs figure is corrected to 366 µs
+  median, spread 343–373: it was an outlier.
+
 - Say when the next retry lands. "Waiting for the phone (retrying)" could not be told
   apart from "stuck", so the waiting line now carries the attempt and the deadline:
   `スマホを待っています (2回目/8・4秒後に再試行)` / `Waiting for the phone (retry 2 of 8
