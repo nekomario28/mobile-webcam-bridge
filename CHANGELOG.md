@@ -2,6 +2,13 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Run a session without a window. `mobile-webcam --headless [--transport usb|lan]
+  [--host ADDRESS] [--seconds N]` starts the same worker the window starts, prints every
+  control event as one JSON line, and exits **0** if it streamed, **1** if it did not,
+  **2** if it could not start — so a script or a CI job gates on the run instead of
+  scraping a log. Measured: against a phone that is not there it prints
+  `connecting → error: Connection refused → stopped` and exits 1.
+
 - Correct the ledger where it was wrong, and soak the host. `FLAG_KEEP_SCREEN_ON` applies
   only while its window is visible, so a backgrounded session does not hold the screen on
   — the earlier note claiming a two-hour stream keeps a two-hour screen awake was wrong,

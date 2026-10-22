@@ -83,9 +83,10 @@ the claim each one would let us make.
   stream stops (today the last frame stays at full brightness).
 - Quality switching shown as progress (taken → applying → confirmed) rather than
   three states.
-- A headless CLI mode (`mobile-webcam --start … --status --stop`) so scripts and CI
-  can drive a session without a window; the preview record already makes this
-  possible.
+- ~~A headless CLI mode so scripts and CI can drive a session without a window.~~
+  Added 2026-10-22: `mobile-webcam --headless [--transport] [--host] [--seconds]`
+  prints every event as JSON and exits 0/1/2 for streamed / not streamed / could not
+  start. Its event loop is tested; the streamed path needs a phone.
 - Tray/notification thumbnails of the current preview.
 
 ## Operational facts worth knowing
