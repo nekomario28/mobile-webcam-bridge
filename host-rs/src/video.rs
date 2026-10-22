@@ -833,7 +833,6 @@ mod tests {
         struct Paced {
             units: Vec<Vec<u8>>,
             deadline: Instant,
-            next: usize,
             sent: Arc<AtomicU64>,
             stop: Arc<AtomicBool>,
         }
@@ -857,7 +856,7 @@ mod tests {
                 )?;
                 au.header.flags = if index == 0 {
                     wire::KEYFRAME | wire::CONFIG_INCLUDED
-                } else if index % 60 == 0 {
+                } else if index.is_multiple_of(60) {
                     wire::KEYFRAME
                 } else {
                     0
@@ -907,7 +906,6 @@ mod tests {
         let transport = Paced {
             units,
             deadline: Instant::now() + Duration::from_secs(seconds),
-            next: 0,
             sent: sent.clone(),
             stop: stop.clone(),
         };
