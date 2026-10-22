@@ -8,7 +8,7 @@
 //! Exit code: 0 if the session reached streaming, 1 if it did not, 2 if it could not
 //! start at all (no settings, unreadable key, worker refused).
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::process::{Child, Command as Process, Stdio};
 use std::time::{Duration, Instant};
 
