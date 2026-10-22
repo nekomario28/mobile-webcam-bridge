@@ -116,14 +116,16 @@ from those bytes, and keeps the decoded secret — refreshed on rotation. One
 constant-time compare remains (`MessageDigest.isEqual`), and a wiring test fails if the
 session goes back to `fingerprint().chunked(2)`.
 
-**Reported, needs the device — the screen stays on for the whole session.**
-`MainActivity` sets `FLAG_KEEP_SCREEN_ON` when capture starts and clears it when it
-stops, so a two-hour stream keeps a two-hour screen awake. Nothing comments why: the
-foreground-service notification already says the camera is live, and a camera-typed
-service is what permits capture in the background. Whether capture *survives* screen-off
-on this handset is **unmeasured**, which is why the flag stays: turning it off from here
-would trade a measured cost for an unmeasured failure. This is the roadmap's "two-hour
-stream, screen off" item, and it is the largest energy decision in the app.
+**Reported, needs the device — screen-off capture is unmeasured, and the flag does not
+mean what it looks like.** `MainActivity` sets `FLAG_KEEP_SCREEN_ON` while capture runs.
+An earlier version of this ledger said that keeps a two-hour screen awake for a two-hour
+stream; **that was wrong** — the flag applies only while its window is visible, so a
+backgrounded session does not hold the screen on at all. What it does do is keep the
+screen awake while the user is *looking at the app*. The open question is different and
+unrelated to the flag: whether capture and the encoder survive the screen turning off on
+this handset, which is unmeasured and is what the roadmap's two-hour item has to answer.
+Until then the flag stays, because it costs nothing when the app is in the background and
+removing it would not test anything.
 
 **Micro, dismissed:** `Wire.writeFrame` allocates a 24-byte `ByteBuffer` per sent frame
 (30/s) — the same class as the 0.45 µs measured on the Rust side. `FramedOutbound`'s
@@ -140,6 +142,35 @@ them; `refreshQualityCapabilities()` (a Camera2 + MediaCodec capability scan) ru
 four events — resume, permission result, USB attach, LAN start — and never per frame.
 `MainActivity` is 1 096 lines and carries the UI, session, camera and quality wiring;
 that is a structure note for a future split, not a defect.
+
+## Soak: does the host drift over time?
+
+`host-rs/src/video.rs::worker_soak`, ignored like the throughput test: a fake transport
+paces the same 720p fixture at 30 fps for `SOAK_SECONDS`, the preview record is
+published at its usual 10 Hz, and resident memory and throughput are sampled every 15 s.
+
+```
+SOAK_SECONDS=300 cargo test --release --features pipewire --lib worker_soak -- --ignored --nocapture
+t=  15.0s frames=   454 rss=   28.0 MB
+t= 120.0s frames=  3631 rss=   28.0 MB (+0.00 MB/min) 30.26 fps
+t= 300.0s frames=  9076 rss=   28.0 MB (+0.00 MB/min) 30.25 fps
+soak done: 300 s, 9076 access units, result Ok(())
+```
+
+Five minutes, 9 076 frames: **resident memory flat at 28.0 MB** (28.3 MB in the sample
+taken after the stop), **30.25 fps throughout** with no downward drift. No leak
+signature in the host worker under this load.
+
+What it is not: five minutes is not two hours, the transport is synthetic (no phone, no
+link), the sink counts instead of writing to a device, and the post-stop sample shows
+28.8 fps only because it averages the teardown tail. A leak that appears at hour one
+would not show up here.
+
+**The CPU instrument was removed rather than reported.** The first version read
+`/proc/self/stat` (and then `getrusage`) and printed **0.0 s** for a process that had
+been decoding for minutes. Rather than publish a number nothing could distinguish from
+a broken probe, the column is gone and the per-frame cost comes from `worker_throughput`
+(1.47 ms, 4.4 % of a core at 30 fps).
 
 ## What this ledger does not claim
 
