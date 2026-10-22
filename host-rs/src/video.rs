@@ -936,7 +936,7 @@ mod tests {
         let bpp = if cfg!(windows) { 4 } else { 2 };
         let mut decoder = decoder::Decoder::open("off").unwrap();
         let mut frame = ffmpeg::Frame::empty().unwrap();
-        decoder.send(&access_units[0], 1_000, true).unwrap();
+        decoder.send(access_units[0], 1_000, true).unwrap();
         assert!(
             decoder.receive(&mut frame).unwrap(),
             "the fixture must decode"
