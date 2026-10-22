@@ -69,9 +69,10 @@ the claim each one would let us make.
 - **Reconnect backoff made visible.** "Waiting (retrying)" exists; how many attempts
   are left and when the next one lands does not.
   *Closes when:* the state line names the attempt ("retry 2 of 5 in 8 s").
-- **The preview's own cost.** Publish is 10 Hz by construction, but the conversion
-  runs for the sink too. Measure per-frame cost at 1280x720 and 1920x1080.
-  *Closes when:* a measurement exists, and a preview period setting if it is worth it.
+- ~~**The preview's own cost.**~~ Closed 2026-10-21:
+  [2026-10-21-preview-cost.md](evidence/2026-10-21-preview-cost.md) — 320 µs per frame
+  and 5 µs to publish, **0.33 % of one core at 10 Hz** for 1280x720 and 1920x1080
+  (both scale to 320x180). No period setting is warranted at that price.
 
 ## P2 — ideas, not commitments
 
