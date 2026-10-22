@@ -585,6 +585,17 @@ fn auto_retry_delay(attempt: u32) -> std::time::Duration {
     std::time::Duration::from_secs(seconds)
 }
 
+/// "retry 2 of 8 in 4 s" — what "retrying" leaves out, and the two things a waiting
+/// person actually wants: how many attempts are left, and when the next one lands.
+fn retry_note(attempt: u32, limit: u32, remaining: std::time::Duration, japanese: bool) -> String {
+    let seconds = remaining.as_secs() + u64::from(remaining.subsec_millis() > 0);
+    if japanese {
+        format!("{}回目/{limit}・{seconds}秒後に再試行", attempt)
+    } else {
+        format!("retry {attempt} of {limit} in {seconds} s")
+    }
+}
+
 /// "3分前" style age, which is what a person wants from a last-seen stamp.
 fn human_age(seconds: u64, japanese: bool) -> String {
     let (value, unit) = match seconds {
@@ -1137,41 +1148,51 @@ impl eframe::App for App {
                             }
                         }
                         ui.add_space(12.0);
-                        let status = match &self.session.state {
-                            State::Idle => "",
-                            State::Connecting => self.text("Connecting…", "接続中…"),
-                            State::ApprovalPending(_) => self.text("Approve this PC on your phone", "スマホでこのPCの接続を許可してください"),
+                        let status: String = match &self.session.state {
+                            State::Idle => String::new(),
+                            State::Connecting => self.text("Connecting…", "接続中…").to_string(),
+                            State::ApprovalPending(_) => self
+                                .text("Approve this PC on your phone", "スマホでこのPCの接続を許可してください")
+                                .to_string(),
                             State::Waiting => {
                                 if self.settings.transport == "lan" {
                                     self.text(
                                         "TLS 1.3 verified · Press Start camera on your phone",
                                         "TLS 1.3で認証済み · スマホで「カメラ開始」を押してください",
                                     )
+                                    .to_string()
                                 } else if cfg!(windows) && matches!(&self.session.stats, Some(Event::Stats { decoded, active: false, .. }) if *decoded > 0) {
-                                    self.text("Select Mobile Webcam in your PC's camera app", "PCのカメラアプリでMobile Webcamを選択")
-                            } else { self.text("Connected · Press Start camera on your phone", "接続済み · スマホで「カメラ開始」を押してください") }
-                            },
-                            State::Streaming => self.text("Camera connected", "カメラ接続中"),
-                            State::Stopping => self.text("Disconnecting…", "切断中…"),
+                                    self.text("Select Mobile Webcam in your PC's camera app", "PCのカメラアプリでMobile Webcamを選択").to_string()
+                                } else {
+                                    self.text("Connected · Press Start camera on your phone", "接続済み · スマホで「カメラ開始」を押してください").to_string()
+                                }
+                            }
+                            State::Streaming => self.text("Camera connected", "カメラ接続中").to_string(),
+                            State::Stopping => self.text("Disconnecting…", "切断中…").to_string(),
                             State::Failed(error) => {
-                                if self.auto_retry.is_some() {
+                                if let Some(at) = self.auto_retry {
                                     // Retrying by itself: say so instead of leaving the
                                     // failure looking final, which is what makes people
-                                    // press Connect again.
-                                    self.text("Waiting for the phone (retrying)", "スマホを待っています（自動で再接続）")
+                                    // press Connect again — and say how many attempts
+                                    // are left and when the next one is, because "retrying"
+                                    // alone cannot be told apart from "stuck".
+                                    let remaining = at.saturating_duration_since(std::time::Instant::now());
+                                    let note = retry_note(self.auto_retries, AUTO_RETRY_LIMIT, remaining, japanese());
+                                    let title = self.text("Waiting for the phone", "スマホを待っています");
+                                    format!("{title} ({note})")
                                 } else if error.contains("v4l2loopback") || error.contains("host setup is not included")
                                 {
-                                    self.text("Camera driver unavailable", "カメラドライバーを利用できません")
+                                    self.text("Camera driver unavailable", "カメラドライバーを利用できません").to_string()
                                 } else if error.contains("fingerprint mismatch") {
-                                    self.text("Fingerprint mismatch", "フィンガープリントが一致しません")
+                                    self.text("Fingerprint mismatch", "フィンガープリントが一致しません").to_string()
                                 } else if let Some(refusal) = refusal(error) {
-                                    refusal.title(|en, ja| self.text(en, ja))
+                                    refusal.title(|en, ja| self.text(en, ja)).to_string()
                                 } else if self.session.usb_permission.is_some() {
-                                    self.text("Allow USB access", "USBアクセスを許可してください")
+                                    self.text("Allow USB access", "USBアクセスを許可してください").to_string()
                                 } else if error.contains("WinUSB") {
-                                    self.text("USB driver unavailable", "USBドライバーを利用できません")
+                                    self.text("USB driver unavailable", "USBドライバーを利用できません").to_string()
                                 } else {
-                                    self.text("Connection failed", "接続できませんでした")
+                                    self.text("Connection failed", "接続できませんでした").to_string()
                                 }
                             }
                         };
@@ -1598,6 +1619,21 @@ mod tests {
     #[test]
     fn retries_back_off_and_stay_bounded() {
         assert_eq!(auto_retry_delay(1).as_secs(), 2);
+        // The waiting line has to answer "how many tries left" and "when", not just
+        // "retrying" — the wording is pinned here so the status cannot drift back.
+        assert_eq!(
+            retry_note(2, 8, std::time::Duration::from_secs(4), false),
+            "retry 2 of 8 in 4 s"
+        );
+        assert_eq!(
+            retry_note(2, 8, std::time::Duration::from_millis(3400), true),
+            "2回目/8・4秒後に再試行"
+        );
+        // A deadline that has passed reads as "1 s", never as "0 s" or a negative.
+        assert_eq!(
+            retry_note(8, 8, std::time::Duration::ZERO, false),
+            "retry 8 of 8 in 0 s"
+        );
         assert_eq!(auto_retry_delay(2).as_secs(), 4);
         assert_eq!(auto_retry_delay(3).as_secs(), 8);
         assert_eq!(auto_retry_delay(4).as_secs(), 15);

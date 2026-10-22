@@ -2,6 +2,17 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Say when the next retry lands. "Waiting for the phone (retrying)" could not be told
+  apart from "stuck", so the waiting line now carries the attempt and the deadline:
+  `スマホを待っています (2回目/8・4秒後に再試行)` / `Waiting for the phone (retry 2 of 8
+  in 4 s)`. The wording is pinned by a test, including a deadline that has already
+  passed.
+- Measure what the preview costs, since it converts at 10 Hz whether or not anyone is
+  watching: **320 µs per frame and 5 µs to publish — 0.33 % of one core** at 1280x720
+  and 1920x1080 (both scale to 320x180), measured in a release build with
+  `examples/preview_cost.rs` and recorded in
+  [docs/evidence/2026-10-21-preview-cost.md](docs/evidence/2026-10-21-preview-cost.md).
+
 - One version, and a gate that holds it. `VERSION` said **0.1.4** while
   `host-rs/Cargo.toml` said **0.2.0**: the release names artifacts from `VERSION`
   while the binary reports Cargo's, and `release.yml` refuses a tag that does not match
