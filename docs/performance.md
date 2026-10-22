@@ -22,11 +22,35 @@ runs gave 366 µs (343–373). One number was an outlier, and the ledger uses th
 | Preview publish (record write, 230 KB) | 10/s | 5 µs | 0.005 % |
 | GUI preview image (`ColorImage::from_rgba_unmultiplied`, 320x180) | 10/s | 112 µs | 0.11 % |
 | Stats event (JSON line) | 1/s | not measured | — |
-| Decode + swscale + sink submit | 30/s | **not measured** | **the bulk, unknown** |
+| Decode (H.264 720p, software) | 30/s | 0.22 ms | 0.7 % |
+| Swscale to the sink layout (720p YUYV) | 30/s | 0.61 ms | 1.8 % |
+| Whole frame loop, fake sink | 30/s | 1.47 ms/frame → 660–680 fps | **4.4 %** |
 
 The conversion cost follows the *output* size, not the input: 320x240 costs 484 µs for
 76 800 pixels and 1280x720 costs 366 µs for 57 600 — both ~6.3 ns per output pixel.
 That agreement is the sanity check that the number means what it says.
+
+## The pipeline itself (measured 2026-10-22)
+
+`host-rs/src/video.rs::worker_throughput`, an ignored in-crate test that runs the real
+`receive_stream` over a committed fixture — 90 access units of 1280x720 H.264, one per
+frame, with the sink replaced by a counter:
+
+```
+cargo test --release --features pipewire --lib worker_throughput -- --ignored --nocapture
+frames 90  decode 0.22 ms/frame  convert 0.61 ms/frame  pipeline 1.47 ms/frame  (660–680 fps)
+```
+
+Three interleaved runs: decode 0.18–0.23 ms, convert 0.59–0.61 ms, pipeline
+1.47–1.52 ms. At 30 fps the loop occupies **~4.4 % of one core** — 22x the headroom the
+frame rate needs. The pipeline figure is a little more than decode plus convert because
+it includes the loop's own step (a small allocation per frame, `now_ms`, the transport
+poll) and a watchdog that ends the run within 5 ms (≤0.06 ms per frame).
+
+Caveats, stated rather than implied: the sink is a counter, so the copy into a v4l2 or
+PipeWire buffer is **not** in these numbers; hardware decode is not exercised
+(`decode: "off"`); and the fixture is synthetic at CRF 30, so real camera bitrates
+cost more in the decode line and not in the others.
 
 ## Findings
 
@@ -80,7 +104,11 @@ argument.
 
 ## What this ledger does not claim
 
-The bulk of the work is decode, swscale and the sink submit, and none of it is measured
-here. A claim that "the preview costs a third of a percent" says nothing about whether
-the pipeline is efficient; it says the *added* work is small. The next honest step is a
-profile of the worker with a phone attached, which needs the phone.
+- The sink's own copy is out of scope (the benchmark counts submissions instead of
+  writing into a device buffer), so a v4l2 or PipeWire path adds its copy on top.
+- Hardware decode, the phone's encoder, USB or Wi-Fi throughput, and the phone's power
+  draw are all somebody else's measurement. The 4.4 % above says the *host* has room;
+  it says nothing about whether a phone can keep it fed.
+- The fixture is synthetic. A real camera at a higher bitrate shifts cost into the
+  decode line.
+- Long-run behaviour (thermal, leaks over hours) is not measured at all.
