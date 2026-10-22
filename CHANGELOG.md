@@ -2,6 +2,15 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Correct the ledger where it was wrong, and soak the host. `FLAG_KEEP_SCREEN_ON` applies
+  only while its window is visible, so a backgrounded session does not hold the screen on
+  — the earlier note claiming a two-hour stream keeps a two-hour screen awake was wrong,
+  and the real open question is whether capture survives screen-off at all. Added an
+  ignored soak test: five minutes at 30 fps through the real frame loop leaves resident
+  memory **flat at 28.0 MB** and throughput at **30.25 fps** throughout. Its CPU column
+  was removed rather than published: it read 0.0 s for a process that had decoded for
+  minutes, which is what a broken instrument looks like.
+
 - Read the phone side for repeat work. One real find: every accepted Wi-Fi connection
   read the certificate from the Android Keystore, hashed it, formatted the digest as 64
   hex characters and parsed that hex straight back into bytes, with the access key

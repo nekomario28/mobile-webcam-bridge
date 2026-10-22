@@ -815,6 +815,170 @@ mod tests {
     /// `cargo test --release --features pipewire --lib worker_throughput -- --ignored --nocapture`.
     /// The sink is a counting fake, so this measures decode, swscale and the frame
     /// loop — not the copy into a v4l2 or PipeWire buffer, which needs a device.
+    /// Does the worker drift? Streams the same 720p fixture at 30 fps for
+    /// `SOAK_SECONDS` (default 120) while the preview record is published, sampling
+    /// resident memory and CPU time every 15 s.
+    ///
+    /// Ignored by default; run
+    /// `SOAK_SECONDS=300 cargo test --release --features pipewire --lib worker_soak -- --ignored --nocapture`.
+    /// A short soak cannot prove a two-hour claim: it can only show drift per minute,
+    /// which is what it prints.
+    #[test]
+    #[ignore = "measurement: --release --ignored --nocapture"]
+    fn worker_soak() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicU64, Ordering},
+        };
+        struct Paced {
+            units: Vec<Vec<u8>>,
+            deadline: Instant,
+            sent: Arc<AtomicU64>,
+            stop: Arc<AtomicBool>,
+        }
+        impl Transport for Paced {
+            fn receive(&mut self, timeout: Duration) -> crate::Result<wire::Frame> {
+                self.poll_receive(timeout)?.ok_or_else(|| "no frame".into())
+            }
+            fn send(&mut self, _frame: &wire::Frame, _timeout: Duration) -> crate::Result<()> {
+                Ok(())
+            }
+            fn poll_receive(&mut self, _timeout: Duration) -> crate::Result<Option<wire::Frame>> {
+                if Instant::now() >= self.deadline {
+                    self.stop.store(true, Ordering::Release);
+                    return Ok(None);
+                }
+                let index = self.sent.load(Ordering::Acquire) as usize;
+                let mut au = wire::Frame::new(
+                    wire::VIDEO_AU,
+                    index as u32,
+                    self.units[index % self.units.len()].clone(),
+                )?;
+                au.header.flags = if index == 0 {
+                    wire::KEYFRAME | wire::CONFIG_INCLUDED
+                } else if index.is_multiple_of(60) {
+                    wire::KEYFRAME
+                } else {
+                    0
+                };
+                au.header.pts_us = index as u64 * 33_333;
+                self.sent.fetch_add(1, Ordering::AcqRel);
+                // Pace at 30 fps: 33 ms per access unit.
+                std::thread::sleep(Duration::from_millis(33));
+                Ok(Some(au))
+            }
+        }
+        struct NullSink;
+        impl crate::output::Sink for NullSink {
+            fn layout(&self) -> (usize, usize) {
+                let bpp = if cfg!(windows) { 4 } else { 2 };
+                (1280 * bpp, 1280 * 720 * bpp)
+            }
+            fn ready(&mut self) -> crate::Result<bool> {
+                Ok(true)
+            }
+            fn submit(&mut self, _bytes: &[u8], _w: u32, _h: u32) -> crate::Result<()> {
+                Ok(())
+            }
+        }
+
+        let seconds: u64 = std::env::var("SOAK_SECONDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(120);
+        let stream = include_bytes!("../tests/fixtures/testsrc-720p.h264");
+        let units: Vec<Vec<u8>> = split_access_units(stream)
+            .iter()
+            .map(|unit| unit.to_vec())
+            .collect();
+        assert!(!units.is_empty(), "fixture must hold access units");
+
+        let mut config = [0u8; 16];
+        config[..2].copy_from_slice(&1280u16.to_le_bytes());
+        config[2..4].copy_from_slice(&720u16.to_le_bytes());
+        config[4..6].copy_from_slice(&30u16.to_le_bytes());
+        config[12] = 1;
+        config[13] = 1;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let sent = Arc::new(AtomicU64::new(0));
+        let preview_path = crate::preview::create_path().ok();
+        let transport = Paced {
+            units,
+            deadline: Instant::now() + Duration::from_secs(seconds),
+            sent: sent.clone(),
+            stop: stop.clone(),
+        };
+
+        // Sampling thread: resident memory and throughput, every 15 s. CPU share is
+        // *not* sampled here: the first version read /proc/self/stat and reported 0.0 s
+        // for a process that had decoded for minutes, and a broken instrument is worse
+        // than none. The per-frame cost comes from `worker_throughput` instead.
+        let sampling = {
+            let stop = stop.clone();
+            let sent = sent.clone();
+            let started = Instant::now();
+            let mut first: Option<f64> = None;
+            std::thread::spawn(move || {
+                let rss = || -> f64 {
+                    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+                    status
+                        .lines()
+                        .find(|l| l.starts_with("VmRSS:"))
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .unwrap_or(0.0)
+                        / 1024.0
+                };
+                while !stop.load(Ordering::Acquire) {
+                    std::thread::sleep(Duration::from_secs(15));
+                    let rss = rss();
+                    let elapsed = started.elapsed().as_secs_f64();
+                    let frames = sent.load(Ordering::Acquire);
+                    match first {
+                        None => {
+                            first = Some(rss);
+                            println!("t={elapsed:6.1}s frames={frames:6} rss={rss:7.1} MB");
+                        }
+                        Some(rss0) => println!(
+                            "t={elapsed:6.1}s frames={frames:6} rss={rss:7.1} MB ({:+.2} MB/min) {:5.2} fps",
+                            (rss - rss0) / (elapsed / 60.0),
+                            frames as f64 / elapsed
+                        ),
+                    }
+                }
+            })
+        };
+
+        let settings = Settings {
+            decode: "off".into(),
+            transport: "usb".into(),
+            output: "unused".into(),
+            ..Settings::default()
+        };
+        let mut frames = std::collections::VecDeque::new();
+        frames.push_back(wire::Frame::new(wire::VIDEO_CONFIG, 0, config.to_vec()).unwrap());
+        let result = receive_stream(
+            settings,
+            Box::new(transport),
+            &stop,
+            Seams {
+                changes: &Mutex::new(None),
+                quality_request: &Mutex::new(None),
+                preview_path: preview_path.clone(),
+            },
+            |_| Ok(()),
+            |_| Ok(NullSink),
+        );
+        stop.store(true, Ordering::Release);
+        let _ = sampling.join();
+        if let Some(path) = preview_path {
+            std::fs::remove_file(path).ok();
+        }
+        let served = sent.load(Ordering::Acquire);
+        println!("soak done: {seconds} s, {served} access units, result {result:?}");
+    }
+
     /// Split an Annex-B stream into access units at its AUD NALs (type 9).
     fn split_access_units(stream: &[u8]) -> Vec<&[u8]> {
         let mut starts = Vec::new();
