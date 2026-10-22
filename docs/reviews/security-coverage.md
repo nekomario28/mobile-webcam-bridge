@@ -75,6 +75,11 @@ assumption that a reviewer should either accept or break:
 - Nothing here has been tested with an adversary holding the phone, the cable or the
   network — only with tests written by the same hand as the code.
 
+The request that turns this list into work is
+[request-2026-10-21.md](request-2026-10-21.md): four areas with file lists, the facts
+the implementer read (labelled as pre-work to distrust), and one testable hypothesis
+per area.
+
 ## What an independent reviewer should be given
 
 The three review documents, `protocol/wire-secure-lan.md` and

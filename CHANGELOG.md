@@ -13,6 +13,14 @@
   `examples/preview_cost.rs` and recorded in
   [docs/evidence/2026-10-21-preview-cost.md](docs/evidence/2026-10-21-preview-cost.md).
 
+- Write the review request. `docs/reviews/request-2026-10-21.md` turns the gap list
+  into work: four unread areas with their file lists and line counts, the facts the
+  implementer read about the Android manifest and the capture-consent boundary —
+  labelled as pre-work to distrust — and one testable hypothesis per area, including
+  "reach `startCamera()` with `cameraStartRequested` false by any sequence of host
+  frames". It also asks the reviewer to attack the Evidence column, because this
+  repository has twice had a test that passed for the wrong reason.
+
 - One version, and a gate that holds it. `VERSION` said **0.1.4** while
   `host-rs/Cargo.toml` said **0.2.0**: the release names artifacts from `VERSION`
   while the binary reports Cargo's, and `release.yml` refuses a tag that does not match
