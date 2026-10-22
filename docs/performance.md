@@ -102,6 +102,45 @@ argument.
 - **Quality deadline** — a 250 ms tick that exists only while a switch is pending.
 - **Session poll** — drains a channel; an empty poll allocates nothing.
 
+## Phone side (read 2026-10-22)
+
+Read through `android/app/src/main/java/dev/nekomario/amb/` (4 556 lines) for work that
+repeats or grows. Two findings, one fixed; the rest is a list of things that are right.
+
+**Fixed — the binding was computed the long way on every connection.** Each accepted
+Wi-Fi connection read the certificate out of the Android Keystore, hashed it, formatted
+32 bytes as hex, and then parsed that hex straight back into bytes; the access key was
+hex-decoded per connection too. `SecureLanIdentity` now caches the certificate DER (and
+clears it if the key is regenerated), answers `fingerprintBytes()`, derives the hex form
+from those bytes, and keeps the decoded secret — refreshed on rotation. One
+constant-time compare remains (`MessageDigest.isEqual`), and a wiring test fails if the
+session goes back to `fingerprint().chunked(2)`.
+
+**Reported, needs the device — the screen stays on for the whole session.**
+`MainActivity` sets `FLAG_KEEP_SCREEN_ON` when capture starts and clears it when it
+stops, so a two-hour stream keeps a two-hour screen awake. Nothing comments why: the
+foreground-service notification already says the camera is live, and a camera-typed
+service is what permits capture in the background. Whether capture *survives* screen-off
+on this handset is **unmeasured**, which is why the flag stays: turning it off from here
+would trade a measured cost for an unmeasured failure. This is the roadmap's "two-hour
+stream, screen off" item, and it is the largest energy decision in the app.
+
+**Micro, dismissed:** `Wire.writeFrame` allocates a 24-byte `ByteBuffer` per sent frame
+(30/s) — the same class as the 0.45 µs measured on the Rust side. `FramedOutbound`'s
+`wake` semaphore can keep permits belonging to frames that were dropped by
+`clearVideo()`; the writer consumes them as empty wakeups, so it is a few spurious
+iterations and not a leak.
+
+**Waste that is not there** (checked, so nobody has to re-check): the outbound queues
+are bounded (2 video frames, 32 control) and overflow clears the queue and requests an
+IDR rather than growing; the encoder copies each access unit once and
+`H264AnnexB.normalize` returns the same array when it is already Annex-B; TLS handshakes
+are limited to four workers with an absolute 5 s deadline, and closing the server wakes
+them; `refreshQualityCapabilities()` (a Camera2 + MediaCodec capability scan) runs on
+four events — resume, permission result, USB attach, LAN start — and never per frame.
+`MainActivity` is 1 096 lines and carries the UI, session, camera and quality wiring;
+that is a structure note for a future split, not a defect.
+
 ## What this ledger does not claim
 
 - The sink's own copy is out of scope (the benchmark counts submissions instead of

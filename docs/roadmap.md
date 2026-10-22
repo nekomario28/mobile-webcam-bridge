@@ -61,7 +61,9 @@ the claim each one would let us make.
   `yuu へ配信中（申告名）` and `許可したPC（1台）`.
 - **A two-hour stream.** Screen off, thermal steady state, no leak; and the numbers
   for CPU, memory and battery so the 10 Hz preview publish and 30 fps decode have a
-  measured cost rather than an assumed one.
+  measured cost rather than an assumed one. This is also the decision point for
+  `FLAG_KEEP_SCREEN_ON`, which the app holds for the whole session today because
+  screen-off capture is unmeasured (see [performance.md](performance.md)).
   *Closes when:* the run exists with its numbers in `docs/evidence/`.
 - **Windows on hardware.** The CI job proves it compiles and the unit tests pass; it
   does not prove a DirectShow consumer sees frames.

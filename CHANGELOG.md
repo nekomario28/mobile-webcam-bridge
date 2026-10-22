@@ -2,6 +2,16 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Read the phone side for repeat work. One real find: every accepted Wi-Fi connection
+  read the certificate from the Android Keystore, hashed it, formatted the digest as 64
+  hex characters and parsed that hex straight back into bytes, with the access key
+  hex-decoded per connection as well. The identity now caches the certificate and the
+  decoded key (refreshed on rotation) and answers with the digest itself; a wiring test
+  fails if the session goes back to `fingerprint().chunked(2)`. The rest of the phone is
+  recorded in [docs/performance.md](docs/performance.md), including the largest energy
+  item — `FLAG_KEEP_SCREEN_ON` for the whole session, kept because screen-off capture is
+  unmeasured rather than because it is free.
+
 - Measure the pipeline itself, not just what was added to it. An ignored in-crate test
   streams a committed 90-frame 1280x720 H.264 fixture through the real frame loop with
   a counting sink: **decode 0.22 ms, swscale 0.61 ms, whole loop 1.47 ms per frame**
