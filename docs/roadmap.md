@@ -110,6 +110,12 @@ equivalent), and a weekly `fuzz` run (the decoders carry
 a committed corpus; the stable property tests run per pull request). The host UI itself is now covered by
 AccessKit-driven tests, so "clicking this opens that" no longer needs a screenshot.
 
+## Performance
+
+[performance.md](performance.md) is the ledger: per-second work, five-run medians, the
+findings worth fixing, and the dismissals that were measured rather than argued. The
+bulk — decode, swscale, sink submit — is not measured there, and says so.
+
 ## How a claim gets accepted
 
 1. A gate or a test that fails before and passes after (`docs/gates.md`).

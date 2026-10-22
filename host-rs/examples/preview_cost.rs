@@ -47,5 +47,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (c + p) * 10.0 / 1e6 * 100.0
         );
     }
+    // The GUI side of the same picture, and the per-frame allocation on the receive
+    // path: both are on a 10 Hz / 30 Hz path, so their cost belongs in the same table.
+    #[cfg(feature = "gui")]
+    {
+        let (width, height) = (320usize, 180usize);
+        let rgba = vec![200u8; width * height * 4];
+        let runs = 200;
+        let mut build = Vec::with_capacity(runs);
+        for _ in 0..runs {
+            let started = Instant::now();
+            let image = egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba);
+            build.push(started.elapsed());
+            black_box(&image);
+        }
+        let mean = build.iter().map(|d| d.as_secs_f64()).sum::<f64>() / build.len() as f64;
+        println!(
+            "GUI preview image 320x180: {:.1} us per update, {:.2} % of one core at 10 Hz",
+            mean * 1e6,
+            mean * 10.0 * 100.0
+        );
+    }
+
+    // One payload allocation and copy per received access unit, as the framing reader
+    // does it. 100 KB is a keyframe; 20 KB is a P frame.
+    for size in [20 * 1024usize, 100 * 1024] {
+        let runs = 2000;
+        let mut sample = Vec::with_capacity(runs);
+        for _ in 0..runs {
+            let started = Instant::now();
+            let mut payload = vec![7u8; size];
+            black_box(&mut payload);
+            sample.push(started.elapsed());
+        }
+        let mean = sample.iter().map(|d| d.as_secs_f64()).sum::<f64>() / sample.len() as f64;
+        println!(
+            "receive payload {size} B: {:.2} us per frame, {:.3} % of one core at 30 fps",
+            mean * 1e6,
+            mean * 30.0 * 100.0
+        );
+    }
+
     Ok(())
 }
