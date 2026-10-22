@@ -27,6 +27,11 @@ import javax.security.auth.x500.X500Principal
 class SecureLanIdentity(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("secure_wifi", Context.MODE_PRIVATE)
     @Volatile private var secret: String = loadOrCreateSecret()
+    /** The same secret as bytes: a connection authenticates with a constant-time compare,
+     * and decoding the hex on every accepted connection was pure repetition. */
+    @Volatile private var secretBytes: ByteArray = decodeHex(secret)
+    /** Certificate DER, read from the Keystore once. Cleared when the key is created. */
+    @Volatile private var certificateDer: ByteArray? = null
 
     private fun loadOrCreateSecret(): String {
         val encrypted = prefs.getString(ENCRYPTED_SECRET, null)
@@ -78,15 +83,23 @@ class SecureLanIdentity(context: Context) {
         val next = newSecret()
         persist(next)
         secret = next
+        secretBytes = decodeHex(next)
     }
 
     fun authenticates(candidate: ByteArray): Boolean =
-        MessageDigest.isEqual(candidate, decodeHex(secret))
+        MessageDigest.isEqual(candidate, secretBytes)
 
-    fun fingerprint(): String {
-        val cert = keyStore().getCertificate(KEY_ALIAS) as X509Certificate
-        return hex(MessageDigest.getInstance("SHA-256").digest(cert.encoded))
-    }
+    /** The pinned SHA-256 the PC compares against, as bytes: the peer binding is a
+     * digest, and every connection used to hex it and parse it straight back. */
+    fun fingerprintBytes(): ByteArray =
+        MessageDigest.getInstance("SHA-256").digest(certificateDer())
+
+    fun fingerprint(): String = hex(fingerprintBytes())
+
+    private fun certificateDer(): ByteArray =
+        certificateDer ?: (keyStore().getCertificate(KEY_ALIAS) as X509Certificate).encoded.also {
+            certificateDer = it
+        }
 
     fun listener(port: Int): SSLServerSocket {
         require(Build.VERSION.SDK_INT >= 29) { "Secure Wi-Fi requires Android 10 or later; USB remains available" }
@@ -121,6 +134,8 @@ class SecureLanIdentity(context: Context) {
                     .build()
             )
             generator.generateKeyPair()
+            // A regenerated key carries a new certificate; any cached one is stale.
+            certificateDer = null
         }
         return store
     }

@@ -103,6 +103,50 @@ class SecondarySurfaceWiringTest {
     }
 
     @Test
+    fun a_connection_uses_the_binding_bytes_instead_of_reparsing_the_fingerprint() {
+        // Measured while reading the phone side: every accepted Wi-Fi connection read
+        // the certificate from the Keystore, hashed it, formatted 32 bytes as hex, and
+        // then parsed that hex straight back into bytes. The identity now answers with
+        // the digest itself, and the two forms cannot drift because one derives the
+        // other.
+        fun read(name: String): String =
+            generateSequence(File(checkNotNull(System.getProperty("user.dir")))) { it.parentFile }
+                .flatMap { root ->
+                    listOf(
+                        File(root, "android/app/src/main/java/dev/nekomario/amb/$name"),
+                        File(root, "app/src/main/java/dev/nekomario/amb/$name"),
+                    ).asSequence()
+                }
+                .firstOrNull { it.isFile }
+                ?.readText()
+                ?: error("$name not found")
+        val identity = read("SecureLanIdentity.kt")
+        val server = read("LanServer.kt")
+        assertTrue(
+            "the identity must expose the digest as bytes",
+            identity.contains("fun fingerprintBytes()"),
+        )
+        assertTrue(
+            "the hex form must derive from the bytes, not be computed separately",
+            identity.contains("fun fingerprint(): String = hex(fingerprintBytes())"),
+        )
+        assertTrue(
+            "the session binding must not hex-encode and parse the fingerprint",
+            server.contains("identity.fingerprintBytes()") &&
+                !server.contains("fingerprint().chunked(2)"),
+        )
+        assertTrue(
+            "the access key must be decoded once, not per connection",
+            identity.contains("secretBytes: ByteArray = decodeHex(secret)") &&
+                identity.contains("MessageDigest.isEqual(candidate, secretBytes)"),
+        )
+        assertTrue(
+            "a rotated key must refresh the cached bytes",
+            identity.contains("secretBytes = decodeHex(next)"),
+        )
+    }
+
+    @Test
     fun the_details_rule_has_exactly_one_owner() {
         // Measured: updateControls set pairAction.visibility on its own and overruled
         // the disclosure, so the key button was back on the main screen while every

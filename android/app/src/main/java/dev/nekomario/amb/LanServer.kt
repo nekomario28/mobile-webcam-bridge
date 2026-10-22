@@ -149,7 +149,7 @@ class LanServer(
                             onSession(closed, false)
                         }
                         if (!error.isNullOrBlank()) onError(error)
-                    }, authorization, identity.fingerprint().chunked(2).map { it.toInt(16).toByte() }.toByteArray(),
+                    }, authorization, identity.fingerprintBytes(),
                         onAuthorization, onCaptureCancelled, capabilities, onQuality)
                     // Parallel handshakes must never seize the same receiver slot.
                     if (!active.compareAndSet(null, session)) {
