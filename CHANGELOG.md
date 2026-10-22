@@ -2,6 +2,13 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Measure the pipeline itself, not just what was added to it. An ignored in-crate test
+  streams a committed 90-frame 1280x720 H.264 fixture through the real frame loop with
+  a counting sink: **decode 0.22 ms, swscale 0.61 ms, whole loop 1.47 ms per frame**
+  (660–680 fps, three interleaved runs) — **about 4.4 % of one core at 30 fps**, i.e.
+  22x the headroom the frame rate needs. The ledger says what that excludes: the sink's
+  copy into a device buffer, hardware decode, the phone and the link.
+
 - Audit what repeats, and write the ledger down. `docs/performance.md` lists every
   per-second path with a five-run median: a received access unit costs 0.45 µs, the
   preview conversion 366 µs, its publish 5 µs, the GUI's preview image 112 µs — about

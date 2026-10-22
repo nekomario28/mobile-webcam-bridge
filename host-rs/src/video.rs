@@ -809,6 +809,224 @@ mod tests {
         std::fs::remove_file(path).ok();
     }
 
+    /// The pipeline's own throughput, on a real 720p H.264 stream.
+    ///
+    /// Ignored by default because it is a measurement, not an assertion: run
+    /// `cargo test --release --features pipewire --lib worker_throughput -- --ignored --nocapture`.
+    /// The sink is a counting fake, so this measures decode, swscale and the frame
+    /// loop — not the copy into a v4l2 or PipeWire buffer, which needs a device.
+    /// Split an Annex-B stream into access units at its AUD NALs (type 9).
+    fn split_access_units(stream: &[u8]) -> Vec<&[u8]> {
+        let mut starts = Vec::new();
+        let mut index = 0;
+        while index + 3 < stream.len() {
+            if stream[index] == 0 && stream[index + 1] == 0 && stream[index + 2] == 1 {
+                let header = index + 3;
+                if header < stream.len() && stream[header] & 0x1f == 9 {
+                    starts.push(index);
+                }
+                index = header;
+            } else {
+                index += 1;
+            }
+        }
+        starts
+            .iter()
+            .enumerate()
+            .map(|(i, &start)| {
+                let end = starts.get(i + 1).copied().unwrap_or(stream.len());
+                &stream[start..end]
+            })
+            .collect()
+    }
+
+    fn contains_idr(unit: &[u8]) -> bool {
+        let mut index = 0;
+        while index + 3 < unit.len() {
+            if unit[index] == 0 && unit[index + 1] == 0 && unit[index + 2] == 1 {
+                if index + 3 < unit.len() && unit[index + 3] & 0x1f == 5 {
+                    return true;
+                }
+                index += 3;
+            } else {
+                index += 1;
+            }
+        }
+        false
+    }
+
+    #[test]
+    #[ignore = "measurement: --release --ignored --nocapture"]
+    fn worker_throughput() {
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        };
+        struct Source {
+            frames: std::collections::VecDeque<wire::Frame>,
+        }
+        impl Transport for Source {
+            fn receive(&mut self, timeout: Duration) -> crate::Result<wire::Frame> {
+                self.poll_receive(timeout)?.ok_or_else(|| "no frame".into())
+            }
+            fn send(&mut self, _frame: &wire::Frame, _timeout: Duration) -> crate::Result<()> {
+                Ok(())
+            }
+            fn poll_receive(&mut self, _timeout: Duration) -> crate::Result<Option<wire::Frame>> {
+                Ok(self.frames.pop_front())
+            }
+        }
+        struct CountingSink {
+            submitted: Arc<Mutex<u64>>,
+        }
+        impl crate::output::Sink for CountingSink {
+            fn layout(&self) -> (usize, usize) {
+                let bpp = if cfg!(windows) { 4 } else { 2 };
+                (1280 * bpp, 1280 * 720 * bpp)
+            }
+            fn ready(&mut self) -> crate::Result<bool> {
+                Ok(true)
+            }
+            fn submit(&mut self, _bytes: &[u8], _w: u32, _h: u32) -> crate::Result<()> {
+                *self.submitted.lock().unwrap() += 1;
+                Ok(())
+            }
+        }
+
+        let stream = include_bytes!("../tests/fixtures/testsrc-720p.h264");
+        let mut config = [0u8; 16];
+        config[..2].copy_from_slice(&1280u16.to_le_bytes());
+        config[2..4].copy_from_slice(&720u16.to_le_bytes());
+        config[4..6].copy_from_slice(&30u16.to_le_bytes());
+        config[12] = 1;
+        config[13] = 1;
+
+        // 1. Decode alone.
+        // One access unit per frame: the fixture was encoded with an AUD NAL before
+        // each, so the decoder is fed the shape the phone sends instead of one
+        // 90-frame packet (which it decodes as a single picture).
+        let access_units = split_access_units(stream);
+        assert!(
+            access_units.len() > 30,
+            "fixture should hold the recorded frames"
+        );
+
+        // 1. Decode alone.
+        let mut decoder = decoder::Decoder::open("off").unwrap();
+        let mut frame = ffmpeg::Frame::empty().unwrap();
+        let decode_started = Instant::now();
+        let mut decoded = 0u64;
+        for (index, unit) in access_units.iter().enumerate() {
+            decoder
+                .send(unit, index as u64 * 33_333, index == 0)
+                .unwrap();
+            while decoder.receive(&mut frame).unwrap() {
+                decoded += 1;
+            }
+        }
+        let decode = decode_started.elapsed();
+
+        // 2. Swscale alone, on a frame of its own: the frame the loop above leaves
+        // behind is not guaranteed to still be valid afterwards.
+        let c = Config {
+            width: 1280,
+            height: 720,
+            fps: 30,
+        };
+        let bpp = if cfg!(windows) { 4 } else { 2 };
+        let mut decoder = decoder::Decoder::open("off").unwrap();
+        let mut frame = ffmpeg::Frame::empty().unwrap();
+        decoder.send(access_units[0], 1_000, true).unwrap();
+        assert!(
+            decoder.receive(&mut frame).unwrap(),
+            "the fixture must decode"
+        );
+        let mut pixels = pixels::Pixels::default();
+        let convert_started = Instant::now();
+        for _ in 0..decoded.max(1) {
+            let bytes = pixels
+                .convert(
+                    &frame,
+                    c,
+                    1280 * bpp,
+                    1280 * 720 * bpp,
+                    Transform {
+                        rotation: 0,
+                        mirror: false,
+                        vertical: false,
+                    },
+                )
+                .unwrap();
+            std::hint::black_box(bytes);
+        }
+        let convert = convert_started.elapsed();
+
+        // 3. The whole loop, ending when the fixture's frames have all been submitted.
+        let stop = Arc::new(AtomicBool::new(false));
+        let submitted = Arc::new(Mutex::new(0u64));
+        let watcher = stop.clone();
+        let counter = submitted.clone();
+        let watchdog = std::thread::spawn(move || {
+            for _ in 0..2000 {
+                if *counter.lock().unwrap() >= decoded.max(1) {
+                    watcher.store(true, Ordering::Release);
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let mut frames = std::collections::VecDeque::new();
+        frames.push_back(wire::Frame::new(wire::VIDEO_CONFIG, 0, config.to_vec()).unwrap());
+        for (index, unit) in access_units.iter().enumerate() {
+            let mut au = wire::Frame::new(wire::VIDEO_AU, index as u32, unit.to_vec()).unwrap();
+            au.header.flags = if index == 0 {
+                wire::KEYFRAME | wire::CONFIG_INCLUDED
+            } else if contains_idr(unit) {
+                wire::KEYFRAME
+            } else {
+                0
+            };
+            au.header.pts_us = index as u64 * 33_333;
+            frames.push_back(au);
+        }
+        let counting = submitted.clone();
+        let settings = Settings {
+            decode: "off".into(),
+            transport: "usb".into(),
+            output: "unused".into(),
+            ..Settings::default()
+        };
+        let pipeline_started = Instant::now();
+        let _ = receive_stream(
+            settings,
+            Box::new(Source { frames }),
+            &stop,
+            Seams {
+                changes: &Mutex::new(None),
+                quality_request: &Mutex::new(None),
+                preview_path: None,
+            },
+            |_| Ok(()),
+            move |_| {
+                Ok(CountingSink {
+                    submitted: counting.clone(),
+                })
+            },
+        );
+        let pipeline = pipeline_started.elapsed();
+        watchdog.join().ok();
+
+        let frames = decoded.max(1) as f64;
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0 / frames;
+        println!(
+            "frames {decoded}  decode {:.2} ms/frame  convert {:.2} ms/frame  pipeline {:.2} ms/frame  ({:.1} fps)",
+            ms(decode),
+            ms(convert),
+            ms(pipeline),
+            frames / pipeline.as_secs_f64(),
+        );
+    }
+
     #[test]
     fn minimal_runtime_closure_when_requested() {
         if std::env::var("MOBILE_WEBCAM_REQUIRE_MINIMAL").as_deref() != Ok("1") {
