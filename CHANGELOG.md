@@ -2,6 +2,25 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Give the USB gate a driver, and fix what it found. The gate for the AOA path (`G0`,
+  `G0.5`) had no way to run: the `PING` type existed as a constant and a wire test, the
+  Android app answers it, and no shipping code ever sent one. `mobile-webcam --usb-probe
+  [--frames N] [--budget-ms N]` now performs the transition, the authorization and N
+  synchronous round trips with the sequence and payload checked on every one, printing RTT
+  percentiles and exiting 0/1/2; `--usb-dump` and `--usb-frames` show the raw transfers and
+  the frames the reader parses, which is how the defects below were found. Measured: **G0
+  passes** (the phone re-enumerates as `18d1:2d01`) and **G0.5 passes at 50 round trips**
+  (rtt p50 80 µs, nothing mismatched or timed out) in 2 of 3 attempts, not yet at the 1000
+  the gate asks for.
+- Three host defects fixed, each found by running the gate: the accessory endpoint can hold
+  frames from a previous host connection (AOA reports no disconnect), so the reader started
+  mid-frame and could never complete one — `Usb::connect` now aligns the stream and keeps
+  the first header it finds instead of discarding a live frame; those stale bytes also made
+  the host sign a challenge the phone had already replaced, which the phone answers
+  BAD_SIGNATURE, i.e. a framing problem reported as a key problem; and a reply check that
+  treated the phone's capability advertisement as the answer to every PING. Evidence:
+  [docs/evidence/2026-10-24-usb-g0.md](docs/evidence/2026-10-24-usb-g0.md).
+
 - Measure the question the two-hour item was really about. Ten minutes on the phone with
   the screen **off** (`Dozing`): **17 851 frames at 30.46 fps**, hardware (vaapi) decode,
   `submitted == decoded` in every one of 587 samples, thermal +4.5 C battery / +7.8 C CPU.

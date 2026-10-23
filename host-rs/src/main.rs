@@ -28,6 +28,12 @@ fn main() {
         // events as JSON lines on stdout. The exit code is the answer a script gates
         // on, so it comes from whether a stream actually happened.
         Command::Headless(options) => std::process::exit(mobile_webcam::headless::run(options)),
+        // The USB gate: AOA transition, authorization, then the synchronous exchange.
+        Command::UsbProbe(options) => std::process::exit(mobile_webcam::usb_probe::cli(&options)),
+        Command::UsbDump { seconds } => std::process::exit(mobile_webcam::usb_probe::dump(seconds)),
+        Command::UsbFrames { seconds } => {
+            std::process::exit(mobile_webcam::usb_probe::frames(seconds))
+        }
         // Explicit recovery, and the only path that ever replaces a stored key:
         // startup fails closed instead, so an unreadable key is never rotated
         // behind the user's back. The old file is renamed, not deleted.

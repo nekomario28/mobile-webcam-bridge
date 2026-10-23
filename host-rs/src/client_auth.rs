@@ -104,6 +104,25 @@ pub fn exchange(
         return Err("phone does not support required per-PC authorization v2".into());
     }
     let challenge = wire::ClientChallenge::decode(&challenge.payload)?;
+    // Diagnostic, off unless asked: a nonce that repeats across runs means the phone is
+    // answering from a session older than this connection, which is invisible otherwise
+    // (the signature simply fails and reads like a key problem).
+    if std::env::var_os("AMB_AUTH_TRACE").is_some() {
+        eprintln!(
+            "auth trace: transport={} binding={} nonce={}",
+            challenge.transport,
+            challenge
+                .phone_binding
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+            challenge
+                .nonce
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+    }
     if challenge.transport != route.transport() {
         return Err("authorization transport binding mismatch".into());
     }
@@ -111,6 +130,13 @@ pub fn exchange(
         return Err("authorization phone certificate binding mismatch".into());
     }
     let label = proposed_label();
+    if std::env::var_os("AMB_AUTH_TRACE").is_some() {
+        eprintln!(
+            "auth trace: label={label:?} public_key_len={} first={:02x}",
+            identity.public_key().len(),
+            identity.public_key()[0]
+        );
+    }
     let message = wire::client_auth_message(
         route.transport(),
         &route.phone_binding(),

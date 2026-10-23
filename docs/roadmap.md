@@ -56,8 +56,17 @@ the claim each one would let us make.
 
 ## P1 — next, each with its closing test
 
-- **USB end to end on this branch.** The AOA path predates the auth work and has not
-  been re-run since. Needs USB debugging off, so adb cannot drive it.
+- **USB end to end on this branch.** Partly measured 2026-10-24: **G0 passes** (the phone
+  re-enumerates as `18d1:2d01`), and **G0.5 passes at 50 round trips** (rtt p50 80 µs, 0
+  mismatches, 0 timeouts) but is **2 of 3 attempts** and has not completed at 1000. Three
+  host defects behind that are fixed (stream alignment at connect, stale-challenge signing,
+  replies mixed with capability frames); what remains looks like the phone's session
+  lifecycle, since the app sends one challenge per accessory session and needs a tap to
+  approve the USB accessory on every attach. See
+  [evidence/2026-10-24-usb-g0.md](evidence/2026-10-24-usb-g0.md).
+  *Closes when:* G0.5 completes at 1000 round trips with no mismatches, timeouts or
+  disconnects across repeated runs.
+
   *Closes when:* gates G0, G0.5 and G1 pass with captured `lsusb` and stdout.
 - **The device actually shows the newest UX.** The installed build predates the
   receiver name, the approved-PC count and the key auto-hide.
