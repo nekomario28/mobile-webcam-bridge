@@ -2,6 +2,12 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Soak to the owner's bar: ten minutes. 600 s and 18 115 frames through the real frame
+  loop leave resident memory settling at **11.3 MB** (down from 27.9 MB as the allocator
+  returns pages) and throughput flat at 30.19–30.23 fps across forty samples. The
+  two-hour item becomes a ten-minute one, and what is left of it needs the phone:
+  battery, temperature, and whether capture survives the screen going off.
+
 - Run a session without a window. `mobile-webcam --headless [--transport usb|lan]
   [--host ADDRESS] [--seconds N]` starts the same worker the window starts, prints every
   control event as one JSON line, and exits **0** if it streamed, **1** if it did not,
