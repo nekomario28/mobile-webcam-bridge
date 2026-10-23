@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Build the host's three FFmpeg libraries; no programs, containers, or other codecs."""
-import argparse, hashlib, json, os, pathlib, subprocess, tarfile, urllib.request
+import argparse, hashlib, json, os, pathlib, subprocess, tarfile, time, urllib.error, urllib.request
 
 PINS={
     "linux":("7.1.5","de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f"),
@@ -9,10 +9,28 @@ PINS={
 NV_REV="0a6fba9a2820628b8103464f4c8753ee05838baa"
 NV_SHA="1d2070546de622fd6074a99d4b283e727988b7c3624ef85f97b88962264314d2"
 
-def archive(url,path,checksum):
+def archive(url,path,checksum,attempts=3):
+    """Fetch a pinned source archive, tolerating a transient network failure.
+
+    Measured 2026-10-23: the Windows job failed three times in one day on
+    `urllib.error.URLError: <urlopen error [Errno 116] Connection timed out>` while
+    fetching this tarball, twice on a pull request and once on `main` — a rerun passed
+    each time. The URL and the sha256 are both pinned, so retrying cannot fetch
+    something else; a partial file is removed before each attempt so a truncated
+    download is never mistaken for a cached one.
+    """
     if not path.exists():
-        with urllib.request.urlopen(url,timeout=60) as source, path.open("wb") as output:
-            while chunk:=source.read(1024*1024):output.write(chunk)
+        for attempt in range(1,attempts+1):
+            try:
+                with urllib.request.urlopen(url,timeout=60) as source, path.open("wb") as output:
+                    while chunk:=source.read(1024*1024):output.write(chunk)
+                break
+            except (urllib.error.URLError,TimeoutError,OSError) as error:
+                path.unlink(missing_ok=True)
+                if attempt==attempts:
+                    raise RuntimeError(f"cannot fetch {url} after {attempts} attempts: {error}") from error
+                print(f"fetch attempt {attempt} failed ({error}); retrying",flush=True)
+                time.sleep(5*attempt)
     if hashlib.sha256(path.read_bytes()).hexdigest()!=checksum:
         raise RuntimeError(f"source checksum mismatch: {path}")
 
