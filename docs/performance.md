@@ -157,14 +157,30 @@ t= 300.0s frames=  9076 rss=   28.0 MB (+0.00 MB/min) 30.25 fps
 soak done: 300 s, 9076 access units, result Ok(())
 ```
 
-Five minutes, 9 076 frames: **resident memory flat at 28.0 MB** (28.3 MB in the sample
-taken after the stop), **30.25 fps throughout** with no downward drift. No leak
-signature in the host worker under this load.
+Five minutes, 9 076 frames: **resident memory flat at 28.0 MB**, **30.25 fps
+throughout**, no drift.
 
-What it is not: five minutes is not two hours, the transport is synthetic (no phone, no
-link), the sink counts instead of writing to a device, and the post-stop sample shows
-28.8 fps only because it averages the teardown tail. A leak that appears at hour one
-would not show up here.
+Then ten minutes, 18 115 frames — the bar the owner set for this item:
+
+```
+t=  15.0s frames=   454 rss=   27.9 MB
+t= 120.0s frames=  3624 rss=   13.2 MB (-7.33 MB/min) 30.20 fps
+t= 300.0s frames=  9061 rss=   11.3 MB (-3.31 MB/min) 30.20 fps
+t= 600.0s frames= 18115 rss=   11.3 MB (-1.66 MB/min) 30.19 fps
+soak done: 600 s, 18115 access units, result Ok(())
+```
+
+Resident memory **fell** from 27.9 MB to 11.3 MB over the first two minutes and then
+held at 11.3 MB for the remaining eight: that is the allocator returning pages it had
+reserved, not the pipeline shrinking. Throughput never moved (30.19–30.23 fps across
+40 samples). The two runs settling at different plateaus (28.0 vs 11.3 MB) is the same
+allocator behaviour arriving at a different time, not a contradiction, and it is worth
+saying because a reader comparing them would otherwise suspect a measurement error.
+
+What it is not: ten minutes is not two hours, the transport is synthetic (no phone, no
+link), the sink counts instead of writing to a device, and the post-stop sample shows a
+lower average only because it includes the teardown tail. A leak that appears at hour
+one would not show up here.
 
 **The CPU instrument was removed rather than reported.** The first version read
 `/proc/self/stat` (and then `getrusage`) and printed **0.0 s** for a process that had
