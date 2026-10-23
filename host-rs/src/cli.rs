@@ -12,6 +12,7 @@ Usage: mobile-webcam [--help]
        mobile-webcam --worker <parent-pid>
        mobile-webcam --replace-identity [--force]
        mobile-webcam --headless [--transport usb|lan] [--host ADDRESS] [--seconds N]
+       mobile-webcam --usb-probe [--frames N] [--budget-ms N]
 
   --help               Show this text.
   --headless           Run a session without a window and print every event as one
@@ -20,6 +21,12 @@ Usage: mobile-webcam [--help]
   --transport MODE     Override the stored transport for this run.
   --host ADDRESS       Override the stored Wi-Fi address for this run.
   --seconds N          Stop after N seconds.
+  --usb-probe          Run the USB end-to-end gate against an attached phone: the AOA
+                       transition, the per-PC authorization, then N synchronous
+                       PING/PONG round trips with sequence and payload checked on every
+                       one. Exits 0 on PASS, 1 on FAIL, 2 if it could not start.
+  --frames N           Round trips for --usb-probe (default 1000, the G0.5 count).
+  --budget-ms N        Per-exchange timeout for --usb-probe (default 2000).
   --replace-identity   Move an unreadable stored PC key aside and publish a new
                        one. Every phone that approved this PC must approve it
                        again. Refused while the stored key is still readable,
@@ -38,6 +45,15 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             .map(|parent| Command::Worker { parent })
             .map_err(|_| format!("--worker needs a numeric parent PID, got {parent:?}")),
         ["--headless", rest @ ..] => headless(rest),
+        ["--usb-probe", rest @ ..] => usb_probe(rest),
+        ["--usb-frames", seconds] => seconds
+            .parse::<u64>()
+            .map(|seconds| Command::UsbFrames { seconds })
+            .map_err(|_| format!("--usb-frames needs seconds, got {seconds:?}")),
+        ["--usb-dump", seconds] => seconds
+            .parse::<u64>()
+            .map(|seconds| Command::UsbDump { seconds })
+            .map_err(|_| format!("--usb-dump needs seconds, got {seconds:?}")),
         ["--replace-identity"] => Ok(Command::ReplaceIdentity { force: false }),
         ["--replace-identity", "--force"] => Ok(Command::ReplaceIdentity { force: true }),
         ["--force"] => Err("--force only applies together with --replace-identity".into()),
@@ -75,6 +91,29 @@ fn headless(rest: &[&str]) -> Result<Command, String> {
         index += 2;
     }
     Ok(Command::Headless(options))
+}
+
+/// `--usb-probe` followed by any order of `--frames` and `--budget-ms`.
+fn usb_probe(rest: &[&str]) -> Result<Command, String> {
+    let mut options = crate::usb_probe::Options::default();
+    let mut index = 0;
+    while index < rest.len() {
+        let value = rest.get(index + 1).copied();
+        match (rest[index], value) {
+            ("--frames", Some(n)) => match n.parse::<u64>() {
+                Ok(frames) if frames > 0 => options.frames = frames,
+                _ => return Err(format!("--frames needs a positive number, got {n:?}")),
+            },
+            ("--budget-ms", Some(n)) => match n.parse::<u64>() {
+                Ok(ms) if ms > 0 => options.budget = std::time::Duration::from_millis(ms),
+                _ => return Err(format!("--budget-ms needs a positive number, got {n:?}")),
+            },
+            (flag, None) => return Err(format!("{flag} needs a value")),
+            (flag, _) => return Err(format!("unexpected argument after --usb-probe: {flag:?}")),
+        }
+        index += 2;
+    }
+    Ok(Command::UsbProbe(options))
 }
 
 #[cfg(test)]
@@ -146,6 +185,26 @@ mod tests {
         assert!(parse_words(&["--headless", "--seconds", "0"]).is_err());
         assert!(parse_words(&["--headless", "--seconds"]).is_err());
         assert!(parse_words(&["--headless", "stray"]).is_err());
+    }
+
+    #[test]
+    fn usb_probe_defaults_to_the_gate_count_and_refuses_nonsense() {
+        let Command::UsbProbe(defaults) = parse_words(&["--usb-probe"]).unwrap() else {
+            panic!("expected a probe");
+        };
+        assert_eq!(defaults.frames, 1000, "G0.5 asks for 1000 round trips");
+
+        let Command::UsbProbe(options) =
+            parse_words(&["--usb-probe", "--budget-ms", "500", "--frames", "20"]).unwrap()
+        else {
+            panic!("expected a probe");
+        };
+        assert_eq!(options.frames, 20);
+        assert_eq!(options.budget, std::time::Duration::from_millis(500));
+
+        assert!(parse_words(&["--usb-probe", "--frames", "0"]).is_err());
+        assert!(parse_words(&["--usb-probe", "--frames"]).is_err());
+        assert!(parse_words(&["--usb-probe", "stray"]).is_err());
     }
 
     #[test]

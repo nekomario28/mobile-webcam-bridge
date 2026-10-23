@@ -169,6 +169,9 @@ fn receive(
             Duration::from_secs(5),
         )?)
     } else {
+        // `Usb::connect` aligns the stream at a frame boundary; without that, an endpoint
+        // still holding a previous connection's frames makes the reader start mid-frame
+        // and it can never complete one.
         Box::new(Usb::connect(&device.ok_or("select a USB device")?)?)
     };
     let client_id = identity

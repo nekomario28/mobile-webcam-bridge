@@ -219,6 +219,9 @@ pub struct Usb {
     output: u8,
     packet_size: usize,
     reader: FrameReader,
+    /// Bytes already read from the endpoint but not yet handed to the reader — how
+    /// alignment keeps a header it found instead of discarding a live frame.
+    pending: Vec<u8>,
 }
 impl Usb {
     pub fn connect(id: &DeviceId) -> crate::Result<Self> {
@@ -279,14 +282,25 @@ impl Usb {
         if alternate != 0 {
             handle.set_alternate_setting(interface, alternate)?;
         }
-        Ok(Self {
+        let mut opened = Self {
             handle,
             interface,
             input,
             output,
             packet_size,
             reader: FrameReader::default(),
-        })
+            pending: Vec::new(),
+        };
+        // Start at a frame boundary. The endpoint may hold frames from a previous host
+        // connection; AOA reports no disconnect, so nothing else resets it.
+        if std::env::var_os("AMB_USB_TRACE").is_some() {
+            eprintln!(
+                "usb trace: input ep=0x{input:02x} output ep=0x{output:02x} packet_size={packet_size} chunk={} ",
+                packet_size * 128
+            );
+        }
+        let _ = opened.align_stream();
+        Ok(opened)
     }
 }
 impl Drop for Usb {
@@ -294,6 +308,54 @@ impl Drop for Usb {
         let _ = self.handle.release_interface(self.interface);
     }
 }
+impl Usb {
+    /// Start the stream at a frame boundary.
+    ///
+    /// The accessory endpoint has no session boundary: it holds whatever the phone
+    /// wrote before this host opened it, and AOA reports no disconnect, so a new host
+    /// process begins reading in the middle of somebody else's frame. Measured
+    /// 2026-10-24 with `--usb-dump`: the phone writes one transfer for the 24-byte header
+    /// and one for the payload, and a host that starts on a *payload* transfer sees
+    /// `66 bytes` then `24 bytes` forever — every header is read as garbage and the reader
+    /// can never complete a frame ("incomplete frame deadline expired").
+    ///
+    /// This reads transfers until one begins with `AMB1` (a header), then discards that
+    /// frame's payload transfer, leaving the reader at the next header. Dropping a whole
+    /// frame keeps an already-aligned stream aligned, so this is safe to call once after
+    /// opening — which is where it is called from.
+    pub fn align_stream(&mut self) -> std::io::Result<bool> {
+        let mut buffer = [0u8; 1024];
+        for _ in 0..64 {
+            let count = match self.read_raw(Duration::from_millis(200), &mut buffer) {
+                Ok(count) => count,
+                Err(_) => return Ok(false),
+            };
+            if count == 0 {
+                // Nothing queued: the next thing this host reads is a fresh header.
+                return Ok(true);
+            }
+            if count >= 4 && &buffer[..4] == b"AMB1" {
+                // This is a frame's beginning. Keep it — the reader consumes `pending`
+                // first, so nothing is lost and no payload has to be guessed at.
+                self.pending.extend_from_slice(&buffer[..count]);
+                return Ok(true);
+            }
+            // Anything else is the tail of somebody else's frame: drop it and look again.
+        }
+        Ok(false)
+    }
+
+    /// Read raw bytes, bypassing the frame reader. Diagnostic only: when a peer's frames
+    /// do not parse, the bytes are the only fact that settles what it sent.
+    pub fn read_raw(&self, timeout: Duration, buffer: &mut [u8]) -> std::io::Result<usize> {
+        match self.handle.read_bulk(self.input, buffer, timeout) {
+            Ok(count) => Ok(count),
+            Err(rusb::Error::Timeout) => Ok(0),
+            Err(error) => Err(std::io::Error::other(format!("{error:?}"))),
+        }
+    }
+}
+
 impl Transport for Usb {
     fn receive(&mut self, timeout: Duration) -> crate::Result<Frame> {
         self.poll_receive(timeout)?.ok_or_else(|| {
@@ -304,8 +366,17 @@ impl Transport for Usb {
         let handle = &self.handle;
         let input = self.input;
         let chunk_size = self.packet_size * 128;
+        let pending = &mut self.pending;
         self.reader
             .poll(timeout, |bytes, left| {
+                // Bytes alignment already read come first: dropping them would throw away
+                // a complete header and desynchronise the stream by one frame.
+                if !pending.is_empty() {
+                    let count = pending.len().min(bytes.len());
+                    bytes[..count].copy_from_slice(&pending[..count]);
+                    pending.drain(..count);
+                    return Ok(count);
+                }
                 let length = bytes.len().min(chunk_size);
                 // rusb preserves partial transferred bytes even on libusb timeout.
                 // A zero-length USB packet is not a disconnected byte stream.
@@ -319,7 +390,11 @@ impl Transport for Usb {
                     }
                     // The framing layer reports io::Error, so a libusb failure is
                     // carried as its kind rather than through a boxed trait object.
-                    Err(error) => Err(std::io::Error::other(error)),
+                    Err(rusb::Error::Overflow) => Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "USB transfer larger than the read buffer",
+                    )),
+                    Err(error) => Err(std::io::Error::other(format!("{error:?}"))),
                 }
             })
             .map_err(Into::into)
