@@ -395,6 +395,10 @@ fn read_loose_file(path: &std::path::Path) -> crate::Result<String> {
 }
 
 /// A short unpredictable name component, from the platform CSPRNG.
+///
+/// Unix only: it names the temporary file in the Unix save path, and on Windows the
+/// store answers paths itself.
+#[cfg(unix)]
 fn random_suffix() -> String {
     let mut bytes = [0u8; 8];
     if ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).is_err() {
