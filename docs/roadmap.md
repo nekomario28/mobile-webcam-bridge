@@ -110,6 +110,15 @@ the claim each one would let us make.
   from committed fixtures, including the preview frame, and fails on states that
   become indistinguishable.
 
+## CI cost, measured
+
+The `linux` job was cancelled at its 30-minute limit twice in a row (2026-10-23). The
+step timings say why: **the apt dependency install took 17 min 1 s** on that runner, and
+the job still had an FFmpeg build, the whole test suite and two release builds ahead of
+it. The gate and the release artefacts are now separate jobs and both have a 45-minute
+budget — the same correction the windows job needed earlier, for the same reason. A slow
+mirror should not be able to cancel the tests.
+
 ## Gates in place
 
 `host-ci` / `rust-host-ci` (unit, clippy, fmt, Windows target), `android-ci`, the

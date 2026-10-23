@@ -17,8 +17,39 @@ env:
   MOBILE_WEBCAM_REQUIRE_MINIMAL: '1'
 jobs:
   linux:
+    # Measured (job 120309340125, 2026-10-23): the dependency step alone took **17 min
+    # 1 s** on this runner, and the job was canceled at the 30-minute limit while still
+    # building. Twice in a row for the same reason. So: the gate and the release build
+    # are separate jobs (each pays the apt + FFmpeg cost, but neither carries the other's
+    # tail), and the budget is 45 minutes rather than 30 — the same correction the
+    # windows job already needed, for the same reason, with the measurement written down.
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Native dependencies and pinned Rust
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.98.1
+      - name: Formatting, lints and the test suite
+        run: |
+          python3 host-rs/tools/build_ffmpeg.py linux --prefix "$PWD/host-rs/target/native-linux" --cache "$PWD/host-rs/target/ffmpeg-source"
+          export FFMPEG_DIR="$PWD/host-rs/target/native-linux"
+          export LD_LIBRARY_PATH="$FFMPEG_DIR/lib"
+          export MOBILE_WEBCAM_REQUIRE_MINIMAL=1
+          cargo fmt --manifest-path host-rs/Cargo.toml --check
+          cargo clippy --manifest-path host-rs/Cargo.toml --all-targets --locked -- -D warnings
+          cargo test --manifest-path host-rs/Cargo.toml --locked
+
+  linux-release:
+    # The release artifacts and the settings round-trip against the classic Qt app.
+    # Separated so a slow apt mirror cannot cancel the gate above.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -27,22 +58,24 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev qt6-base-dev
-          rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
+          rustup toolchain install 1.98.1 --profile minimal
           rustup default 1.98.1
-      - name: Minimal FFmpeg and native checks
+      - name: Release builds and the Qt settings round-trip
         run: |
           python3 host-rs/tools/build_ffmpeg.py linux --prefix "$PWD/host-rs/target/native-linux" --cache "$PWD/host-rs/target/ffmpeg-source"
           export FFMPEG_DIR="$PWD/host-rs/target/native-linux"
           export LD_LIBRARY_PATH="$FFMPEG_DIR/lib"
-          cargo fmt --manifest-path host-rs/Cargo.toml --check
-          cargo clippy --manifest-path host-rs/Cargo.toml --all-targets --locked -- -D warnings
-          sh host-rs/tools/build_linux.sh
+          export MOBILE_WEBCAM_REQUIRE_MINIMAL=1
+          export CARGO_BUILD_JOBS=1
+          cargo build --manifest-path host-rs/Cargo.toml --release --bin mobile-webcam --locked
+          cargo build --manifest-path host-rs/Cargo.toml --release --no-default-features --bin mobile-webcam-usb --locked
           # pkg-config output must word-split into separate flags.
           # shellcheck disable=SC2046
           c++ -fPIC host-rs/tests/qt_settings.cpp $(pkg-config --cflags --libs Qt6Core) -o host-rs/target/qt-settings
           host-rs/target/qt-settings write host-rs/target/qt-fixture.conf
           cargo run --manifest-path host-rs/Cargo.toml --locked --example settings_fixture -- host-rs/target/qt-fixture.conf
           host-rs/target/qt-settings read host-rs/target/qt-fixture.conf
+
   pipewire-backend:
     # The PipeWire camera is an optional feature, so nothing else in CI compiles it.
     # Without this job it would rot silently between releases.
