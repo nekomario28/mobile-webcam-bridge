@@ -116,8 +116,16 @@ from those bytes, and keeps the decoded secret — refreshed on rotation. One
 constant-time compare remains (`MessageDigest.isEqual`), and a wiring test fails if the
 session goes back to `fingerprint().chunked(2)`.
 
-**Reported, needs the device — screen-off capture is unmeasured, and the flag does not
-mean what it looks like.** `MainActivity` sets `FLAG_KEEP_SCREEN_ON` while capture runs.
+**Answered 2026-10-24 — screen-off capture works, and the flag is not what decides it.**
+Ten minutes with the screen `Dozing`: 17 851 frames at 30.46 fps, hardware decode,
+`submitted == decoded` throughout
+([evidence](evidence/2026-10-24-phone-soak-screen-off.md)). The foreground service with
+`foregroundServiceType="camera"` is the mechanism, which is what the earlier correction
+said; `FLAG_KEEP_SCREEN_ON` stays because it costs nothing when the app is not in front.
+Energy is still unmeasured: both runs were on a charger, and the instrument prints that
+warning instead of a drain figure.
+
+**The flag does not mean what it looks like.** `MainActivity` sets `FLAG_KEEP_SCREEN_ON` while capture runs.
 An earlier version of this ledger said that keeps a two-hour screen awake for a two-hour
 stream; **that was wrong** — the flag applies only while its window is visible, so a
 backgrounded session does not hold the screen on at all. What it does do is keep the

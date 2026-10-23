@@ -2,6 +2,18 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Measure the question the two-hour item was really about. Ten minutes on the phone with
+  the screen **off** (`Dozing`): **17 851 frames at 30.46 fps**, hardware (vaapi) decode,
+  `submitted == decoded` in every one of 587 samples, thermal +4.5 C battery / +7.8 C CPU.
+  So capture survives the screen turning off on this device — the foreground service with
+  the camera type is the mechanism, and `FLAG_KEEP_SCREEN_ON` was never the thing deciding
+  it. Recorded in
+  [docs/evidence/2026-10-24-phone-soak-screen-off.md](docs/evidence/2026-10-24-phone-soak-screen-off.md);
+  energy remains unmeasured because the phone was on a charger, which the instrument says
+  rather than reporting the charger's draw. The instrument also gained a `SCREEN_OFF` mode
+  and a per-row frame rate from the host's decoded counter — the first version counted log
+  lines and printed `fps=1.0` for a healthy 30 fps stream.
+
 - Retry the pinned FFmpeg fetch instead of asking for a rerun. The Windows job failed
   three times in one day on `URLError: Connection timed out` while fetching the source
   tarball — twice on a pull request and once on `main` — and passed on every rerun. The

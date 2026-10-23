@@ -27,6 +27,10 @@ SERIAL=${2:-}
 # reboot), while the PC stores the one it was paired with. Without this the run waits
 # out its whole timeout talking to an address nobody is listening on.
 PHONE_HOST=${PHONE_HOST:-}
+# SCREEN_OFF=1 presses power once capture is confirmed, which is the only honest way to
+# ask "does the stream survive the screen going off" — the app holds FLAG_KEEP_SCREEN_ON
+# while its window is visible, and that flag does not stop an explicit power press.
+SCREEN_OFF=${SCREEN_OFF:-0}
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 ADB="adb"
 [ -n "$SERIAL" ] && ADB="adb -s $SERIAL"
@@ -110,17 +114,34 @@ mah() { awk -v v="$1" 'BEGIN { printf "%.1f", v/1000 }'; }
 # a battery that stopped.
 reachable() { $ADB shell true >/dev/null 2>&1; }
 
-row() { # label, sample
-  printf '%-9s %-6s %-9s %-4s %-10s %-9s %-9s %-9s %s\n' \
+# Frames the host has decoded so far, from the newest stats line it wrote.
+#
+# Counting stats *lines* was the first version and it was wrong: the worker emits one per
+# second, so "lines per second" is ~1.0 while a healthy stream runs at 30 fps — the table
+# said `fps=1.0`, which reads as a catastrophic stall. The frame count is inside the line;
+# take it from there.
+host_frames() {
+  grep -o '"decoded":[0-9]*' "$LOG" 2>/dev/null | tail -1 | cut -d: -f2 || echo 0
+}
+
+row() { # label, sample, fps for this interval ("-" when it is the first row)
+  printf '%-9s %-6s %-9s %-4s %-10s %-9s %-9s %-9s %-8s %s\n' \
     "$1" "$(echo "$2" | cut -d' ' -f1)%" "$(mah "$(echo "$2" | cut -d' ' -f2)") mAh" \
     "$(echo "$2" | cut -d' ' -f3)" "$(battery_c "$(echo "$2" | cut -d' ' -f4)")C" \
     "$(zone_c "$(echo "$2" | cut -d' ' -f5)")C" "$(zone_c "$(echo "$2" | cut -d' ' -f6)")C" \
-    "$(echo "$2" | cut -d' ' -f7)" "$(echo "$2" | cut -d' ' -f8)"
+    "$(echo "$2" | cut -d' ' -f7)" "$3" "$(echo "$2" | cut -d' ' -f8)"
+}
+
+# Decoded frames per second over this interval. This is the number that answers "is video
+# still arriving", so it belongs on every row; `-` means no reading yet.
+interval_fps() {
+  [ "$2" = "" ] && { echo '-'; return; }
+  awk -v now="$1" -v before="$2" -v seconds="$3" 'BEGIN{printf "%.1f", (seconds>0) ? (now-before)/seconds : 0}'
 }
 
 header() {
-  printf '%-9s %-6s %-9s %-4s %-10s %-9s %-9s %-9s %s\n' \
-    elapsed level charge src battery cpu skin screen state
+  printf '%-9s %-6s %-9s %-4s %-10s %-9s %-9s %-9s %-8s %s\n' \
+    elapsed level charge src battery cpu skin screen host state
 }
 
 echo "device: $($ADB shell getprop ro.product.model 2>/dev/null | tr -d '\r')"
@@ -129,7 +150,7 @@ before=$(sample)
 sleep 30
 after=$(sample)
 header
-row "idle" "$after"
+row "idle" "$after" '-'
 # The control: if the phone is on a charger, battery drain measures the charger and not
 # the workload, and the run must say so rather than publish a number that cannot move.
 if [ "$(echo "$after" | cut -d' ' -f3)" != "battery" ]; then
@@ -166,9 +187,19 @@ if ! $ADB shell dumpsys activity services dev.nekomario.amb 2>/dev/null | grep -
   exit 3
 fi
 echo "capturing; sampling for ${SECONDS_TO_RUN}s"
+if [ "$SCREEN_OFF" = "1" ]; then
+  # One power press. A `KeyEvent.KEYCODE_POWER` send needs no more privilege than any
+  # other input event, and the sample below reports mWakefulness so the table shows
+  # whether the screen actually went off rather than assuming the press worked.
+  $ADB shell input keyevent 26 >/dev/null 2>&1
+  sleep 3
+  echo "screen-off requested; wakefulness is now: $($ADB shell dumpsys power 2>/dev/null | sed -n 's/^  mWakefulness=\([A-Za-z]*\).*/\1/p' | head -1)"
+fi
 echo
 header
-row "start" "$(sample)"
+last_stats=$(host_frames)
+last_elapsed=0
+row "start" "$(sample)" '-'
 started=$(date +%s)
 while kill -0 "$HOST_PID" 2>/dev/null; do
   sleep 60
@@ -178,7 +209,11 @@ while kill -0 "$HOST_PID" 2>/dev/null; do
     printf '%-9s %s\n' "${elapsed}s" "phone unreachable (left adb/USB); sampling stops here"
     break
   fi
-  row "${elapsed}s" "$(sample)"
+  now_stats=$(host_frames)
+  fps=$(interval_fps "$now_stats" "$last_stats" "$((elapsed - last_elapsed))")
+  last_stats=$now_stats
+  last_elapsed=$elapsed
+  row "${elapsed}s" "$(sample)" "$fps"
 done
 wait "$HOST_PID"
 host_exit=$?
