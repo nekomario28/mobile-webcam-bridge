@@ -138,8 +138,12 @@ class SecondarySurfaceWiringTest {
         assertTrue(
             "the access key must be decoded once, not per connection",
             identity.contains("secretBytes: ByteArray = decodeHex(secret)") &&
-                identity.contains("MessageDigest.isEqual(candidate, secretBytes)"),
+                identity.contains("authenticatesWith(secretBytes, candidate)"),
         )
+        // Note on what this file can and cannot prove: it reads source text, so it is a
+        // one-owner guard, not evidence about behaviour. The review of 2026-10-23 said
+        // so about the earlier version of this assertion, and the behaviour now has its
+        // own test (`WireAndQueueTest.pairing_code_comparison_is_exact`).
         assertTrue(
             "a rotated key must refresh the cached bytes",
             identity.contains("secretBytes = decodeHex(next)"),

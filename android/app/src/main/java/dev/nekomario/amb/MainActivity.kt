@@ -390,14 +390,7 @@ class MainActivity : Activity() {
         super.onResume()
         foreground = true
         // The notification's Stop action arrives as an intent; consume it once.
-        if (intent?.action == ACTION_STOP_SESSION) {
-            setIntent(Intent(intent).setAction(null))
-            stopCamera()
-            // Measured on a physical phone: the camera really stopped (0 frames, the
-            // foreground service gone) while the status still read "streaming".
-            showConnectionStatus(ui("Camera stopped", "カメラを停止しました"))
-            return
-        }
+        if (consumeStopIntent(intent)) return
         refreshQualityCapabilities()
         if (cameraStartRequested) startCamera()
         if (::usb.isInitialized && connectionMode == ConnectionMode.USB && session == null) discoverUsb()
@@ -422,11 +415,35 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // The notification's Stop must work whether or not this Activity is in front:
+        // with `launchMode="singleTop"` a second delivery takes this path, so handling
+        // it only in onResume left the button dead in exactly the case the notification
+        // exists for (the user looking at the app while streaming).
+        if (consumeStopIntent(intent)) return
         if (connectionMode == ConnectionMode.USB && intent.action == UsbManager.ACTION_USB_ACCESSORY_ATTACHED) {
             clearUsbPermissionRequest()
             usbPermissionDeclined = false
             discoverUsb()
         }
+    }
+
+    /**
+     * Stop capture if, and only if, this intent carries the process's own stop token.
+     *
+     * The Activity is exported, so `ACTION_STOP_SESSION` alone proves nothing: any
+     * installed app can start an explicit component with any action, and without this
+     * check it could end a live stream. A forged intent is ignored rather than consumed,
+     * so the next genuine one is still honoured.
+     */
+    private fun consumeStopIntent(intent: Intent?): Boolean {
+        if (intent?.action != ACTION_STOP_SESSION) return false
+        if (intent.getStringExtra(EXTRA_STOP_TOKEN) != stopTokenValue) return false
+        setIntent(Intent(intent).setAction(null))
+        stopCamera()
+        // Measured on a physical phone: the camera really stopped (0 frames, the
+        // foreground service gone) while the status still read "streaming".
+        showConnectionStatus(ui("Camera stopped", "カメラを停止しました"))
+        return true
     }
 
     /** Only the UI owner queries/revises capabilities. Reader threads see an
@@ -1079,6 +1096,11 @@ class MainActivity : Activity() {
 
         /** From the foreground notification's Stop action. */
         internal const val ACTION_STOP_SESSION = "dev.nekomario.amb.STOP_SESSION"
+        internal const val EXTRA_STOP_TOKEN = "dev.nekomario.amb.STOP_TOKEN"
+
+        /** Random per process; the notification hands it back so a foreign app cannot. */
+        private val stopTokenValue: String = java.util.UUID.randomUUID().toString()
+        internal fun stopToken(): String = stopTokenValue
         internal const val EXTRA_USB_REQUEST_ID = "usb_permission_request_id"
         private const val CAMERA_PERMISSION_REQUEST = 1001
         private const val NOTIFICATION_PERMISSION_REQUEST = 1002

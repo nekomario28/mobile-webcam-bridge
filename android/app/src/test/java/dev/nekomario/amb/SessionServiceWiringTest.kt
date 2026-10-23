@@ -29,6 +29,18 @@ class SessionServiceWiringTest {
             ?: error("MainActivity.kt not found from ${System.getProperty("user.dir")}")
     }
 
+    private fun serviceSource(): String {
+        val roots = generateSequence(File(checkNotNull(System.getProperty("user.dir")))) { it.parentFile }
+        val candidates = roots.flatMap { root ->
+            listOf(
+                File(root, "android/app/src/main/java/dev/nekomario/amb/SessionService.kt"),
+                File(root, "app/src/main/java/dev/nekomario/amb/SessionService.kt"),
+            ).asSequence()
+        }
+        return candidates.firstOrNull { it.isFile }?.readText()
+            ?: error("SessionService.kt not found from ${System.getProperty("user.dir")}")
+    }
+
     /** Body of the first function whose declaration contains [signature]. */
     private fun bodyOf(source: String, signature: String): String {
         val declaration = source.indexOf(signature)
@@ -132,8 +144,32 @@ class SessionServiceWiringTest {
         assertTrue("the activity must handle the notification's stop action",
             source.contains("ACTION_STOP_SESSION"))
         assertTrue("the stop action must stop the camera",
-            bodyOf(source, "override fun onResume()").contains("stopCamera("))
+            bodyOf(source, "private fun consumeStopIntent(").contains("stopCamera("))
         assertTrue("the service must be released with the activity",
             bodyOf(source, "override fun onDestroy()").contains("SessionService.stop(this)"))
+    }
+
+    /**
+     * The Stop action used to be accepted from any intent carrying the action string,
+     * and the Activity is exported — so any installed app could end a live stream. The
+     * action alone is not a credential; the token is generated per process and only the
+     * notification (same process) can hand it back.
+     */
+    @Test
+    fun the_stop_action_is_not_a_credential_any_app_can_present() {
+        val activity = mainActivitySource()
+        val consume = bodyOf(activity, "private fun consumeStopIntent(")
+        assertTrue("the action alone must not be enough",
+            consume.contains("getStringExtra(EXTRA_STOP_TOKEN)") && consume.contains("return false"))
+        assertTrue("the notification must send the token",
+            serviceSource().contains("EXTRA_STOP_TOKEN, MainActivity.stopToken()"))
+        assertTrue("the token must be random per process, not a constant",
+            activity.contains("UUID.randomUUID().toString()"))
+        // Both delivery paths: `singleTop` re-delivery arrives at onNewIntent, and
+        // handling only onResume left the button dead while the app was in front.
+        assertTrue("onResume must consume it",
+            bodyOf(activity, "override fun onResume()").contains("consumeStopIntent(intent)"))
+        assertTrue("onNewIntent must consume it too",
+            bodyOf(activity, "override fun onNewIntent(").contains("consumeStopIntent(intent)"))
     }
 }

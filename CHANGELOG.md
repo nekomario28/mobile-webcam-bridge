@@ -2,6 +2,22 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Independent security review, and its findings fixed the same day. An independent
+  session (`aiand/deepseek-v4.1-flash`, no prior context) reviewed the areas the request
+  named and returned two real findings, both fixed: **any installed app could end a live
+  capture** through the exported Activity's unauthenticated stop action (the notification
+  now carries a random per-process token, and the action is handled on both intent
+  paths), and **`VIDEO_IDR_REQUEST` had no rate limit** while the `PING` beside it had one
+  (now 8 per second, extras dropped). It also named four tests that were passing for the
+  wrong reason — a substring assertion standing in for the constant-time comparison, a
+  renderer test that injected its own result, an Area-C hypothesis with no test that
+  attempted it, and a symlink claim asserted only in a comment — all four replaced with
+  behavioural tests. One of the replacements **found a further gap**: an unrecognised
+  refusal code rendered as generic "connection failed" advice. The preview record now
+  re-opens with `O_NOFOLLOW` plus an owner and mode re-check. Report, evidence boundary
+  and per-item disposition:
+  [docs/reviews/independent-review-2026-10-23.md](docs/reviews/independent-review-2026-10-23.md).
+
 - Update the phone, and measure a real stream. The APK on the device was still
   `0.1.4` from the previous release line; `main` builds `0.2.0`, and installing it
   showed the new UX working on the device — `許可したPC（3台）`, the receiver named while

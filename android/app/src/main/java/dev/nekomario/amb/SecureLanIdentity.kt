@@ -87,7 +87,7 @@ class SecureLanIdentity(context: Context) {
     }
 
     fun authenticates(candidate: ByteArray): Boolean =
-        MessageDigest.isEqual(candidate, secretBytes)
+        authenticatesWith(secretBytes, candidate)
 
     /** The pinned SHA-256 the PC compares against, as bytes: the peer binding is a
      * digest, and every connection used to hex it and parse it straight back. */
@@ -158,7 +158,19 @@ class SecureLanIdentity(context: Context) {
             }
         }
 
-        private fun hex(bytes: ByteArray): String =
+        /**
+         * The comparison itself, reachable from a test without a Context or a Keystore.
+         *
+         * The only guard for this was a wiring test that asserted the *source text*
+         * contains `MessageDigest.isEqual`, which the 2026-10-23 review correctly called
+         * out: it stays green if the substring survives anywhere while the behaviour
+         * changes, and it never observes a result. This is a behaviour, so it gets a
+         * behavioural test.
+         */
+        internal fun authenticatesWith(expected: ByteArray, candidate: ByteArray): Boolean =
+            MessageDigest.isEqual(expected, candidate)
+
+        internal fun hex(bytes: ByteArray): String =
             bytes.joinToString("") { "%02X".format(it.toInt() and 0xff) }
 
         private fun newSecret(): String =

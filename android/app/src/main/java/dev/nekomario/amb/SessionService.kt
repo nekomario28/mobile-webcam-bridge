@@ -56,6 +56,11 @@ class SessionService : Service() {
             this, 0,
             Intent(this, MainActivity::class.java)
                 .setAction(MainActivity.ACTION_STOP_SESSION)
+                // The Activity is exported (it has to be: it is the launcher entry and
+                // the USB-accessory target), so the action alone is not a credential —
+                // any installed app can start an explicit component with any action.
+                // This token is generated once per process and never leaves it.
+                .putExtra(MainActivity.EXTRA_STOP_TOKEN, MainActivity.stopToken())
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
