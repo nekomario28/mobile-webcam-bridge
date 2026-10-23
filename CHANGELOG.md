@@ -2,6 +2,13 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Retry the pinned FFmpeg fetch instead of asking for a rerun. The Windows job failed
+  three times in one day on `URLError: Connection timed out` while fetching the source
+  tarball — twice on a pull request and once on `main` — and passed on every rerun. The
+  URL and the sha256 are pinned and a partial download is removed before each attempt, so
+  three attempts cannot fetch something else; measured: an unresolvable host fails after
+  3 attempts in 15 s and leaves no partial file for the next attempt to trust.
+
 - Close the review's three remaining questions. The world-readable system fallback no
   longer denies startup (the loader already intended to skip credentials from a fallback;
   `read_file` refused the file first, so the two disagreed — a fallback now drops the

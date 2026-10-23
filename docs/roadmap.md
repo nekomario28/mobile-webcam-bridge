@@ -123,6 +123,15 @@ it. The gate and the release artefacts are now separate jobs and both have a 45-
 budget — the same correction the windows job needed earlier, for the same reason. A slow
 mirror should not be able to cancel the tests.
 
+## Known flake, with a fix
+
+The Windows job's FFmpeg fetch failed three times on 2026-10-23 with
+`URLError: Connection timed out` (twice on a PR, once on `main`) and passed on every
+rerun. `build_ffmpeg.py::archive` now makes three attempts with backoff, removing any
+partial file between them; the URL and sha256 are pinned, so a retry cannot fetch
+something else. Verified against an unresolvable host: fails after 3 attempts in 15 s,
+no partial file left.
+
 ## Gates in place
 
 `host-ci` / `rust-host-ci` (unit, clippy, fmt, Windows target), `android-ci`, the
