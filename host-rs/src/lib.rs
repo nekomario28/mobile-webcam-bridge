@@ -3,6 +3,7 @@ pub mod client_auth;
 pub mod control;
 #[cfg(feature = "gui")]
 pub mod gui;
+pub mod headless;
 pub mod identity;
 #[cfg(feature = "video")]
 pub mod output;
@@ -22,10 +23,16 @@ pub mod wire;
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// What the process was asked to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Gui,
-    Worker { parent: u32 },
-    ReplaceIdentity { force: bool },
+    Worker {
+        parent: u32,
+    },
+    ReplaceIdentity {
+        force: bool,
+    },
+    /// A session without a window, for scripts and CI.
+    Headless(crate::headless::Options),
     Help,
 }

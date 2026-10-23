@@ -98,6 +98,12 @@ again the moment the first approval lands; the button brings it back for a secon
 PC. The `Authorized PCs` button also carries the count ("none yet", "2"), because
 that is the fastest answer to "is my PC registered?".
 
+**The session is the worker; the window is one client of it.** `--headless` starts the
+same worker the window starts and speaks the same control protocol to it, which is why a
+script can drive a session with no egui, no window and no X server: nothing in the
+pipeline depends on being drawn. Its exit code is a fact about the run (0 streamed, 1
+not, 2 could not start), not a log line someone has to parse.
+
 **The window wakes on a clock while a session runs.** Everything else here is
 event-driven, which is the right default — but a preview and a silence banner are
 functions of time, not of an event. Measured on a real phone: after the camera

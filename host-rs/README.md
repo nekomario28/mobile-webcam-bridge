@@ -57,6 +57,18 @@ See [security and test boundaries](../docs/security.md).
 
 Rotation, flips and advanced settings are in **Details**.
 
+## Running without a window
+
+```
+mobile-webcam --headless [--transport usb|lan] [--host ADDRESS] [--seconds N]
+```
+
+Starts the same worker the window starts, prints every control event as one JSON line
+on stdout, and stops after `N` seconds or when the session ends. The exit code is the
+answer a script gates on: **0** if a stream happened, **1** if it did not, **2** if it
+could not start (no settings, unreadable key, worker refused). It reads the stored
+settings, so pairing is unchanged, and `--transport`/`--host` override only that run.
+
 ## Build and verification
 
 The Rust host reuses the Android app, AMB1 protocol, FFmpeg, libusb and Windows
