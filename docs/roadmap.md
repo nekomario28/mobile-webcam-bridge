@@ -63,18 +63,14 @@ the claim each one would let us make.
   receiver name, the approved-PC count and the key auto-hide.
   *Closes when:* an APK built from `main` is on the phone and a screenshot shows
   `yuu へ配信中（申告名）` and `許可したPC（1台）`.
-- **A long stream on the phone.** The owner's bar is **ten minutes**, not two hours:
-  long enough to show drift if there is any. The host half is already done and in
-  [performance.md](performance.md) — 600 s, 18 115 frames, memory settling at 11.3 MB
-  and throughput flat at 30.19 fps. What remains needs the phone: battery and thermal
-  numbers for the 10 Hz preview publish and 30 fps decode, and whether capture survives
-  the screen turning off (which is what `FLAG_KEEP_SCREEN_ON` is *not* about — it only
-  applies while the window is visible).
-  *Closes when:* a ten-minute run with the phone exists, with battery and temperature
-  recorded in `docs/evidence/`. First attempt 2026-10-23:
-  [6 min 27 s at 30.47 fps with hardware decode, ended by the phone leaving the USB
-  bus](evidence/2026-10-23-phone-soak.md) — the numbers are in, the ten minutes are not,
-  and the phone needs a replug to continue.
+- ~~**A long stream on the phone.**~~ Closed 2026-10-24:
+  [ten minutes on the phone with the screen off](evidence/2026-10-24-phone-soak-screen-off.md)
+  — 17 851 frames at **30.46 fps**, hardware decode, `submitted == decoded` in every
+  sample, screen `Dozing` throughout, thermal +4.5 C battery / +7.8 C CPU. First attempt
+  (2026-10-23) reached 6 min 27 s before the phone left the USB bus.
+  **What is still missing is energy**, because the phone was on a charger for both runs;
+  that needs it unplugged with Wi-Fi as the only link, and the instrument refuses to
+  report a drain figure from a charger rather than printing the charger's.
 - **Windows on hardware.** The CI job proves it compiles and the unit tests pass; it
   does not prove a DirectShow consumer sees frames.
   *Closes when:* a Windows machine shows the virtual camera in another app and the
