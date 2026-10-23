@@ -68,7 +68,13 @@ pub fn proposed_label() -> String {
     "this PC".to_string()
 }
 
-fn reason_text(reason: u8) -> String {
+/// The words a refusal arrives as.
+///
+/// `pub(crate)` so the GUI test can drive the *chain* (wire code → text → rendered
+/// title) rather than re-writing the strings, which is what the 2026-10-23 review
+/// called out: two tests shared literals, so a wording change could break the chain
+/// while both stayed green.
+pub(crate) fn reason_text(reason: u8) -> String {
     match reason {
         wire::AUTH_REASON_UNKNOWN => "this PC is not known to the phone".to_string(),
         wire::AUTH_REASON_REVOKED => "this PC's access was revoked on the phone".to_string(),

@@ -3,6 +3,7 @@ package dev.nekomario.amb
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -112,5 +113,21 @@ class WireAndQueueTest {
             release.countDown()
             writer.close()
         }
+    }
+
+    /**
+     * The access-key comparison, behaviourally. Right key true; wrong key, wrong length,
+     * empty, and correct-prefix-wrong-suffix all false. The wiring test that asserts the
+     * source contains `MessageDigest.isEqual` is kept as a one-owner guard, but it cannot
+     * fail for a wrong result, which is what this does.
+     */
+    @Test
+    fun pairing_code_comparison_is_exact() {
+        val secret = SecureLanIdentity.decodeHex("00112233445566778899aabbccddeeff")
+        assertTrue(SecureLanIdentity.authenticatesWith(secret, secret.copyOf()))
+        assertFalse(SecureLanIdentity.authenticatesWith(secret, SecureLanIdentity.decodeHex("00112233445566778899aabbccddee00")))
+        assertFalse(SecureLanIdentity.authenticatesWith(secret, secret.copyOf(8)))
+        assertFalse(SecureLanIdentity.authenticatesWith(secret, ByteArray(0)))
+        assertFalse(SecureLanIdentity.authenticatesWith(secret, secret.reversedArray()))
     }
 }

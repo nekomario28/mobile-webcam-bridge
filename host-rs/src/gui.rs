@@ -646,6 +646,13 @@ fn refusal(error: &str) -> Option<Refusal> {
         || lowered.contains("is not known to the phone")
     {
         Some(Refusal::Unknown)
+    } else if lowered.contains("rejected this pc") {
+        // `reason_text` answers a code it does not know with this sentence, so the GUI
+        // must classify it too. The new chain test found that it did not, which meant an
+        // unrecognised code fell through to the generic "connection failed" advice and
+        // told the user nothing about what to do — the very failure this classifier
+        // exists to prevent.
+        Some(Refusal::Unknown)
     } else {
         None
     }
@@ -1581,6 +1588,33 @@ mod tests {
         assert_eq!(human_age(86_400 * 2, false), "2 d ago");
         // Never negative or "0 ago": the clock can move backwards across a reboot.
         assert_eq!(human_age(0, false), "just now");
+    }
+
+    #[test]
+    fn every_reason_code_reaches_a_rendered_title() {
+        // The chain, not the strings: the wire code goes through `reason_text` exactly
+        // as the connection path does, and every code must be recognised by the GUI's
+        // classifier. Adding a code to `reason_text` without teaching `refusal()` about
+        // it now fails here.
+        for code in [
+            crate::wire::AUTH_REASON_UNKNOWN,
+            crate::wire::AUTH_REASON_REVOKED,
+            crate::wire::AUTH_REASON_EXPIRED,
+            crate::wire::AUTH_REASON_TOO_MANY,
+            crate::wire::AUTH_REASON_BAD_SIGNATURE,
+            0xff,
+        ] {
+            let text = crate::client_auth::reason_text(code);
+            let recognised = refusal(&text);
+            assert!(
+                recognised.is_some(),
+                "code {code} produced {text:?}, which the GUI cannot classify"
+            );
+            // And the rendered title is non-empty in both languages.
+            let japanese = recognised.unwrap().title(|_, ja| ja);
+            let english = recognised.unwrap().title(|en, _| en);
+            assert!(!japanese.is_empty() && !english.is_empty());
+        }
     }
 
     #[test]

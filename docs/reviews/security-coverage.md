@@ -19,6 +19,15 @@ no human sign-off.
 
 ## Security claims and the thing that proves each
 
+**2026-10-23 review:** an independent session on `aiand/deepseek-v4.1-flash`, under the
+request in `request-2026-10-21.md`, read the areas below and both findings it returned are
+fixed — see the disposition at the end of that report. It also named four tests that were
+passing for the wrong reason, all four now behavioural, and one of the replacements found
+a further real gap (an unrecognised refusal code rendered as generic advice). An
+independent assessment is still owed: that session is an outsider to the code but not to
+this machine, it ran static source review plus `cargo test`, and it did not touch a
+device, the emulator, Gradle, the GUI or the CI workflows.
+
 | Claim | Evidence |
 |---|---|
 | Wi-Fi is TLS 1.3 with a pinned phone certificate | `host-rs/tests/secure_lan.rs`, emulator negative-path matrix (wrong pin, wrong key) |

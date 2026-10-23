@@ -94,8 +94,10 @@ impl Producer {
         let file = match posio::private_create(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                // The GUI created it first; it is ours by construction.
-                OpenOptions::new().read(true).write(true).open(path)?
+                // The GUI created it first. "By construction" is not a check: this is the
+                // path that normally runs, so it refuses anything that is not our own
+                // regular file — no symlink, no other owner, no group/other bits.
+                posio::private_reopen(path)?
             }
             Err(error) => return Err(error),
         };
@@ -282,6 +284,50 @@ mod tests {
         let producer = Producer::open(&path).unwrap();
         let consumer = Consumer::open(&path).unwrap();
         (path, producer, consumer)
+    }
+
+    /// The path that normally runs is GUI-creates-then-worker-opens, and the first
+    /// version of `Producer::open` re-opened that file with a plain `open`, which follows
+    /// a symlink. The 2026-10-23 review called this out as a question (Q1) because the
+    /// tests only ever exercised that fallback without asserting anything about it.
+    #[cfg(unix)]
+    #[test]
+    fn a_record_replaced_by_a_symlink_is_refused() {
+        let dir = std::env::temp_dir().join(format!("mwb-symlink-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let record = dir.join("record.bin");
+        let elsewhere = dir.join("elsewhere.bin");
+        std::fs::write(&elsewhere, b"not a preview record").unwrap();
+        // The GUI creates the record; the substitution happens before the worker opens.
+        drop(create_path_in(&record).unwrap());
+        std::fs::remove_file(&record).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &record).unwrap();
+
+        let refused = Producer::open(&record);
+        assert!(refused.is_err(), "a symlinked record must not be opened");
+        // The target was not written through either.
+        let untouched = std::fs::read(&elsewhere).unwrap();
+        assert_eq!(&untouched, b"not a preview record");
+
+        // And a record whose permissions widened is refused as well.
+        std::fs::remove_file(&record).unwrap();
+        drop(create_path_in(&record).unwrap());
+        let mut permissions = std::fs::metadata(&record).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o644);
+        std::fs::set_permissions(&record, permissions).unwrap();
+        assert!(
+            Producer::open(&record).is_err(),
+            "a world-readable record must be refused"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `create_path` with a caller-chosen name, so a test can substitute the file.
+    #[cfg(unix)]
+    fn create_path_in(path: &Path) -> io::Result<File> {
+        let file = posio::private_create(path)?;
+        file.set_len((HEADER + CAPACITY) as u64)?;
+        Ok(file)
     }
 
     #[test]

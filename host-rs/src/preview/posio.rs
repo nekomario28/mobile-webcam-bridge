@@ -42,6 +42,49 @@ pub(super) fn private_create(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
+/// Re-open a record this process already created, refusing anything that is not a
+/// regular file we own.
+///
+/// The normal path is GUI-creates-then-worker-opens, so this is the path that runs. The
+/// first version used a plain `open`, which follows a symlink: an attacker able to
+/// replace the file between the two steps would have the worker write frames through it
+/// (found in the 2026-10-23 review as Q1). `O_NOFOLLOW` plus an owner and mode re-check
+/// closes it for the cost of two syscalls.
+#[cfg(unix)]
+pub(super) fn private_reopen(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "preview record is not a regular file",
+        ));
+    }
+    if metadata.uid() != unsafe { libc::geteuid() } {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "preview record is owned by another user",
+        ));
+    }
+    if metadata.mode() & 0o077 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "preview record is readable by other users",
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+pub(super) fn private_reopen(path: &Path) -> io::Result<File> {
+    OpenOptions::new().read(true).write(true).open(path)
+}
+
 #[cfg(not(unix))]
 pub(super) fn private_create(path: &Path) -> io::Result<File> {
     OpenOptions::new()

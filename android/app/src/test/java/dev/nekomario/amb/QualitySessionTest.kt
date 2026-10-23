@@ -107,6 +107,48 @@ class QualitySessionTest {
         }
     }
 
+    /**
+     * The claim from the security review's Area C, tested through the real controller
+     * instead of argued for: an authorized PC sends COMMIT_QUALITY to a session that is
+     * not streaming, and no capture may start.
+     *
+     * The named evidence before this was a test that sent PREPARE only, and an
+     * instrumentation check that merely reads the Start button's label — neither
+     * exercises the commit-at-idle path the hypothesis is about. The phase machine
+     * refuses `Commit` outside `Prepared`, and `Prepared` is only entered when the
+     * phone is *already* streaming, so this must hold; now it is asserted.
+     */
+    @Test
+    fun aCommitAtIdleNeverStartsTheCamera() {
+        ServerSocket(0).use { listener ->
+            Socket("127.0.0.1", listener.localPort).use { client ->
+                client.soTimeout = 2000
+                val starts = AtomicInteger()
+                val mode = CaptureModes.supported(CaptureModes.Capabilities("0", "fixture",
+                    listOf(CaptureModes.SizeFps(1280, 720, null)), listOf(CaptureModes.FpsRange(30, 30)))).single()
+                lateinit var controller: PhoneQualityController
+                val session = ClientWireFixture.session(listener.accept(), onQuality = { _, command -> controller.handle(command) })
+                // Everything a PC needs is granted; the phone is simply not streaming.
+                controller = PhoneQualityController(session, { 7 }, { listOf(mode) }, { true }, { true }, { false },
+                    stopCapture = {}, startCapture = { starts.incrementAndGet() }, nowMillis = { 0 })
+                try {
+                    session.start()
+                    ClientWireFixture.authorize(client)
+                    // A staged reply, then the commit that would follow it if this were
+                    // an interactive switch.
+                    send(client, Wire.TYPE_PREPARE_QUALITY, Wire.encodePrepareQuality(Wire.PrepareQuality(1, 7, 1280, 720, 30)))
+                    assertEquals(Wire.RESULT_STAGED, Wire.decodeQualityResult(Wire.readFrame(client.getInputStream()).second).status)
+                    send(client, Wire.TYPE_COMMIT_QUALITY, Wire.encodeEpoch(Wire.Epoch(1, 1)))
+                    controller.tick()
+                    assertEquals("a commit at idle must not start capture", 0, starts.get())
+                    // And the same commit cannot be replayed into an effect later.
+                    controller.tick()
+                    assertEquals(0, starts.get())
+                } finally { session.close() }
+            }
+        }
+    }
+
     @Test
     fun pausedBarrierDropsQueuedAndLateOldGenerationVideo() {
         val blocked = CountDownLatch(1)
