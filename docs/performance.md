@@ -143,6 +143,27 @@ four events — resume, permission result, USB attach, LAN start — and never p
 `MainActivity` is 1 096 lines and carries the UI, session, camera and quality wiring;
 that is a structure note for a future split, not a defect.
 
+## The largest accepted frame (Q5 of the 2026-10-23 review)
+
+`video::tests::largest_configuration_footprint`, ignored by default:
+`cargo test --release --lib largest_configuration_footprint -- --ignored --nocapture`.
+
+```
+config 8192x4096 (33554432 px, the accepted maximum)
+  sink buffer   64.0 MiB (2 bytes per pixel, every page touched)
+  RSS   23.3 ->   87.9 MiB (delta  64.6)
+  decoder frame, arithmetic not measured: 48.0 MiB
+```
+
+About **113 MiB transient on Linux, 192 MiB on Windows** (RGBA sink). The precondition is
+an authorized phone sending a shape its own catalog cannot produce (it caps at
+3840×2160), so the bound is kept rather than tightened — but it is now a measured cost.
+
+The first version of that measurement reported **2.6 MiB for a 64 MiB buffer**: `vec![0u8; n]`
+is calloc-backed, so an RSS delta taken without touching the pages counts almost nothing.
+The real path writes every row; the measurement now touches one byte per page. A buffer
+that is allocated but untouched is not a small buffer.
+
 ## Soak: does the host drift over time?
 
 `host-rs/src/video.rs::worker_soak`, ignored like the throughput test: a fake transport

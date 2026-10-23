@@ -2,6 +2,18 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Close the review's three remaining questions. The world-readable system fallback no
+  longer denies startup (the loader already intended to skip credentials from a fallback;
+  `read_file` refused the file first, so the two disagreed — a fallback now drops the
+  credential and supplies the rest, while the user's own file still fails closed on a
+  readable key). The settings save's temporary name comes from the platform CSPRNG
+  instead of the pid, so a same-user process can no longer pre-create it and block every
+  save. And the largest accepted `VIDEO_CONFIG` is measured rather than argued:
+  **64.6 MiB of resident memory** for the sink buffer at 8192×4096 with every page
+  touched, about 113 MiB transient on Linux and 192 MiB on Windows, so the bound stays —
+  with the measurement's own lesson recorded (an untouched 64 MiB allocation reported
+  2.6 MiB until the pages were touched).
+
 - Independent security review, and its findings fixed the same day. An independent
   session (`aiand/deepseek-v4.1-flash`, no prior context) reviewed the areas the request
   named and returned two real findings, both fixed: **any installed app could end a live

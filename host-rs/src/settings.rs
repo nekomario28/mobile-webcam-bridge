@@ -262,7 +262,11 @@ impl Store {
             for (primary, path) in std::iter::once((true, &self.path))
                 .chain(self.fallbacks.iter().map(|path| (false, path)))
             {
-                let data = read_file(path)?;
+                let data = if primary {
+                    read_file(path)?
+                } else {
+                    read_loose_file(path)?
+                };
                 for (key, value) in parse_ini(&data)? {
                     // Pairing credentials bind to one user's own phone. A
                     // system-wide fallback may provide non-secret defaults but
@@ -317,7 +321,16 @@ impl Store {
             }
             let parent = self.path.parent().ok_or("settings directory unavailable")?;
             std::fs::create_dir_all(parent)?;
-            let temporary = parent.join(format!(".Mobile-Webcam-{}.tmp", std::process::id()));
+            // Unpredictable, not just unique: the first version used the pid, so a
+            // same-user process could pre-create the name and make every save fail
+            // (`create_new` then refuses). Q3 of the 2026-10-23 review; the fix is a
+            // random suffix rather than a retry loop, because no name to guess means no
+            // collision to recover from.
+            let temporary = parent.join(format!(
+                ".Mobile-Webcam-{}-{}.tmp",
+                std::process::id(),
+                random_suffix()
+            ));
             let result = (|| -> crate::Result<()> {
                 use std::os::unix::fs::OpenOptionsExt;
                 let mut file = std::fs::OpenOptions::new()
@@ -366,6 +379,57 @@ fn read_file(path: &std::path::Path) -> crate::Result<String> {
         Err(e) => Err(e.into()),
     }
 }
+/// Read a *system-wide* fallback: never a credential, never a reason to deny startup.
+///
+/// A fallback is not the user's own file — the loader already skips `lanKey` and
+/// `lanFingerprint` from it — so its permissions are not a trust boundary for this
+/// process. Before 2026-10-23 the two disagreed: `read_file` refused any world-readable
+/// file that merely *contained* a key, so a `/etc/xdg` default that mentioned one made
+/// the whole load fail (`error: Wi-Fi credentials are readable by other users`), which is
+/// a startup denial caused by a file the user cannot edit. Here the credential lines are
+/// dropped and everything else is used. Found as Q2 of the independent review.
+#[cfg(unix)]
+fn read_loose_file(path: &std::path::Path) -> crate::Result<String> {
+    let data = read_loose(path)?;
+    Ok(data)
+}
+
+/// A short unpredictable name component, from the platform CSPRNG.
+///
+/// Unix only: it names the temporary file in the Unix save path, and on Windows the
+/// store answers paths itself.
+#[cfg(unix)]
+fn random_suffix() -> String {
+    let mut bytes = [0u8; 8];
+    if ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).is_err() {
+        // A CSPRNG failure is not a reason to refuse to save; fold in the clock so the
+        // name is still not the pid alone.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.subsec_nanos())
+            .unwrap_or(0);
+        bytes[..4].copy_from_slice(&nanos.to_le_bytes());
+    }
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(unix)]
+fn read_loose(path: &std::path::Path) -> crate::Result<String> {
+    match std::fs::read_to_string(path) {
+        Ok(data) if data.len() <= 1024 * 1024 => Ok(data
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                !(trimmed.starts_with("lanKey=") || trimmed.starts_with("lanFingerprint="))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")),
+        Ok(_) => Err("settings file exceeds 1 MiB".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 #[cfg(unix)]
 fn parse_ini(data: &str) -> crate::Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
@@ -499,6 +563,81 @@ mod tests {
     }
 
     use super::*;
+
+    /// Q2 of the 2026-10-23 review: a system-wide fallback that merely *contains* a
+    /// credential used to deny startup entirely.
+    #[cfg(unix)]
+    #[test]
+    fn a_world_readable_fallback_supplies_defaults_instead_of_denying_startup() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let primary = dir.path().join("Mobile Webcam.conf");
+        let fallback = dir.path().join("nekomario28.conf");
+        std::fs::write(
+            &fallback,
+            "[General]\ntransport=\"lan\"\nlanHost=\"192.168.9.9\"\nlanKey=\"aa\"\nlanFingerprint=\"bb\"\n",
+        )
+        .unwrap();
+        // Exactly the state the old reader refused: a key in a file other users read.
+        std::fs::set_permissions(&fallback, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let store = Store {
+            path: primary,
+            fallbacks: vec![fallback.clone()],
+        };
+        let settings = store
+            .load()
+            .expect("a readable system default must not deny startup");
+        assert_eq!(settings.transport, "lan", "non-secret defaults still apply");
+        assert_eq!(settings.lan_host, "192.168.9.9");
+        assert!(
+            settings.lan_key.is_empty() && settings.lan_fingerprint.is_empty(),
+            "a fallback never supplies a credential, readable or not"
+        );
+
+        // The user's own file is still held to the strict rule: a readable key there is
+        // refused, because that file *is* the credential store.
+        let store = Store {
+            path: fallback.clone(),
+            fallbacks: Vec::new(),
+        };
+        let refused = store.load();
+        assert!(
+            refused.is_err(),
+            "a readable primary key must still fail closed"
+        );
+    }
+
+    /// Q3: the temporary name was the pid, so a same-user process could pre-create it and
+    /// make every save fail.
+    #[cfg(unix)]
+    #[test]
+    fn saving_survives_a_pre_created_temporary_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Mobile Webcam.conf");
+        // The name the old implementation would have used.
+        std::fs::write(
+            dir.path()
+                .join(format!(".Mobile-Webcam-{}.tmp", std::process::id())),
+            b"squatter",
+        )
+        .unwrap();
+        let store = Store {
+            path: path.clone(),
+            fallbacks: Vec::new(),
+        };
+        let settings = Settings {
+            lan_host: "192.168.1.3".into(),
+            ..Default::default()
+        };
+        store
+            .save(&settings)
+            .expect("a squatted name must not block saving");
+        assert_eq!(store.load().unwrap().lan_host, "192.168.1.3");
+        // And the two names are not the same value.
+        assert_ne!(random_suffix(), random_suffix());
+    }
+
     #[test]
     fn independent_auto_dimensions_and_fps_are_valid_preferences() {
         for (width, height, fps) in [(1280, 720, 0), (0, 0, 60)] {

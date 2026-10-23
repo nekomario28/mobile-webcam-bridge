@@ -979,6 +979,63 @@ mod tests {
         println!("soak done: {seconds} s, {served} access units, result {result:?}");
     }
 
+    /// What the largest accepted `VIDEO_CONFIG` costs the host, measured rather than
+    /// reasoned about (Q5 of the 2026-10-23 review: "the host trusts the phone's config
+    /// for a large allocation").
+    ///
+    /// Ignored by default: run
+    /// `cargo test --release --lib largest_configuration_footprint -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "measurement: --release --ignored --nocapture"]
+    fn largest_configuration_footprint() {
+        let rss = || -> f64 {
+            let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(0.0)
+                / 1024.0
+        };
+        // The largest shape the parser accepts: 8192x4096 = 33,554,432 pixels, its cap.
+        let mut bytes = [0u8; 16];
+        bytes[..2].copy_from_slice(&8192u16.to_le_bytes());
+        bytes[2..4].copy_from_slice(&4096u16.to_le_bytes());
+        bytes[4..6].copy_from_slice(&30u16.to_le_bytes());
+        bytes[12] = 1;
+        bytes[13] = 1;
+        let config = Config::parse(&bytes).expect("8192x4096 is the accepted maximum");
+        let bpp = if cfg!(windows) { 4 } else { 2 };
+        let layout = config.width as usize * bpp * config.height as usize;
+
+        // Touch one byte per page: `vec![0u8; n]` is calloc-backed, so an RSS delta
+        // measured without touching reports ~2.6 MiB for a 64 MiB buffer — a lazy
+        // allocation that looks like a small one. The real path writes every row, so
+        // every page is touched, and this is the number that matches a live stream.
+        let before = rss();
+        let mut sink = vec![0u8; layout];
+        for offset in (0..layout).step_by(4096) {
+            sink[offset] = 1;
+        }
+        let after_sink = rss();
+        // The decoder's own frame is I420: 1.5 bytes per pixel, plus swscale output.
+        let decoder_estimate = config.width as usize * config.height as usize * 3 / 2;
+        println!(
+            "config {}x{} ({} px, the accepted maximum)\n  sink buffer {:>6.1} MiB ({} bytes per pixel, every page touched)\n  RSS {:>6.1} -> {:>6.1} MiB (delta {:>5.1})\n  decoder frame, arithmetic not measured: {:.1} MiB",
+            config.width,
+            config.height,
+            config.width as u64 * config.height as u64,
+            layout as f64 / (1024.0 * 1024.0),
+            bpp,
+            before,
+            after_sink,
+            after_sink - before,
+            decoder_estimate as f64 / (1024.0 * 1024.0),
+        );
+        std::hint::black_box(&sink);
+    }
+
     /// Split an Annex-B stream into access units at its AUD NALs (type 9).
     fn split_access_units(stream: &[u8]) -> Vec<&[u8]> {
         let mut starts = Vec::new();

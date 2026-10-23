@@ -38,11 +38,10 @@ the device rows, on a real XQ-GE44 over Wi-Fi.
    *Closes when:* `docs/RELEASE.md` names the edition and the field build reports the
    same string, and a release cut from `main` produces APK + Linux + Windows artifacts
    that install over the field build.
-3. **Three known lows from the 2026-10-23 review** (accepted, not fixed):
-   `Store::load` fails closed on a world-readable system fallback that holds the key
-   (loud rather than silent, so left); the settings save uses a predictable temp name
-   (same-UID DoS, outside the stated model); and the host allocates up to 8192×8192 for a
-   `VIDEO_CONFIG` an authorized phone sends (bounded, but a sink-side cap belongs there).
+3. ~~**Three known lows from the 2026-10-23 review**~~ Closed: the world-readable
+   fallback now supplies defaults instead of denying startup, the settings temp name is
+   unpredictable, and the largest accepted frame is measured (113 MiB transient on Linux,
+   192 MiB on Windows) rather than argued about — all three with tests or a number.
 4. **Bounded worker control and real-phone switching acceptance** (#10, #8). The
    staged-apply state machine and the bounded control queue need the real-phone
    matrix from #8 run against them, not the synthetic peer.
