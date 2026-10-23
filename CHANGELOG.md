@@ -2,6 +2,17 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Update the phone, and measure a real stream. The APK on the device was still
+  `0.1.4` from the previous release line; `main` builds `0.2.0`, and installing it
+  showed the new UX working on the device — `許可したPC（3台）`, the receiver named while
+  streaming (`yuu へ配信中（申告名）`), and the pairing key, key rotation and "erase
+  authorization data" all behind Details. Then a ten-minute stream attempt:
+  **11 609 frames at 30.47 fps, 1280x720, hardware (vaapi) decode, nothing dropped**,
+  with battery +2.1 C, CPU +14.4 C and skin +4.5 C before the phone left the USB bus at
+  6 min 27 s and the host reported a connection reset. Battery drain was not measurable
+  (the phone was on AC); the record is in
+  [docs/evidence/2026-10-23-phone-soak.md](docs/evidence/2026-10-23-phone-soak.md).
+
 - Soak to the owner's bar: ten minutes. 600 s and 18 115 frames through the real frame
   loop leave resident memory settling at **11.3 MB** (down from 27.9 MB as the allocator
   returns pages) and throughput flat at 30.19–30.23 fps across forty samples. The

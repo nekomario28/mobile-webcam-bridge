@@ -67,7 +67,10 @@ the claim each one would let us make.
   the screen turning off (which is what `FLAG_KEEP_SCREEN_ON` is *not* about — it only
   applies while the window is visible).
   *Closes when:* a ten-minute run with the phone exists, with battery and temperature
-  recorded in `docs/evidence/`.
+  recorded in `docs/evidence/`. First attempt 2026-10-23:
+  [6 min 27 s at 30.47 fps with hardware decode, ended by the phone leaving the USB
+  bus](evidence/2026-10-23-phone-soak.md) — the numbers are in, the ten minutes are not,
+  and the phone needs a replug to continue.
 - **Windows on hardware.** The CI job proves it compiles and the unit tests pass; it
   does not prove a DirectShow consumer sees frames.
   *Closes when:* a Windows machine shows the virtual camera in another app and the
