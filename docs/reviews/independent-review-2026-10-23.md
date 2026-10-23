@@ -280,14 +280,25 @@ left exactly as the reviewer wrote it.
 
 - **Q1 (preview record substitution) — fixed** as part of item 4 above. The reviewer's
   suggested remedy is what was implemented.
-- **Q2 (`Store::load` aborts on a world-readable fallback holding `lanKey`) — accepted, open.**
-  A misconfigured `/etc/xdg` file becomes a startup denial. Not fixed here: changing it
-  touches the credential-loading path that the identity tests cover, and the failure is
-  loud and safe rather than silent and wrong. Recorded in the roadmap as a known low.
-- **Q3 (predictable temp name for settings save) — accepted, open.** Denial of service by
-  a same-user pre-created file. Same-UID access is outside the stated threat model, and
-  the fix (retry with a random name) touches the save path; recorded, not done.
+- **Q2 (`Store::load` aborts on a world-readable fallback holding `lanKey`) — FIXED.** The
+  loader already *intended* to skip credentials from a system fallback, and it said so in
+  a comment, but `read_file` refused the whole file first, so the two disagreed and the
+  outcome was a startup denial caused by a file the user cannot edit. Fallbacks are now
+  read with `read_loose_file`: credential lines are dropped and the rest supplies
+  defaults. The user's own file keeps the strict rule (a readable key there still fails
+  closed), and a test asserts both halves.
+- **Q3 (predictable temp name for settings save) — FIXED.** The name was
+  `.Mobile-Webcam-<pid>.tmp` with `create_new`, so a same-user process could pre-create
+  it and make every save fail. The suffix now comes from the platform CSPRNG, and a test
+  pre-creates the old predictable name and asserts that saving still works.
 - **Q4 — fixed**, see ID-001.
-- **Q5 (host trusts `VIDEO_CONFIG` up to 8192×8192) — accepted, open, bounded.** The
-  allocation is bounded to 33,554,432 pixels and the peer must be authorized. Worth a
-  cap on the *sink* side rather than the parser; recorded in the roadmap.
+- **Q5 (host trusts `VIDEO_CONFIG` up to 8192×8192) — measured, accepted.** The
+  reviewer's precondition is an authorized phone sending a shape no phone produces (the
+  app's own catalog caps at 3840×2160). Measured with
+  `video::tests::largest_configuration_footprint` (ignored by default): at the accepted
+  maximum, 8192×4096, the sink buffer costs **64.6 MiB of resident memory** with every
+  page touched, plus a 48 MiB decoder frame by arithmetic — about **113 MiB transient on
+  Linux, 192 MiB on Windows** where the sink layout is RGBA. That is acceptable on a
+  desktop, so the bound stays and is now evidence-backed rather than argued; the
+  measurement also produced its own lesson (the first version of it did *not* touch the
+  pages and reported 2.6 MiB for a 64 MiB buffer — a lazy allocation that looks small).
