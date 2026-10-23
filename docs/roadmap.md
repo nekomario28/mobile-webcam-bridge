@@ -65,7 +65,11 @@ the claim each one would let us make.
   approve the USB accessory on every attach. See
   [evidence/2026-10-24-usb-g0.md](evidence/2026-10-24-usb-g0.md).
   *Closes when:* G0.5 completes at 1000 round trips with no mismatches, timeouts or
-  disconnects across repeated runs.
+  disconnects across repeated runs. **Blocked on an app-side defect**, not on the host:
+  the phone sends `QUALITY_CAPABILITIES` before its authorization result in some attempts,
+  which `protocol/client-authorization-v2.md` calls a protocol error and the host correctly
+  refuses; and it sends one challenge per accessory session, so a host that reconnects can
+  find no session to authorize.
 
   *Closes when:* gates G0, G0.5 and G1 pass with captured `lsusb` and stdout.
 - **The device actually shows the newest UX.** The installed build predates the
