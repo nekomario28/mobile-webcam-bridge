@@ -192,3 +192,20 @@ the wrapper's trap, and hence running that mode through the wrapper rather than
 by hand. The trap was then verified by sending it `SIGTERM` mid-run: it printed
 `interrupted; restoring` and the device came back at its physical size with the
 font scale, screen timeout and adb forwards clean.
+
+### The single-reader release, on a physical phone
+
+`AccessorySession.closeAndAwait` depends on the platform unblocking a read when the descriptor
+closes, and the guard that refusal justifies is only as good as that. The instrument is part of
+the instrumentation APK (the emulator has no accessory, so CI cannot run it) and it asserts the
+precondition on every iteration instead of assuming it:
+
+```
+adb shell am instrument -w -e physicalDevice true -e usbReaderMeasurement true \
+  dev.nekomario.amb.test/dev.nekomario.amb.UsbPermissionInstrumentation
+```
+
+It needs the accessory attached and the app to hold the USB permission for it, and it installs
+nothing: only the androidTest APK is installed, because reinstalling the app APK clears that
+grant. Measured result and its boundary:
+[evidence/2026-10-25-usb-reader-release.md](evidence/2026-10-25-usb-reader-release.md).

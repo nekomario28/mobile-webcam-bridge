@@ -31,6 +31,20 @@
   its own defect: a snapshot reddens one test, ignoring the token reddens two, and reverting
   `MainActivity` to a literal comparison reddens one, with the other 144 green. 148 Android tests.
 
+- Measure the one sentence the second review left as a reading: that closing the accessory
+  descriptor is what unblocks a blocked read. `UsbReaderReleaseMeasurement` drives a real
+  endpoint on the XQ-GE44 through the instrumentation the repository already has, and it asserts
+  the precondition on every iteration, because a read that was not blocked when the descriptor
+  closed proves nothing about unblocking one. The first version of it did not, and printed
+  `released=true in 0 ms` twenty times — the shape of a measurement that has not established
+  that it measured anything. Measured, twice: 10 of 10 raw blocked reads returned in 0 ms after
+  the close and 10 of 10 real sessions did too, with the reader thread's own stack showing
+  `libcore.io.Linux.readBytes` when the close ran. Two `openAccessory` calls both succeed, so
+  the platform does not prevent two readers — the app-level guard is the only thing that does —
+  and the observed mechanism is refusal (`EIO` on the second reader) rather than frame theft.
+  Evidence and its boundary:
+  [docs/evidence/2026-10-25-usb-reader-release.md](docs/evidence/2026-10-25-usb-reader-release.md).
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment
