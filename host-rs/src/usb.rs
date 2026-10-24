@@ -212,16 +212,26 @@ pub fn switched_identity(id: &DeviceId) -> crate::Result<DeviceId> {
     }
     Ok(actual)
 }
+/// Room for one transfer, whatever the phone's stack decided to coalesce into it.
+const TRANSFER_SCRATCH: usize = 1024 * 1024;
+
 pub struct Usb {
     handle: DeviceHandle<Context>,
     interface: u8,
     input: u8,
     output: u8,
-    packet_size: usize,
     reader: FrameReader,
     /// Bytes already read from the endpoint but not yet handed to the reader — how
     /// alignment keeps a header it found instead of discarding a live frame.
     pending: Vec<u8>,
+    /// Where transfers are read before the reader sees them.
+    ///
+    /// A transfer is whatever the phone's USB stack hands over, which can be much larger
+    /// than one frame; the reader's own buffer is not ours to size. Reading through this
+    /// decouples the two — measured 2026-10-24 as libusb `Overflow` ("USB transfer larger
+    /// than the read buffer") killing the connection a couple of seconds after
+    /// authorization, which is a buffer-size problem reported as a link failure.
+    scratch: Vec<u8>,
 }
 impl Usb {
     pub fn connect(id: &DeviceId) -> crate::Result<Self> {
@@ -287,16 +297,15 @@ impl Usb {
             interface,
             input,
             output,
-            packet_size,
             reader: FrameReader::default(),
             pending: Vec::new(),
+            scratch: vec![0u8; TRANSFER_SCRATCH],
         };
         // Start at a frame boundary. The endpoint may hold frames from a previous host
         // connection; AOA reports no disconnect, so nothing else resets it.
         if std::env::var_os("AMB_USB_TRACE").is_some() {
             eprintln!(
-                "usb trace: input ep=0x{input:02x} output ep=0x{output:02x} packet_size={packet_size} chunk={} ",
-                packet_size * 128
+                "usb trace: input ep=0x{input:02x} output ep=0x{output:02x} transfer_scratch={TRANSFER_SCRATCH}"
             );
         }
         let _ = opened.align_stream();
@@ -345,6 +354,20 @@ impl Usb {
         Ok(false)
     }
 
+    /// Forget what the reader is holding and start at a frame boundary again.
+    ///
+    /// Needed between attempts, not only at connect: an attempt that ends mid-frame leaves
+    /// the reader holding a partial header and whatever bytes followed it, and a reader in
+    /// that state cannot resynchronise by itself (`io-budget`'s reader reports a bad header
+    /// rather than scanning). Measured 2026-10-24: retrying after a host hello produced
+    /// `invalid AMB1 header` and, on the next attempt, `does not support required per-PC
+    /// authorization v2` — the same misalignment wearing two more costumes.
+    pub fn reset_stream(&mut self) -> std::io::Result<bool> {
+        self.pending.clear();
+        self.reader = FrameReader::default();
+        self.align_stream()
+    }
+
     /// Read raw bytes, bypassing the frame reader. Diagnostic only: when a peer's frames
     /// do not parse, the bytes are the only fact that settles what it sent.
     pub fn read_raw(&self, timeout: Duration, buffer: &mut [u8]) -> std::io::Result<usize> {
@@ -365,37 +388,29 @@ impl Transport for Usb {
     fn poll_receive(&mut self, timeout: Duration) -> crate::Result<Option<Frame>> {
         let handle = &self.handle;
         let input = self.input;
-        let chunk_size = self.packet_size * 128;
         let pending = &mut self.pending;
+        let scratch = &mut self.scratch;
         self.reader
             .poll(timeout, |bytes, left| {
-                // Bytes alignment already read come first: dropping them would throw away
-                // a complete header and desynchronise the stream by one frame.
-                if !pending.is_empty() {
-                    let count = pending.len().min(bytes.len());
-                    bytes[..count].copy_from_slice(&pending[..count]);
-                    pending.drain(..count);
-                    return Ok(count);
-                }
-                let length = bytes.len().min(chunk_size);
-                // rusb preserves partial transferred bytes even on libusb timeout.
-                // A zero-length USB packet is not a disconnected byte stream.
-                match handle.read_bulk(input, &mut bytes[..length], left) {
-                    Ok(0) | Err(rusb::Error::Interrupted) => {
-                        Err(std::io::Error::from(std::io::ErrorKind::Interrupted))
+                // Bytes already read (alignment, or the tail of a transfer the reader's
+                // buffer was too small for) come first: dropping them would lose a live
+                // frame or desynchronise the stream.
+                if pending.is_empty() {
+                    match handle.read_bulk(input, scratch, left) {
+                        Ok(0) | Err(rusb::Error::Interrupted) => {
+                            return Err(std::io::Error::from(std::io::ErrorKind::Interrupted));
+                        }
+                        Ok(count) => pending.extend_from_slice(&scratch[..count]),
+                        Err(rusb::Error::Timeout) => {
+                            return Err(std::io::Error::from(std::io::ErrorKind::TimedOut));
+                        }
+                        Err(error) => return Err(std::io::Error::other(format!("{error:?}"))),
                     }
-                    Ok(count) => Ok(count),
-                    Err(rusb::Error::Timeout) => {
-                        Err(std::io::Error::from(std::io::ErrorKind::TimedOut))
-                    }
-                    // The framing layer reports io::Error, so a libusb failure is
-                    // carried as its kind rather than through a boxed trait object.
-                    Err(rusb::Error::Overflow) => Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "USB transfer larger than the read buffer",
-                    )),
-                    Err(error) => Err(std::io::Error::other(format!("{error:?}"))),
                 }
+                let count = pending.len().min(bytes.len());
+                bytes[..count].copy_from_slice(&pending[..count]);
+                pending.drain(..count);
+                Ok(count)
             })
             .map_err(Into::into)
     }
