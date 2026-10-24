@@ -2,6 +2,21 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Accept the quality switch on a physical phone. Gate #8 wanted device verification of the
+  resolution and frame-rate controls and there was no repeatable way to ask for a change: the
+  GUI is the product but a script cannot click it. `--headless --quality WxH@fps` asks once
+  streaming has started and exits 1 unless the phone confirms that exact mode; the phone
+  applies it through the real capture path (the worker drives the staged apply and the commit).
+  Measured on the XQ-GE44: **`640x480@30` passed and `1280x720@15` passed** — one changes both
+  axes, the other changes only the frame rate. Evidence:
+  [docs/evidence/2026-10-24-quality-switch-acceptance.md](docs/evidence/2026-10-24-quality-switch-acceptance.md).
+
+- Say what to do when the phone's address changed. Wi-Fi guidance used to end at "check the
+  address shown on your phone", which is a dead end when DHCP has moved it (we hit `.14` →
+  `.15` in this session and lost a diagnostic round to it). It now names the one-tap fix: the
+  cable, then *Send Wi-Fi pairing to PC* on the phone, which updates the stored address — the
+  path that already existed but was never suggested at the moment it was needed.
+
 - Say how to stop asking. The Android dialog that asks whether the app may use the
   accessory has an **always allow** option; ticked once, the grant is remembered for that app
   and accessory and later plugs need no tap (verified by the user on the device). The status

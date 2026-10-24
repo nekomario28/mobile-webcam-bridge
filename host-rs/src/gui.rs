@@ -1303,7 +1303,10 @@ impl eframe::App for App {
                             } else if self.session.usb_permission.is_some() {
                                 self.text("Press Allow USB access and approve the OS prompt.", "「USBアクセスを許可」を押し、OSの認証を進めてください。")
                             } else if self.settings.transport == "lan" {
-                            self.text("Check the address shown on your phone and select Wi-Fi there.", "スマホのWi-Fi選択と、表示されたアドレスを確認してください。")
+                            self.text(
+                                "Check the phone is on Wi-Fi. If its address changed, connect the cable and press Send Wi-Fi pairing to PC on the phone — that updates the address here.",
+                                "スマホがWi-Fiにつながっているか確認してください。アドレスが変わっていた場合は、ケーブルをつないでスマホの「Wi-Fi設定をPCへ送る」を押すと、ここに入力したアドレスが更新されます。",
+                            )
                             } else {
                                 self.text("Check the selected phone and its USB permission. See Details for the error.", "選択したスマホとUSBの利用許可を確認してください。エラーは「詳細」に表示します。")
                             };
