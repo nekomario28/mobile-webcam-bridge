@@ -179,14 +179,8 @@ object ClientAuthorization {
     fun validLabel(label: String): Boolean = label.isNotBlank() &&
         label.toByteArray(Charsets.UTF_8).size <= MAX_LABEL_BYTES &&
         String(label.toByteArray(Charsets.UTF_8), Charsets.UTF_8) == label &&
-        // Iterate Unicode scalars, not UTF-16 halves: supplementary tags are Cf too.
-        label.codePoints().noneMatch {
-            when (Character.getType(it)) {
-                Character.CONTROL.toInt(), Character.FORMAT.toInt(),
-                Character.LINE_SEPARATOR.toInt(), Character.PARAGRAPH_SEPARATOR.toInt() -> true
-                else -> false
-            }
-        }
+        // Same scalar classes the wire decoder refuses, so the two cannot drift.
+        Wire.labelScalarsAreSafe(label)
 
     private fun publicKey(point: ByteArray): java.security.interfaces.ECPublicKey {
         require(point.size == PUBLIC_KEY_BYTES && point[0] == 0x04.toByte()) { "invalid P-256 point encoding" }
