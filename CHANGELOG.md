@@ -12,6 +12,14 @@
   gated on `permitted()` like every other sender, with the action offered only for an authorized
   session, because that is what the hand-off is for.
 
+- Pin the two halves the second review found guarded only at the method level, and the
+  ordering that issue #78 measured. A real socket now carries `0x0e` through the session's own
+  reader, so ID-001's *routing* is pinned rather than read; the pairing hand-off is asserted as a
+  refusal (silence while the PC is unauthorized, the identical bytes on the wire after approval)
+  and the button's rule has the test it never had; and no control frame may precede the
+  authorization result. All three are proven able to fail: restoring the review's naive repair
+  reddens exactly the hello test, and removing either authorization gate reddens the other two.
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment

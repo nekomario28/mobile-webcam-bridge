@@ -295,6 +295,39 @@ where the reviewer measured it.
 
 The original note follows, unedited, because it says what the pass did not reach.
 
+### Coverage added after the disposition (2026-10-24, later pass)
+
+The disposition above says, for each fix, what it does **not** cover. Three of those gaps are now
+closed, and the change that closes them is the one the review named as the pattern to watch for:
+a test that drives the wire instead of a method.
+
+- **ID-001's routing is tested on the wire.**
+  `HostHelloAndPairingGateWireTest.a_host_hello_on_the_wire_ends_the_session_instead_of_being_answered`
+  writes `0x0e` into a real socket and lets the session's own reader thread call `readMedia`,
+  then asserts that the session ends naming the *refused proof* (not an expired deadline) and
+  that no challenge is re-sent. **Proven able to fail:** restoring the naive repair this report
+  warns about — route the hello to the control handler, re-send the challenge in `PROOF`, renew
+  the deadline — reddens exactly this test and leaves the other two in the file green.
+- **ID-003's send is tested as a refusal, and so is its button.**
+  `the_pairing_handoff_writes_nothing_until_the_pc_is_approved` drives the same real session:
+  the hand-off is silent while the PC is unauthorized and delivers the identical payload once
+  `approve()` has run — so the gate, not a missing sink, is what suppressed it.
+  `SecondarySurfaceWiringTest.the_pairing_handoff_is_offered_only_for_an_authorized_pc` pins
+  the button's rule, which had no test at all.
+- **Issue #78, item 1** (no control frame before the authorization result) is pinned by
+  `no_capabilities_reach_the_wire_before_the_authorization_result`: the advertisement is queued
+  while unauthorized and arrives only behind the result.
+
+Removing either authorization gate (`sendPairingInfo`, `updateCapabilities`) fails all three
+tests in a mutation run, so none of them is a test that passes for the wrong reason.
+
+Still open, from the review's own list: **WR2**
+(`a_new_usb_session_is_refused_while_the_previous_reader_is_alive`) and **WR3**
+(`the_stop_action_is_not_a_credential_any_app_can_present`) remain substring assertions on source
+text — both need an Activity-level harness this suite does not have — and **WR5**'s gap stands:
+`security-coverage.md` still has no row for `HOST_HELLO`, the single-reader handover, the
+PING/IDR/hello limits, or the probe and its pacing.
+
 ### Original disposition note
 
 All three findings are accepted. They are **not fixed in this commit**: each one is a change to

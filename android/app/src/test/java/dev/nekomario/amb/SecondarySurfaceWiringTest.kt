@@ -182,6 +182,18 @@ class SecondarySurfaceWiringTest {
     }
 
     @Test
+    fun the_pairing_handoff_is_offered_only_for_an_authorized_pc() {
+        // ID-003: the hand-off exists for a PC that has been approved, and its write is
+        // gated in the session. Nothing asserted the button's own rule, so a revert that
+        // offered it for any live session would leave every other test green.
+        val secondary = bodyOf(source(), "private fun applySecondaryVisibility()")
+        assertTrue("the hand-off must be offered for a session at all",
+            secondary.contains("sendPairingAction.visibility"))
+        assertTrue("it must be offered only while that session is authorized",
+            secondary.contains("clientAuthorization?.isAuthorized() == true"))
+    }
+
+    @Test
     fun the_pairing_key_is_a_fallback_behind_details_and_never_appears_by_itself() {
         // The PC takes the pairing itself over the cable, so the key is not the next
         // thing the user needs and must not be pushed onto the main screen.
