@@ -3,6 +3,9 @@
 Open Mobile Webcam on your phone and PC. Choose the same mode on both:
 
 - **USB:** connect the cable, select the phone on the PC, then press **Connect**.
+  Android asks once whether the app may use the accessory; tick the dialog's
+  *always allow* option and the prompt does not come back (the grant is remembered per
+  app and accessory, and it survives replugging — it is cleared by reinstalling the app).
 - **Wi-Fi (development build, Android 10+):** select Wi-Fi on the phone,
   choose **Show pairing key**, and manually verify the SHA-256
   certificate fingerprint against the phone display. Enter the displayed

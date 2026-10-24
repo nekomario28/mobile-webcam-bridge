@@ -2,6 +2,15 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Say how to stop asking. The Android dialog that asks whether the app may use the
+  accessory has an **always allow** option; ticked once, the grant is remembered for that app
+  and accessory and later plugs need no tap (verified by the user on the device). The status
+  line now says which box, and the USB instructions say it too. It is cleared by reinstalling
+  or updating the app, which is what made it look like a per-connection cost during
+  development — every iteration here installed a new debug APK. Our AOA identity strings are
+  fixed by `specs/rust-host-rewrite/contracts.md`, so the accessory the system remembers is
+  always the same one.
+
 - **G0.5 passes at 1000 round trips.** The USB gate now completes: 1000 sequences matched,
   the 8-byte challenge echoed on every exchange, 0 mismatches, 0 timeouts, 0 disconnects,
   rtt p50 550 µs (paced). The blocker turned out to be the instrument — the phone rate-limits

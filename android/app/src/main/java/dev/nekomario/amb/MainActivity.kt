@@ -690,7 +690,14 @@ class MainActivity : Activity() {
             usbPermissionRequest = permissionIntent
             usb.requestPermission(accessory, permissionIntent)
         }
-        show(ui("Allow USB access in the Android prompt", "Androidの確認画面でUSBの利用を許可してください"))
+        // The system remembers the grant for this app and this accessory when the user
+        // ticks the dialog's "always allow" option, so this prompt is once per install
+        // rather than once per cable — measured by the user on the XQ-GE44 (2026-10-24).
+        // Saying so costs one line and saves the tap the other way.
+        show(ui(
+            "Allow USB access — tick \"always allow\" to skip this next time",
+            "Androidの確認画面でUSBの利用を許可してください（「常に許可」にチェックすると次回以降は出ません）"
+        ))
     }
 
     private fun showUsbPermissionDeclined() {
