@@ -184,26 +184,40 @@ fn receive(
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    let outcome = crate::client_auth::exchange(
-        transport.as_mut(),
-        &identity,
-        if settings.transport == "lan" {
-            crate::client_auth::Route::Lan {
-                phone_sha256: crate::secure::parse_hex(&settings.lan_fingerprint, 32)?
-                    .as_slice()
-                    .try_into()?,
-            }
-        } else {
-            crate::client_auth::Route::Usb
-        },
-        Duration::from_secs(5),
-        stop,
-        || {
-            event(Event::AuthorizationPending {
-                client_id: client_id.clone(),
-            })
-        },
-    );
+    let route = if settings.transport == "lan" {
+        crate::client_auth::Route::Lan {
+            phone_sha256: crate::secure::parse_hex(&settings.lan_fingerprint, 32)?
+                .as_slice()
+                .try_into()?,
+        }
+    } else {
+        crate::client_auth::Route::Usb
+    };
+    let mut attempt = |transport: &mut dyn Transport| {
+        crate::client_auth::exchange(
+            transport,
+            &identity,
+            route,
+            Duration::from_secs(5),
+            stop,
+            || {
+                event(Event::AuthorizationPending {
+                    client_id: client_id.clone(),
+                })
+            },
+        )
+    };
+    let mut outcome = attempt(transport.as_mut());
+    if let Err(error) = &outcome
+        && usb_device.is_some()
+        && crate::usb_probe::a_hello_would_help(&error.to_string())
+    {
+        // The phone's accessory session is spent (it authorised somebody, and AOA reports no
+        // disconnect). Saying hello ends it, so the phone issues a fresh challenge — no app
+        // restart, no replug, which is what this used to cost.
+        crate::usb_probe::reset_exchange(transport.as_mut(), Duration::from_secs(2))?;
+        outcome = attempt(transport.as_mut());
+    }
     match outcome {
         Ok(crate::client_auth::Outcome::Authorized { .. }) => {}
         Ok(crate::client_auth::Outcome::Rejected(reason)) => return Err(reason.into()),

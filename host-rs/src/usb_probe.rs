@@ -276,6 +276,34 @@ pub fn dump(seconds: u64) -> i32 {
     if total == 0 { 1 } else { 0 }
 }
 
+/// Ask the phone to start a fresh authorization exchange.
+///
+/// One frame, no payload, no identity: it says "a host is here". A phone whose accessory
+/// session is already spent answers it by ending that session and issuing a new challenge
+/// (`HOST_HELLO` in `wire.rs`, and the rule is in `protocol/client-authorization-v2.md`).
+pub fn reset_exchange(transport: &mut dyn Transport, budget: Duration) -> crate::Result<()> {
+    transport.send(&Frame::new(wire::HOST_HELLO, 0, Vec::new())?, budget)
+}
+
+/// Does this failure describe a phone whose accessory session is already spent?
+///
+/// Only these: a session that has authorised somebody is quiet (the host waits out its
+/// whole budget) or still answering with the older connection's frames ("capabilities
+/// before the outcome", or a stream that will not parse because the older reader still owns
+/// the endpoint). A *rejected* outcome, a bad fingerprint, a missing cable or a Windows
+/// driver are all answers, and repeating them costs the user time while telling them
+/// nothing. Pure so the decision can be tested without a phone.
+pub fn a_hello_would_help(error: &str) -> bool {
+    let lowered = error.to_lowercase();
+    // "receive poll expired" is the USB read path's own wording for the same thing: the
+    // budget ran out with nothing (or nothing usable) arriving.
+    lowered.contains("deadline expired")
+        || lowered.contains("poll expired")
+        || lowered.contains("incomplete frame")
+        || lowered.contains("does not support required per-pc authorization")
+        || lowered.contains("expected authorization outcome before")
+}
+
 /// Run the whole gate against a real phone: AOA transition, authorization, then the
 /// synchronous exchange.
 ///
@@ -315,17 +343,29 @@ pub fn end_to_end(
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     let stop = std::sync::atomic::AtomicBool::new(false);
-    let outcome = crate::client_auth::exchange(
-        &mut transport,
-        &identity,
-        crate::client_auth::Route::Usb,
-        budget,
-        &stop,
-        || {
-            on_waiting(&client_id);
-            Ok(())
-        },
-    );
+    let attempt = |transport: &mut crate::usb::Usb| {
+        crate::client_auth::exchange(
+            transport,
+            &identity,
+            crate::client_auth::Route::Usb,
+            budget,
+            &stop,
+            || {
+                on_waiting(&client_id);
+                Ok(())
+            },
+        )
+    };
+    let mut outcome = attempt(&mut transport);
+    if let Err(error) = &outcome
+        && a_hello_would_help(&error.to_string())
+    {
+        // Self-heal instead of asking the user to restart the app: say hello, which ends a
+        // spent session on the phone, then try the exchange once more.
+        println!("retrying after a host hello: {error}");
+        reset_exchange(&mut transport, Duration::from_secs(2))?;
+        outcome = attempt(&mut transport);
+    }
     match outcome {
         Ok(crate::client_auth::Outcome::Authorized { .. }) => {}
         Ok(crate::client_auth::Outcome::Rejected(reason)) => {
@@ -449,6 +489,33 @@ mod tests {
             break_sequence,
             break_payload,
         }
+    }
+
+    #[test]
+    fn only_a_spent_session_is_worth_a_hello() {
+        // The failures a hello can reset: a session that authorised somebody is quiet, or
+        // still answering with the older connection's frames.
+        assert!(a_hello_would_help("receive poll expired"));
+        assert!(a_hello_would_help("deadline expired"));
+        assert!(a_hello_would_help("incomplete frame deadline expired"));
+        assert!(a_hello_would_help(
+            "phone does not support required per-PC authorization v2"
+        ));
+        assert!(a_hello_would_help(
+            "expected authorization outcome before capabilities/media"
+        ));
+        // Answers, not symptoms: repeating them costs the user time and tells them nothing.
+        assert!(!a_hello_would_help(
+            "the phone rejected this PC's signature"
+        ));
+        assert!(!a_hello_would_help(
+            "this PC's access was revoked on the phone"
+        ));
+        assert!(!a_hello_would_help("connection refused"));
+        assert!(!a_hello_would_help(
+            "Wi-Fi phone certificate fingerprint mismatch"
+        ));
+        assert!(!a_hello_would_help("WinUSB access unavailable"));
     }
 
     #[test]

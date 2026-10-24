@@ -8,9 +8,13 @@ class SessionControl(
     private val outbound: FramedOutbound,
     private val onQuality: (Wire.HostCommand) -> Unit,
     private val onPing: () -> Unit = {},
+    /** A host said hello: start a fresh exchange, or re-send what it is waiting for. */
+    private val onHostHello: () -> Unit = {},
 ) {
     private var pingWindowStart = System.nanoTime()
     private var pingCount = 0
+    private var helloWindowStart = System.nanoTime()
+    private var helloCount = 0
     private var idrWindowStart = System.nanoTime()
     private var idrCount = 0
 
@@ -30,6 +34,16 @@ class SessionControl(
                 require(++pingCount <= 64) { "PING rate limit exceeded" }
                 outbound.sendPong(header, payload)
                 onPing()
+            }
+            Wire.TYPE_HOST_HELLO -> {
+                // Same window shape as PING: a peer cannot spin this, and the handler
+                // re-sends or ends a session, both of which cost the phone something.
+                val now = System.nanoTime()
+                if (now - helloWindowStart >= 1_000_000_000L) {
+                    helloWindowStart = now
+                    helloCount = 0
+                }
+                if (++helloCount <= MAX_HELLO_PER_SECOND) onHostHello()
             }
             Wire.TYPE_VIDEO_IDR_REQUEST -> {
                 // Same shape as the PING limit above, and measured rather than assumed:
@@ -60,5 +74,6 @@ class SessionControl(
          * next keyframe). Not unbounded: the call reaches the hardware encoder.
          */
         const val MAX_IDR_REQUESTS_PER_SECOND = 8
+        const val MAX_HELLO_PER_SECOND = 8
     }
 }

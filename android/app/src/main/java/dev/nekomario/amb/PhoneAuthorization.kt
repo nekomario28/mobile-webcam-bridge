@@ -152,6 +152,29 @@ class PhoneAuthorization(
             return true
         }
 
+        /**
+         * A host said hello (see `Wire.TYPE_HOST_HELLO`).
+         *
+         * - **Waiting for a proof**: re-send the same challenge. The peer may have read a
+         *   challenge this session already sent and lost it (a previous host consumed the
+         *   bytes), and re-sending the same nonce keeps this session the one that answers.
+         * - **Already answered** (authorised, pending or denied): end the session. USB gives
+         *   no disconnect signal, so this is the only way a reconnecting host gets a fresh
+         *   challenge instead of a dead session.
+         * - **Not yet challenged**: ignore; a challenge is on its way.
+         */
+        fun onHostHello() = synchronized(lock) {
+            tickLocked()
+            if (active !== this || phase == Phase.NEW || failed || closed) return@synchronized
+            if (phase == Phase.PROOF) {
+                send(Wire.TYPE_CLIENT_CHALLENGE,
+                    Wire.encodeClientChallenge(Wire.ClientChallenge(Wire.CLIENT_AUTH_VERSION, transport, phoneBinding, nonce)))
+                deadline = nowMillis() + PROOF_TIMEOUT_MS
+                return@synchronized
+            }
+            finish("a new host asked for a fresh exchange")
+        }
+
         /** Exactly one proof consumes this live session's challenge. Never
          * accepts an arbitrary caller-provided transcript or a replay. */
         fun receive(header: Wire.Header, payload: ByteArray) = synchronized(lock) {
