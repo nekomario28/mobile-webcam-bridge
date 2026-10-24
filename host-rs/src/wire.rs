@@ -22,6 +22,16 @@ pub const CLIENT_AUTH_RESULT: u8 = 0x0c;
 /// first Wi-Fi session needs nothing typed. User-initiated on the phone; the
 /// question it answers is "what do I type", not "is this phone trusted".
 pub const PAIRING_INFO: u8 = 0x0d;
+/// "A host is here, start a fresh exchange."
+///
+/// USB has no session boundary: the phone sends the authorization challenge, and it sends
+/// exactly one per accessory session, so a host that reconnects finds a session that has
+/// already been used — quiet (if it authorised someone) or answering with control frames
+/// from the older connection. Both look like a phone that "does not support authorization
+/// v2". This frame is the host saying so out loud, so the phone can end that session and
+/// issue a fresh challenge (protocol/client-authorization-v2.md). Zero payload: it carries
+/// no identity and grants nothing; it is a reset signal, not a credential.
+pub const HOST_HELLO: u8 = 0x0e;
 pub const VIDEO_CONFIG: u8 = 0x10;
 pub const VIDEO_AU: u8 = 0x11;
 pub const IDR_REQUEST: u8 = 0x12;
@@ -499,6 +509,8 @@ impl Header {
             QUALITY_CAPABILITIES => (1..=MAX_CONTROL_PAYLOAD).contains(&length),
             PREPARE_QUALITY | QUALITY_RESULT => length == 14,
             PAUSED | COMMIT_QUALITY | PING | PONG => length == 8,
+            // A host hello is a signal, not a message: no payload to get wrong.
+            HOST_HELLO => length == 0,
             VIDEO_CONFIG => length == 16,
             IDR_REQUEST | HELLO_ACK => length == 0,
             HELLO => length == 0 || length == 16,

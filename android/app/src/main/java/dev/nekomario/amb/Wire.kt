@@ -29,6 +29,8 @@ object Wire {
     const val TYPE_CLIENT_AUTH_RESULT: Byte = 0x0c
     /** Phone -> PC over the USB cable: the Wi-Fi pairing details, so nothing is typed. */
     const val TYPE_PAIRING_INFO: Byte = 0x0d
+    /** "A host is here, start a fresh exchange." Zero payload; a reset, not a credential. */
+    const val TYPE_HOST_HELLO: Byte = 0x0e
     const val PAIRING_INFO_VERSION: Byte = 1
     const val MAX_PAIRING_ADDRESSES = 4
 
@@ -436,6 +438,7 @@ object Wire {
     fun readHostFrame(input: InputStream): Pair<Header, ByteArray> = readFrame(input, CLIENT_AUTH_MAX_BYTES) { type ->
         when (type) {
             TYPE_PING -> 8..8
+            TYPE_HOST_HELLO -> 0..0
             TYPE_VIDEO_IDR_REQUEST -> 0..0
             TYPE_PREPARE_QUALITY -> 14..14
             TYPE_COMMIT_QUALITY -> 8..8

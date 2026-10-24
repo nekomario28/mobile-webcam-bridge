@@ -2,6 +2,17 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Let a reconnecting host start a fresh exchange. USB has no session boundary and AOA
+  reports no disconnect, so a host that reconnects found the accessory session the previous
+  connection had used — quiet if it had authorised somebody, or answering with the older
+  connection's frames — and the only way out was restarting the app or replugging. The host
+  now says `HOST_HELLO` (0x0e, zero payload) when a failure looks like a spent session, and
+  retries the exchange once; the phone answers by re-sending the same challenge if it is
+  waiting for a proof, or by ending the session if it has already answered. No identity
+  changes hands and a phone that does not know the type yet ends the session and rediscovers
+  — the behaviour the frame exists to produce. Documented in
+  `protocol/client-authorization-v2.md`; both sides have tests.
+
 - Stop two readers sharing one accessory. On USB the previous session's reader and a
   new session's reader sit on the same endpoint, and a blocked read is not interruptible —
   closing the descriptor is what unblocks it. `openAccessory` closed the old session and

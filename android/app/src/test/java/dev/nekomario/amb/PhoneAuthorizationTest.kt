@@ -183,6 +183,51 @@ class PhoneAuthorizationTest {
         }
     }
 
+    @Test fun a_host_hello_resends_the_same_challenge_while_waiting_for_a_proof() {
+        Harness().use { h ->
+            h.open()
+            val first = h.challenge
+            // A host that said hello twice must not get two different sessions: the same
+            // nonce is what keeps this session the one that answers the proof.
+            h.session.onHostHello()
+            h.session.onHostHello()
+            val challenges = h.sent.filter { it.first == Wire.TYPE_CLIENT_CHALLENGE }
+            assertEquals("hello must re-send, not start over", 3, challenges.size)
+            for ((_, payload) in challenges) {
+                assertEquals(first.nonce.toList(), Wire.decodeClientChallenge(payload).nonce.toList())
+            }
+        }
+    }
+
+    @Test fun a_host_hello_ends_a_session_that_has_already_answered() {
+        // USB reports no disconnect, so an authorised session would otherwise stay for ever
+        // and a reconnecting host would find nothing willing to exchange (issue #78).
+        Harness().use { h ->
+            h.open(); h.receive(h.proof(keyPair()))
+            h.session.approve()
+            assertTrue(h.session.isAuthorized())
+            h.session.onHostHello()
+            assertFalse("a spent session must end so the next host gets a challenge", h.session.isAuthorized())
+            assertTrue("and the owner must be told", h.closed.isNotEmpty())
+        }
+    }
+
+    @Test fun a_host_hello_cannot_be_spun() {
+        // A peer that repeats the hello must not make the phone keep answering: once the
+        // session has ended, further hellos send nothing. (Before `start()` the session is
+        // in NEW and the guard makes a hello a no-op; after it, PROOF re-sends — that is the
+        // test above — and everything else ends the session.)
+        Harness().use { h ->
+            h.open(); h.receive(h.proof(keyPair()))
+            h.session.approve()
+            h.session.onHostHello()
+            val after = h.sent.size
+            h.session.onHostHello()
+            h.session.onHostHello()
+            assertEquals("a spent session answers no further hellos", after, h.sent.size)
+        }
+    }
+
     @Test fun a_known_pc_must_still_prove_possession_for_every_connection() {
         val key = keyPair()
         Harness(listOf(record(key.first))).use { h ->

@@ -27,10 +27,27 @@ abstract class AuthorizedMediaSession(
     private val outbound = FramedOutbound(output, { idrRequester.get()?.invoke() }, { failMedia(it) }, threadName = threadName)
     private lateinit var gate: PhoneAuthorization.Session
     override val clientAuthorization: PhoneAuthorization.Session? get() = if (::gate.isInitialized) gate else null
-    private val control = SessionControl(outbound, { onQuality(this, it) }, { onControlPing() })
+    private val control = SessionControl(
+        outbound,
+        { onQuality(this, it) },
+        { onControlPing() },
+        { onHostHello() },
+    )
 
     protected abstract fun failMedia(reason: String)
     protected open fun onControlPing() {}
+
+    /**
+     * A host said hello: end a spent session so the phone issues a fresh challenge.
+     *
+     * USB has no session boundary and AOA reports no disconnect, so a host that reconnects
+     * finds an accessory session that has already been used — quiet if it authorised
+     * somebody, or answering with the older connection's frames. Without this the only way
+     * to get a new exchange was to restart the app or replug the cable (issue #78).
+     */
+    protected open fun onHostHello() {
+        if (::gate.isInitialized) gate.onHostHello()
+    }
 
     protected fun startMedia() {
         outbound.start()
