@@ -105,12 +105,21 @@ class CaptureModesTest {
             sizes = listOf(size(1280, 720, minFpsCap = null)),
             aeRanges = listOf(FpsRange(30, 30), FpsRange(60, 60)),
         )
-        val resolved = CaptureModes.resolve(unknown, CaptureModes.CapturePreference(1280, 720, 60))
+        // Device behavior, not the OSS 1080p30 cap: 60fps must still resolve.
+        val resolved = CaptureModes.resolve(
+            unknown,
+            CaptureModes.CapturePreference(1280, 720, 60),
+            EditionPolicy.Uncapped,
+        )
         assertTrue("$resolved", resolved is CaptureModes.Resolution.Resolved)
         val mode = (resolved as CaptureModes.Resolution.Resolved).mode
         assertEquals(60, mode.targetFps)
         assertFalse("an unknown duration must be recorded, not claimed", mode.minFrameDurationKnown)
-        val capped = CaptureModes.resolve(perSizeCapped(), CaptureModes.CapturePreference(1920, 1080, 60))
+        val capped = CaptureModes.resolve(
+            perSizeCapped(),
+            CaptureModes.CapturePreference(1920, 1080, 60),
+            EditionPolicy.Uncapped,
+        )
         assertTrue("$capped", capped is CaptureModes.Resolution.Rejected)
     }
 
