@@ -2,6 +2,18 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Stop two readers sharing one accessory. On USB the previous session's reader and a
+  new session's reader sit on the same endpoint, and a blocked read is not interruptible —
+  closing the descriptor is what unblocks it. `openAccessory` closed the old session and
+  then opened the new one without checking that the old reader had actually gone, so an
+  old reader could take the new connection's proof, answer it against a challenge the phone
+  had already replaced (the phone says `BAD_SIGNATURE`) and leave capability frames in front
+  of the authorization result (`expected authorization outcome before capabilities/media`).
+  `closeSession` now reports whether the reader stopped, `AccessorySession.closeAndAwait`
+  answers it, and `openAccessory` refuses to open a second reader and tells the user to
+  replug instead — a wiring test pins all three. Both symptoms were measured on a real phone
+  (issue #78), intermittently.
+
 - Give the USB gate a driver, and fix what it found. The gate for the AOA path (`G0`,
   `G0.5`) had no way to run: the `PING` type existed as a constant and a wire test, the
   Android app answers it, and no shipping code ever sent one. `mobile-webcam --usb-probe

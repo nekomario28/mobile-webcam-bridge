@@ -150,6 +150,51 @@ class SessionServiceWiringTest {
     }
 
     /**
+     * One accessory, one reader.
+     *
+     * On USB the previous session's reader and a new session's reader share a single
+     * endpoint, and a blocked read is not interruptible — closing the descriptor is what
+     * unblocks it. If that does not take effect, the old reader keeps taking frames: it
+     * answers the new connection's proof against a challenge it has already replaced (the
+     * phone reports BAD_SIGNATURE) and its writer can put capability frames in front of the
+     * authorization result (the host reports "expected authorization outcome before
+     * capabilities/media"). Both were measured on a real phone, intermittently. So the
+     * handover must be checked, not assumed.
+     */
+    @Test
+    fun a_new_usb_session_is_refused_while_the_previous_reader_is_alive() {
+        val activity = mainActivitySource()
+        val open = bodyOf(activity, "private fun openAccessory(")
+        assertTrue(
+            "openAccessory must refuse to open a second reader",
+            open.contains("if (!closeSession())"),
+        )
+        val close = bodyOf(activity, "private fun closeSession(")
+        assertTrue(
+            "closeSession must report whether the reader stopped",
+            close.contains("closeAndAwait(") && close.contains("return stopped"),
+        )
+        val session = read("AccessorySession.kt")
+        assertTrue(
+            "the session must be able to answer that question",
+            session.contains("fun closeAndAwait(timeoutMs: Long): Boolean") &&
+                session.contains("return !reader.isAlive"),
+        )
+    }
+
+    private fun read(name: String): String {
+        val roots = generateSequence(File(checkNotNull(System.getProperty("user.dir")))) { it.parentFile }
+        val candidates = roots.flatMap { root ->
+            listOf(
+                File(root, "android/app/src/main/java/dev/nekomario/amb/$name"),
+                File(root, "app/src/main/java/dev/nekomario/amb/$name"),
+            ).asSequence()
+        }
+        return candidates.firstOrNull { it.isFile }?.readText()
+            ?: error("$name not found from ${System.getProperty("user.dir")}")
+    }
+
+    /**
      * The Stop action used to be accepted from any intent carrying the action string,
      * and the Activity is exported — so any installed app could end a live stream. The
      * action alone is not a credential; the token is generated per process and only the
