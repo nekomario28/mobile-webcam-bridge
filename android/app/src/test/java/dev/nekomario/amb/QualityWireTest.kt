@@ -48,7 +48,12 @@ class QualityWireTest {
                 val halves = line.split(" -> "); require(halves.size == 2)
                 fun tuple(text: String) = text.split(Regex("\\s+")).map(String::toInt).also { require(it.size == 3) }
                 val wish = tuple(halves[0])
-                val result = CaptureModes.resolve(caps, CaptureModes.CapturePreference(wish[0].takeIf { it != 0 }, wish[1].takeIf { it != 0 }, wish[2].takeIf { it != 0 }))
+                // Fixture includes 720p60. That is a device mode, above the OSS cap.
+                val result = CaptureModes.resolve(
+                    caps,
+                    CaptureModes.CapturePreference(wish[0].takeIf { it != 0 }, wish[1].takeIf { it != 0 }, wish[2].takeIf { it != 0 }),
+                    EditionPolicy.Uncapped,
+                )
                 if (halves[1] == "rejected") org.junit.Assert.assertTrue(result is CaptureModes.Resolution.Rejected)
                 else {
                     val mode = (result as CaptureModes.Resolution.Resolved).mode
