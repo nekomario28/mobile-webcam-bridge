@@ -56,7 +56,13 @@ the claim each one would let us make.
 
 ## P1 — next, each with its closing test
 
-- **USB end to end on this branch.** Partly measured 2026-10-24: **G0 passes** (the phone
+- **USB end to end on this branch.** Two operational facts to keep: a failed USB attempt
+  leaves the phone in accessory mode (AOA has no exit request) and the host now says to
+  replug; `adb shell svc usb resetUsbPort` clears it without touching the cable. And the
+  accessory description we present — `"Low-latency Android to Linux media bridge"` — is
+  what the phone's approval dialog shows, pinned by
+  `specs/rust-host-rewrite/contracts.md`; changing it is a spec change.
+  Partly measured 2026-10-24: **G0 passes** (the phone
   re-enumerates as `18d1:2d01`), and **G0.5 passes at 50 round trips** (rtt p50 80 µs, 0
   mismatches, 0 timeouts) but is **2 of 3 attempts** and has not completed at 1000. Three
   host defects behind that are fixed (stream alignment at connect, stale-challenge signing,

@@ -160,6 +160,11 @@ fn receive(
     let mut event = event;
     // Fail before opening a transport if its stable identity cannot be loaded.
     let identity = crate::identity::Identity::load_or_create()?;
+    let usb_device = if settings.transport == "lan" {
+        None
+    } else {
+        Some(device.ok_or("select a USB device")?)
+    };
     let mut transport: Box<dyn Transport> = if settings.transport == "lan" {
         Box::new(SecureTcp::connect(
             &settings.lan_host,
@@ -172,14 +177,14 @@ fn receive(
         // `Usb::connect` aligns the stream at a frame boundary; without that, an endpoint
         // still holding a previous connection's frames makes the reader start mid-frame
         // and it can never complete one.
-        Box::new(Usb::connect(&device.ok_or("select a USB device")?)?)
+        Box::new(Usb::connect(usb_device.as_ref().expect("checked above"))?)
     };
     let client_id = identity
         .client_id()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    match crate::client_auth::exchange(
+    let outcome = crate::client_auth::exchange(
         transport.as_mut(),
         &identity,
         if settings.transport == "lan" {
@@ -198,9 +203,28 @@ fn receive(
                 client_id: client_id.clone(),
             })
         },
-    )? {
-        crate::client_auth::Outcome::Authorized { .. } => {}
-        crate::client_auth::Outcome::Rejected(reason) => return Err(reason.into()),
+    );
+    match outcome {
+        Ok(crate::client_auth::Outcome::Authorized { .. }) => {}
+        Ok(crate::client_auth::Outcome::Rejected(reason)) => return Err(reason.into()),
+        Err(error) => {
+            // AOA has no "leave accessory mode" request, so a failed USB attempt leaves the
+            // phone rolled into accessory mode with nothing reading it: the app waits for a
+            // PC that will never come, and the *next* attempt finds a session that will not
+            // start a new exchange. Only a replug (or a USB port reset) clears it, and
+            // neither side says so. Measured 2026-10-24; reaching this line with the phone
+            // still an accessory is the condition worth naming.
+            if let Some(device) = &usb_device
+                && crate::usb::switched_identity(device).is_ok()
+            {
+                return Err(format!(
+                    "{error}. The phone is still in USB accessory mode; unplug and replug \
+                     the cable before trying again"
+                )
+                .into());
+            }
+            return Err(error);
+        }
     }
     let output_path = settings.output.trim().to_string();
     let backend =
