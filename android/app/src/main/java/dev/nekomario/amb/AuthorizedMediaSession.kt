@@ -98,7 +98,17 @@ abstract class AuthorizedMediaSession(
         if (permitted()) outbound.pauseQuality(epoch)
     }
     override fun droppedVideoFrames() = outbound.droppedVideoFrames.get()
-    override fun sendPairingInfo(payload: ByteArray) = outbound.sendPairingInfo(payload)
+    /**
+     * The Wi-Fi pairing hand-off, gated like every other sender.
+     *
+     * It is for a PC that has been *approved*: an earlier version wrote the frame while the
+     * session was still unauthorized (the UI offered the button exactly then), which lands a
+     * non-outcome frame inside the host's authorization exchange and dies on its protocol check
+     * (independent review, ID-003).
+     */
+    override fun sendPairingInfo(payload: ByteArray) {
+        if (permitted()) outbound.sendPairingInfo(payload)
+    }
 
     override fun updateCapabilities() {
         if (permitted()) capabilities?.invoke()?.let { outbound.sendCapabilities(it) }

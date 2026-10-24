@@ -269,6 +269,34 @@ Everything below is new relative to the 2026-10-23 review unless it says otherwi
 
 ## Disposition (implementer, 2026-10-24)
 
+All three findings are accepted and **fixed below** (one commit, in the order the review lists
+them). The note that follows records what each change does and what it still does not cover.
+
+**ID-001 — FIXED.** `onHostHello` no longer has the unreachable `PROOF` branch and no longer
+renews the proof deadline; the rule is now "a session that has already challenged ends, one that
+has not yet challenged ignores the hello", which is what the wire already did (controls are
+routed to the gate only while authorized, so a hello during `PROOF` is refused there and ends the
+session). `protocol/client-authorization-v2.md` says the same, and the test that pinned the
+unreachable re-send was replaced by one that pins the wire's behaviour. **What is still not
+covered: the routing itself** — a socket-level test that feeds `0x0e` through a real session and
+asserts the end. The session half is pinned; the dispatch is read, not tested.
+
+**ID-002 — FIXED.** `closeAndAwait` keeps the reader handle when the reader survived (clearing it
+made a second call report success unconditionally), `readerAlive()` answers whether it is still
+running, and `MainActivity` remembers the *object* whose reader refused to stop — refusing the
+next `openAccessory` on that object rather than on a field that `closeSession` had already
+cleared. The refusal is therefore durable rather than one iteration deep. **Not covered: a
+device observation** that two readers really cannot coexist after the refusal.
+
+**ID-003 — FIXED.** `sendPairingInfo` is gated on `permitted()` like every other sender, and the
+action is offered only while the session is authorized — which is what the hand-off is for.
+**Not covered:** the button's visibility has no test; the write is gated in the session, which is
+where the reviewer measured it.
+
+The original note follows, unedited, because it says what the pass did not reach.
+
+### Original disposition note
+
 All three findings are accepted. They are **not fixed in this commit**: each one is a change to
 the phone's session handling, and each needs the lesson of ID-001 applied to its own test (drive
 the wire path, not the method). Writing them down precisely is the deliverable of this pass; the
