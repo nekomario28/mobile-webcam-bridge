@@ -66,10 +66,10 @@ the claim each one would let us make.
   [evidence/2026-10-24-usb-g0.md](evidence/2026-10-24-usb-g0.md). Remaining on this path: the
   same run repeated, and the app-side items in #78 (a per-attach USB approval, and the session
   lifetime that makes `HOST_HELLO` necessary).
-- **The device actually shows the newest UX.** The installed build predates the
-  receiver name, the approved-PC count and the key auto-hide.
-  *Closes when:* an APK built from `main` is on the phone and a screenshot shows
-  `yuu へ配信中（申告名）` and `許可したPC（1台）`.
+- ~~**The device actually shows the newest UX.**~~ Closed 2026-10-24: an APK built from
+  `main` is on the XQ-GE44 (versionCode 2000, dex checked for the new symbols) and the device
+  shows `yuu へ配信中（申告名）`, `許可したPC（3台）`, and the pairing key / rotation / erase
+  inside Details.
 - ~~**A long stream on the phone.**~~ Closed 2026-10-24:
   [ten minutes on the phone with the screen off](evidence/2026-10-24-phone-soak-screen-off.md)
   — 17 851 frames at **30.46 fps**, hardware decode, `submitted == decoded` in every
@@ -82,9 +82,9 @@ the claim each one would let us make.
   does not prove a DirectShow consumer sees frames.
   *Closes when:* a Windows machine shows the virtual camera in another app and the
   preview renders.
-- **Reconnect backoff made visible.** "Waiting (retrying)" exists; how many attempts
-  are left and when the next one lands does not.
-  *Closes when:* the state line names the attempt ("retry 2 of 5 in 8 s").
+- ~~**Reconnect backoff made visible.**~~ Closed: the line reads
+  `スマホを待っています (2回目/8・4秒後に再試行)` / `Waiting for the phone (retry 2 of 8 in 4 s)`,
+  with a test pinning the wording including an already-expired deadline.
 - ~~**The preview's own cost.**~~ Closed 2026-10-21:
   [2026-10-21-preview-cost.md](evidence/2026-10-21-preview-cost.md) — 320 µs per frame
   and 5 µs to publish, **0.33 % of one core at 10 Hz** for 1280x720 and 1920x1080
