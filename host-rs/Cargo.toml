@@ -28,7 +28,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 rusb = "=0.9.4"
 rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"] }
-sha2 = "=0.10.9"
+sha2 = "=0.11.1"
 # Already a GUI transitive dependency; scalar categories keep wire labels single-line.
 unicode-general-category = "=1.1.0"
 eframe = { version = "=0.36.2", default-features = false, features = ["accesskit", "default_fonts", "wgpu_no_default_features", "wayland", "x11"], optional = true }
