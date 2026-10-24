@@ -10,6 +10,9 @@ pub struct Client {
     pub staged: bool,
     pub applied: Option<(u16, u16, u16)>,
     pub error: Option<String>,
+    /// Set when advertise rewrote an unsupported saved wish to Auto.
+    /// The GUI persists Auto and clears this after saving.
+    pub migrated_to_auto: bool,
     initial_wish: Wish,
     initial_checked: bool,
 }
@@ -27,6 +30,7 @@ impl Client {
             staged: false,
             applied: None,
             error: None,
+            migrated_to_auto: false,
             initial_wish,
             initial_checked: false,
         }
@@ -45,7 +49,16 @@ impl Client {
             return None;
         }
         self.initial_checked = true;
-        self.begin(self.initial_wish)
+        // Phone advertises device ∩ edition only. An old saved 4K / 720p60
+        // wish must not fail the first apply — fall back to Auto (best allowed).
+        let wish = if self.resolve(self.initial_wish).is_some() {
+            self.initial_wish
+        } else {
+            self.migrated_to_auto = true;
+            self.initial_wish = Wish::default();
+            Wish::default()
+        };
+        self.begin(wish)
     }
     pub fn begin(&mut self, wish: Wish) -> Option<Mode> {
         if self.pending.is_some() {
@@ -153,11 +166,18 @@ mod tests {
         assert!(client.error.is_none());
     }
     #[test]
-    fn unsupported_saved_wish_does_not_fallback_and_new_connection_revalidates() {
+    fn unsupported_saved_wish_falls_back_to_auto_and_new_connection_revalidates() {
         let wish = Wish::from((1920, 1080, 60));
         let mut client = Client::new(wish);
-        assert!(client.advertise(wire::PERMISSION_READY, modes()).is_none());
-        assert!(client.error.as_ref().unwrap().contains("not supported"));
+        let mode = client
+            .advertise(wire::PERMISSION_READY, modes())
+            .expect("Auto fallback should apply the best allowed mode");
+        assert!(client.migrated_to_auto);
+        assert_eq!(
+            mode.tuple(),
+            Wish::default().resolve(&modes()).unwrap().tuple()
+        );
+        assert!(client.error.is_none());
         client.disconnected();
         assert!(client.modes.is_none());
         assert!(client.pending.is_none());
@@ -175,6 +195,16 @@ mod tests {
                 .tuple(),
             wish.tuple()
         );
+        assert!(!new_connection.migrated_to_auto);
+    }
+
+    #[test]
+    fn explicit_begin_of_unsupported_wish_still_errors() {
+        let mut client = Client::default();
+        client.advertise(wire::PERMISSION_READY, modes());
+        client.confirmed(1280, 720, 30);
+        assert!(client.begin(Wish::from((3840, 2160, 30))).is_none());
+        assert!(client.error.as_ref().unwrap().contains("not supported"));
     }
     #[test]
     fn staged_wait_is_not_applied_and_mismatched_confirmation_does_not_lie() {

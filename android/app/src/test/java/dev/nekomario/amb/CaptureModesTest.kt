@@ -221,4 +221,50 @@ class CaptureModesTest {
         // The 30-only device keeps 720p; no fps above 30 exists anywhere.
         assertTrue(autoA.targetFps <= 30)
     }
+
+    @Test
+    fun publishedIsDeviceSupportedIntersectedWithEditionCap() {
+        // Device can do 720p60 and 4K30; OSS edition keeps only ≤1080p30.
+        val device = caps(
+            sizes = listOf(
+                size(1280, 720, minFpsCap = 60),
+                size(1920, 1080, minFpsCap = 30),
+                size(3840, 2160, minFpsCap = 30),
+            ),
+            aeRanges = listOf(FpsRange(30, 30), FpsRange(60, 60)),
+        )
+        val supported = CaptureModes.supported(device)
+        assertTrue(supported.any { it.width == 3840 })
+        assertTrue(supported.any { it.targetFps == 60 })
+        val published = CaptureModes.published(device, EditionPolicy.OssCap1080p30)
+        assertEquals(
+            setOf(Triple(1280, 720, 30), Triple(1920, 1080, 30)),
+            published.map { Triple(it.width, it.height, it.targetFps) }.toSet(),
+        )
+        // Preference for 4K resolves as rejected under OSS (no silent 1080 substitute).
+        assertTrue(
+            CaptureModes.resolve(
+                device,
+                CaptureModes.CapturePreference(3840, 2160, 30),
+                EditionPolicy.OssCap1080p30,
+            ) is CaptureModes.Resolution.Rejected,
+        )
+        // Auto under OSS picks among published only.
+        val auto = (
+            CaptureModes.resolve(
+                device,
+                CaptureModes.CapturePreference(),
+                EditionPolicy.OssCap1080p30,
+            ) as CaptureModes.Resolution.Resolved
+        ).mode
+        assertTrue(EditionPolicy.OssCap1080p30.allows(auto))
+        // Uncapped publishes the full device list.
+        assertEquals(
+            supported.map { Triple(it.width, it.height, it.targetFps) }.toSet(),
+            CaptureModes.published(device, EditionPolicy.Uncapped)
+                .map { Triple(it.width, it.height, it.targetFps) }
+                .toSet(),
+        )
+    }
+
 }

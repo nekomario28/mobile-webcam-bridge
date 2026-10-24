@@ -25,6 +25,8 @@ mod preference;
 pub use preference::Wish;
 mod client;
 pub use client::Client;
+mod edition;
+pub use edition::{coerce_wish_to_available, filter_oss_cap_1080p30, oss_cap_1080p30_allows};
 pub const APPLY_DEADLINE_MS: u64 = 5_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -327,6 +329,7 @@ fn rejection_reason(reason: u8) -> &'static str {
         5 => "another quality apply is already in flight",
         6 => "the apply deadline expired",
         7 => "camera capture could not start",
+        8 => "this edition does not allow that quality",
         _ => "the phone rejected the apply",
     }
 }

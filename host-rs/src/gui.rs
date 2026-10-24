@@ -411,6 +411,30 @@ impl App {
         let busy = self.session.quality.pending.is_some();
         let stopping = matches!(self.session.state, State::Stopping);
         let modes = self.session.quality.modes.clone().unwrap_or_default();
+        // Persist Auto when the phone's advertised list (device ∩ edition)
+        // cannot satisfy the saved/draft wish (e.g. old 4K or 720p60).
+        if self.session.quality.migrated_to_auto {
+            self.session.quality.migrated_to_auto = false;
+            self.quality_draft = (0, 0, 0);
+            self.settings
+                .set_quality_wish(crate::quality::Wish::default());
+            self.settings.quality_warning = Some(
+                "saved quality is not available on this phone/edition; using Auto".into(),
+            );
+            self.save();
+        } else if self.session.quality.ready() {
+            let draft = crate::quality::Wish::from(self.quality_draft);
+            let (coerced, migrated) =
+                crate::quality::coerce_wish_to_available(draft, &modes);
+            if migrated {
+                self.quality_draft = coerced.tuple();
+                self.settings.set_quality_wish(coerced);
+                self.settings.quality_warning = Some(
+                    "saved quality is not available on this phone/edition; using Auto".into(),
+                );
+                self.save();
+            }
+        }
         let mut sizes: Vec<_> = modes.iter().map(|mode| (mode.width, mode.height)).collect();
         sizes.sort_unstable();
         sizes.dedup();
