@@ -23,6 +23,8 @@ class UsbPermissionInstrumentation : Instrumentation() {
     private var physicalDevice = false
     /** Explicit opt-in for the USB reader-release measurement (see [UsbReaderReleaseMeasurement]). */
     private var usbReaderMeasurement = false
+    /** Explicit opt-in for the frame-owner measurement (see [UsbFrameOwnerMeasurement]). */
+    private var usbFrameOwner = false
 
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
@@ -30,6 +32,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
         cameraAcceptance = arguments?.getString("cameraAcceptance") == "true"
         physicalDevice = arguments?.getString("physicalDevice") == "true"
         usbReaderMeasurement = arguments?.getString("usbReaderMeasurement") == "true"
+        usbFrameOwner = arguments?.getString("usbFrameOwner") == "true"
         start()
     }
 
@@ -349,6 +352,14 @@ class UsbPermissionInstrumentation : Instrumentation() {
                 // a profile the other modes would refuse. It does need the accessory to be
                 // attached and this app to hold the USB permission for it.
                 val marker = UsbReaderReleaseMeasurement(this).run()
+                finish(Activity.RESULT_OK, Bundle().apply { putString("stream", marker) })
+                return
+            }
+            if (usbFrameOwner) {
+                // Same reason as the reader-release instrument: it measures the endpoint rather
+                // than the app, and uses an in-memory repository. It has never run — see
+                // docs/evidence/2026-10-25-usb-frame-owner-blocked.md for what blocked it.
+                val marker = UsbFrameOwnerMeasurement(this).run()
                 finish(Activity.RESULT_OK, Bundle().apply { putString("stream", marker) })
                 return
             }
