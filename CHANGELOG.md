@@ -2,6 +2,12 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Say what to do when the phone's address changed. Wi-Fi guidance used to end at "check the
+  address shown on your phone", which is a dead end when DHCP has moved it (we hit `.14` →
+  `.15` in this session and lost a diagnostic round to it). It now names the one-tap fix: the
+  cable, then *Send Wi-Fi pairing to PC* on the phone, which updates the stored address — the
+  path that already existed but was never suggested at the moment it was needed.
+
 - Say how to stop asking. The Android dialog that asks whether the app may use the
   accessory has an **always allow** option; ticked once, the grant is remembered for that app
   and accessory and later plugs need no tap (verified by the user on the device). The status

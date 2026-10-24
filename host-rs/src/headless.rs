@@ -24,6 +24,13 @@ pub struct Options {
     pub host: Option<String>,
     /// Stop after this many seconds; `None` runs until the session ends.
     pub seconds: Option<u64>,
+    /// Ask the phone to switch capture mode once streaming has started.
+    ///
+    /// The gate for the quality controls (#8) needs a *repeatable* way to ask a device to
+    /// change resolution or frame rate: the capture path is what runs, the worker drives
+    /// the staged apply and sends the commit, and this only says what to want. Exits 1 if
+    /// the phone confirms a different mode than the one asked for.
+    pub quality: Option<(u16, u16, u16)>,
 }
 
 /// Did this run of events reach a stream?
@@ -89,6 +96,9 @@ pub fn run(options: Options) -> i32 {
         .seconds
         .map(|seconds| Instant::now() + Duration::from_secs(seconds));
     let mut reached_stream = false;
+    let mut requested = false;
+    let mut applied = None;
+    let mut refused = None;
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
     loop {
@@ -110,6 +120,31 @@ pub fn run(options: Options) -> i32 {
                     Ok(event) => {
                         if matches!(event, Event::Stats { .. }) {
                             reached_stream = true;
+                            // Ask once the stream exists: a mode change on a session that
+                            // has not started is staged by design, and this measures the
+                            // switch, not the staging.
+                            if let Some((width, height, fps)) = options.quality
+                                && !requested
+                            {
+                                requested = true;
+                                println!("requesting {width}x{height}@{fps} from the phone");
+                                if let Err(error) = control::write(
+                                    &mut stdin,
+                                    &Command::PrepareQuality { width, height, fps },
+                                ) {
+                                    eprintln!("cannot ask for a mode change: {error}");
+                                }
+                            }
+                        }
+                        match &event {
+                            Event::QualityApplied { width, height, fps } => {
+                                applied = Some((*width, *height, *fps));
+                            }
+                            Event::QualityFailed { reason, .. }
+                            | Event::Error { message: reason } => {
+                                refused = Some(reason.clone());
+                            }
+                            _ => {}
                         }
                         println!("{text}");
                         if matches!(event, Event::Stopped {}) {
@@ -130,7 +165,34 @@ pub fn run(options: Options) -> i32 {
     }
     let _ = child.kill();
     let _ = child.wait();
-    if reached_stream { 0 } else { 1 }
+    if !reached_stream {
+        return 1;
+    }
+    let Some((width, height, fps)) = options.quality else {
+        return 0;
+    };
+    match applied {
+        Some(mode) if mode == (width, height, fps) => {
+            println!("applied {width}x{height}@{fps}: PASS");
+            0
+        }
+        Some(mode) => {
+            println!(
+                "asked for {width}x{height}@{fps} but the phone applied {}x{}@{}: FAIL",
+                mode.0, mode.1, mode.2
+            );
+            1
+        }
+        None => {
+            println!(
+                "the phone never confirmed a mode{}: FAIL",
+                refused
+                    .map(|reason| format!(" ({reason})"))
+                    .unwrap_or_default()
+            );
+            1
+        }
+    }
 }
 
 /// Apply the command-line overrides to the stored settings.
@@ -160,6 +222,29 @@ fn spawn() -> std::io::Result<Child> {
     command.spawn()
 }
 
+/// `640x480@30` — the mode the caller wants the phone to switch to.
+pub fn parse_quality(value: &str) -> Result<(u16, u16, u16), String> {
+    let (size, fps) = value
+        .split_once('@')
+        .ok_or_else(|| format!("--quality wants WxH@fps, got {value:?}"))?;
+    let (width, height) = size
+        .split_once('x')
+        .ok_or_else(|| format!("--quality wants WxH@fps, got {value:?}"))?;
+    let parse = |text: &str, what: &str| {
+        text.parse::<u16>()
+            .map_err(|_| format!("--quality {what} is not a number: {text:?}"))
+    };
+    let (width, height, fps) = (
+        parse(width, "width")?,
+        parse(height, "height")?,
+        parse(fps, "fps")?,
+    );
+    if width == 0 || height == 0 || fps == 0 {
+        return Err(format!("--quality needs non-zero values, got {value:?}"));
+    }
+    Ok((width, height, fps))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +259,19 @@ mod tests {
             target_fps: 30,
             decoder: "software".into(),
         }
+    }
+
+    #[test]
+    fn a_quality_request_is_parsed_strictly() {
+        assert_eq!(parse_quality("640x480@30"), Ok((640, 480, 30)));
+        assert_eq!(parse_quality("1920x1080@60"), Ok((1920, 1080, 60)));
+        // A typo must be refused rather than quietly asking for something else: this
+        // argument decides what a device is told to capture.
+        assert!(parse_quality("640x480").is_err());
+        assert!(parse_quality("640@30").is_err());
+        assert!(parse_quality("0x480@30").is_err());
+        assert!(parse_quality("640x480@0").is_err());
+        assert!(parse_quality("vga@30").is_err());
     }
 
     #[test]
@@ -196,6 +294,7 @@ mod tests {
                 transport: Some("lan".into()),
                 host: Some("192.168.1.14".into()),
                 seconds: None,
+                quality: None,
             },
         );
         assert_eq!(merged.transport, "lan");
