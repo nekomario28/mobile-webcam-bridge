@@ -36,8 +36,12 @@ fun interface EditionPolicy {
             width > 0 && height > 0 && fps > 0
         }
 
-        /** Process-wide policy. Private fork may assign before any capture. */
-        @JvmField
+        /**
+         * Process-wide policy. A private fork assigns this before capture.
+         * Not @JvmField: on an interface companion that annotation is legal only
+         * when every companion property is a public final val, and this one is a var.
+         * Kotlin still reads and writes it as EditionPolicy.active.
+         */
         @Volatile
         var active: EditionPolicy = OssCap1080p30
     }
