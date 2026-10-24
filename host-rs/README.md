@@ -67,7 +67,8 @@ mobile-webcam --headless [--transport usb|lan] [--host ADDRESS] [--seconds N]
 ```
 
 Starts the same worker the window starts, prints every control event as one JSON line
-on stdout, and stops after `N` seconds or when the session ends. The exit code is the
+on stdout, and stops after `N` seconds or when the session ends. A Wi-Fi pairing
+event's access key is printed as `<redacted>`. The exit code is the
 answer a script gates on: **0** if a stream happened, **1** if it did not, **2** if it
 could not start (no settings, unreadable key, worker refused). It reads the stored
 settings, so pairing is unchanged, and `--transport`/`--host` override only that run.

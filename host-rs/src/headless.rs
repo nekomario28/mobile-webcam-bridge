@@ -3,7 +3,10 @@
 //! The GUI is the product, but a script — a CI job, a soak, a phone on a bench —
 //! cannot press Connect. This starts the same worker the GUI starts, speaks the same
 //! control protocol to it, and prints every event as one JSON line on stdout so the
-//! caller can gate on what happened. No egui, no window, no X server.
+//! caller can gate on what happened. A Wi-Fi pairing event's access key is replaced
+//! with `<redacted>` before that print: the worker still sends the key to the GUI
+//! over the same pipe, but this process's stdout is a log. No egui, no window, no
+//! X server.
 //!
 //! Exit code: 0 if the session reached streaming, 1 if it did not, 2 if it could not
 //! start at all (no settings, unreadable key, worker refused).
@@ -146,15 +149,22 @@ pub fn run(options: Options) -> i32 {
                             }
                             _ => {}
                         }
-                        println!("{text}");
+                        println!("{}", printed_event_line(text, &event));
                         if matches!(event, Event::Stopped {}) {
                             break;
                         }
                     }
                     // The worker is the only writer, but a malformed line is worth
                     // showing rather than dropping: it is the one thing that would
-                    // make a caller's JSON parse mysteriously fail.
-                    Err(error) => eprintln!("unreadable event line: {error}: {text}"),
+                    // make a caller's JSON parse mysteriously fail. A pairing line
+                    // is the exception: its body is the access key.
+                    Err(error) => {
+                        if text.contains("pairing_info") {
+                            eprintln!("unreadable pairing event line: {error}");
+                        } else {
+                            eprintln!("unreadable event line: {error}: {text}");
+                        }
+                    }
                 }
             }
             Err(error) => {
@@ -222,6 +232,22 @@ fn spawn() -> std::io::Result<Child> {
     command.spawn()
 }
 
+/// The line this process prints. Pairing events keep their address and
+/// fingerprint and lose the access key; every other event is unchanged.
+fn printed_event_line(text: &str, event: &Event) -> String {
+    if !matches!(event, Event::PairingInfo { .. }) {
+        return text.to_string();
+    }
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return "pairing event omitted: unreadable".into();
+    };
+    let Some(object) = value.as_object_mut() else {
+        return "pairing event omitted: unreadable".into();
+    };
+    object.insert("key".into(), serde_json::Value::String("<redacted>".into()));
+    serde_json::to_string(&value).unwrap_or_else(|_| "pairing event omitted: unreadable".into())
+}
+
 /// `640x480@30` — the mode the caller wants the phone to switch to.
 pub fn parse_quality(value: &str) -> Result<(u16, u16, u16), String> {
     let (size, fps) = value
@@ -259,6 +285,29 @@ mod tests {
             target_fps: 30,
             decoder: "software".into(),
         }
+    }
+
+    #[test]
+    fn a_printed_pairing_event_does_not_contain_the_access_key() {
+        let key = "0123456789abcdef0123456789abcdef";
+        let event = Event::PairingInfo {
+            addresses: vec!["192.168.1.9".into()],
+            fingerprint: "ab".repeat(32),
+            key: key.into(),
+        };
+        let raw = serde_json::to_string(&event).unwrap();
+        assert!(raw.contains(key));
+        let printed = printed_event_line(&raw, &event);
+        assert!(!printed.contains(key), "{printed}");
+        assert!(printed.contains("<redacted>"));
+        assert!(printed.contains("192.168.1.9"));
+        let stats_event = stats();
+        let stats_line = serde_json::to_string(&stats_event).unwrap();
+        assert_eq!(printed_event_line(&stats_line, &stats_event), stats_line);
+        assert_eq!(
+            printed_event_line("not-json", &event),
+            "pairing event omitted: unreadable"
+        );
     }
 
     #[test]

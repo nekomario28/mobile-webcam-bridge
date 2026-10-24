@@ -16,7 +16,8 @@ Usage: mobile-webcam [--help]
 
   --help               Show this text.
   --headless           Run a session without a window and print every event as one
-                       JSON line. Exits 0 if it streamed, 1 if it did not, 2 if it
+                       JSON line. A Wi-Fi pairing event's access key is printed as
+                       <redacted>. Exits 0 if it streamed, 1 if it did not, 2 if it
                        could not start.
   --transport MODE     Override the stored transport for this run.
   --host ADDRESS       Override the stored Wi-Fi address for this run.
