@@ -97,3 +97,61 @@ fn a_revoked_pc_is_told_it_was_revoked_not_that_the_key_is_wrong() {
         "and told what to do about it"
     );
 }
+
+#[test]
+fn a_dropped_usb_link_says_reconnecting_and_what_to_do() {
+    // Unpaired USB: a cold start must not connect by itself, so the injected
+    // failure is what the window renders. The retry is already armed; logic must
+    // not arm it again (that would require pending or recover_from_drop).
+    let settings = "[General]\ntransport=\"usb\"\noutput=\"/dev/video10\"\n";
+    let (mut harness, _dir) = harness(settings);
+    harness.run_steps(3);
+    {
+        let app = harness.state_mut();
+        app.session.state = crate::session::State::Failed("peer disconnected".into());
+        app.auto_retries = 1;
+        app.auto_retry = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+        app.recover_from_drop = false;
+        app.auto_attempt_pending = false;
+        app.usb_wait_for_device = false;
+        app.settings.transport = "usb".into();
+    }
+    harness.run_steps(2);
+    assert!(
+        harness.query_by_label_contains("Reconnecting").is_some(),
+        "a scheduled retry is reconnecting, not a final failure"
+    );
+    assert!(
+        harness
+            .query_by_label_contains("The USB link dropped")
+            .is_some(),
+        "a USB drop must say what to do next"
+    );
+    harness.state_mut().set_language(true);
+    harness.run_steps(2);
+    assert!(
+        harness.query_by_label_contains("再接続中").is_some(),
+        "the same state in Japanese"
+    );
+}
+
+#[test]
+fn retries_that_ran_out_say_to_press_connect() {
+    let unpaired = "[General]\ntransport=\"lan\"\noutput=\"/dev/video10\"\n";
+    let (mut harness, _dir) = harness(unpaired);
+    harness.run_steps(3);
+    {
+        let app = harness.state_mut();
+        app.session.state = crate::session::State::Failed("connection refused".into());
+        app.auto_retries = 9;
+        app.auto_retry = None;
+        app.recover_from_drop = false;
+        app.auto_attempt_pending = false;
+        app.usb_wait_for_device = false;
+    }
+    harness.run_steps(2);
+    assert!(
+        harness.query_by_label_contains("Press Connect").is_some(),
+        "the budget is spent; the next action is a press"
+    );
+}

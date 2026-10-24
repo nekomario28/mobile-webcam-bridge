@@ -96,8 +96,10 @@ argument.
 
 ## Loops and retries: forward progress
 
-- **Auto-reconnect** — at most 8 attempts, 2/4/8 then 15 s apart, reset on success and
-  suppressed for failures no retry can fix. The attempt and deadline are on screen.
+- **Auto-reconnect** — at most 8 dials, 2/4/8 then 15 s apart, for a launch miss and
+  for a later drop. Reset when the session reaches Waiting or Streaming. A missing
+  USB phone waits without spending a dial. Suppressed for failures no retry can
+  fix. The attempt and deadline are on screen.
 - **USB inventory** — a thread that parks for 2 s and wakes on demand; no spin.
 - **Quality deadline** — a 250 ms tick that exists only while a switch is pending.
 - **Session poll** — drains a channel; an empty poll allocates nothing.

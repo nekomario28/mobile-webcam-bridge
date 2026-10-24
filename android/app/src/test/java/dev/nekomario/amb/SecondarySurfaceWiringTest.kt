@@ -173,6 +173,7 @@ class SecondarySurfaceWiringTest {
         for (control in listOf(
             "sendPairingAction", "rotateAction", "lanHelp", "storageAction", "pairAction",
             "pairInfo", "cameraButton", "details", "usbMode", "lanMode", "cameras",
+            "retryAction",
         )) {
             assertTrue(
                 "$control is built but never added to the layout",
@@ -198,7 +199,7 @@ class SecondarySurfaceWiringTest {
         // The PC takes the pairing itself over the cable, so the key is not the next
         // thing the user needs and must not be pushed onto the main screen.
         val source = source()
-        val start = bodyOf(source, "private fun startLanMode()")
+        val start = bodyOf(source, "private fun startLanMode(")
         assertFalse("nothing may reveal the key on its own",
             start.contains("setPairingKeyVisible(true)"))
         val secondary = bodyOf(source, "private fun applySecondaryVisibility()")
@@ -218,5 +219,23 @@ class SecondarySurfaceWiringTest {
         val reveal = bodyOf(source, "private fun setPairingKeyVisible(")
         assertTrue("hiding must clear the text and the secure flag",
             reveal.contains("pairInfo.text = \"\"") && reveal.contains("FLAG_SECURE"))
+    }
+
+    @Test
+    fun a_dropped_link_names_retry_and_does_not_resume_a_refusal() {
+        val source = source()
+        assertTrue(
+            "the retry button must be in the layout",
+            source.contains("addView(retryAction"),
+        )
+        assertTrue(
+            "a refusal must not resume capture",
+            source.contains("ReconnectPolicy.shouldResume"),
+        )
+        val controls = bodyOf(source, "private fun updateControls()")
+        assertTrue(
+            "updateControls may show Retry while a connection problem is on screen",
+            controls.contains("retryAction.visibility"),
+        )
     }
 }

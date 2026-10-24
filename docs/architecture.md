@@ -156,15 +156,20 @@ step. The phone then taps Wi-Fi. Nothing is typed. It is not an authorization �
 each PC — and it makes the cable part of the pairing's trust boundary, which is
 the limit USB already has.
 
-Waiting is automatic too: when the stored pairing is complete the PC connects at
-launch, and if the phone is not answering yet it keeps trying with a bounded
-backoff (2 s, 4 s, 8 s, then 15 s, eight attempts) while the status says
-`Waiting for the phone (retrying)`. A phone that has not been opened, or has just
-been restarted, is the ordinary case rather than an error, so the user should not
-have to press Connect again for it. Failures no retry can heal — a rejected access
+Waiting is automatic too. When the stored pairing is complete the PC connects at
+launch, and the same bounded backoff (2 s, 4 s, 8 s, then 15 s, eight dials)
+runs again after a drop — a Wi-Fi blip or a USB session that ended — while the
+status says `Reconnecting` and names the attempt and the delay. A missing USB
+phone does not spend one of those eight dials: the PC waits until that phone
+reappears, and a failure that asks for a replug does not dial again until the
+phone has been seen to leave. A USB cold start stays a press of Connect, because
+switching the phone into accessory mode (and the polkit prompt that can go with
+it) is a decision. On the phone, a cable pull or a TCP close resumes the camera
+only if Start camera was already pressed in this process; a refusal, an explicit
+stop, or a mode change does not. Failures no retry can heal — a rejected access
 key, a fingerprint that does not match the pinned certificate, storage that needs
-recovery — end the retries immediately, and pressing Disconnect stops them until
-the user asks again.
+recovery, a missing driver — end the retries immediately, and pressing Disconnect
+stops them until the user asks again.
 
 Steps that involve no decision are automated instead of shown: the phone reveals
 its pairing key by itself while no PC is approved, and the PC connects on launch
