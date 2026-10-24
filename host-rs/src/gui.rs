@@ -106,6 +106,12 @@ pub struct App {
     /// `Session::connect` returns before it knows anything: the failure arrives
     /// later as a state transition, so the retry has to be scheduled from there.
     auto_attempt_pending: bool,
+    /// Monotonic origin for TTFF. Not a wall clock.
+    ttff_origin: std::time::Instant,
+    /// When the current connect attempt started, if one has.
+    connect_at: Option<std::time::Instant>,
+    /// The first submitted frame of this connect attempt has already been logged.
+    ttff_logged: bool,
     /// Where the unusable key was moved, shown after a replacement.
     recovery_note: Option<String>,
     #[cfg(feature = "capture")]
@@ -171,6 +177,7 @@ impl App {
         {
             return;
         }
+        self.note_connect_attempt();
         self.auto_attempt_pending = true;
         #[cfg(target_os = "linux")]
         let result =
@@ -210,6 +217,21 @@ impl App {
             return;
         }
         self.auto_retry = Some(std::time::Instant::now() + auto_retry_delay(self.auto_retries));
+    }
+
+    /// One connect attempt started. The line is a phase and a duration.
+    fn note_connect_attempt(&mut self) {
+        self.connect_at = Some(std::time::Instant::now());
+        self.ttff_logged = false;
+        eprintln!(
+            "{}",
+            crate::ttff::line(
+                "connect_started",
+                self.ttff_origin.elapsed().as_millis(),
+                None,
+                &self.settings.transport,
+            )
+        );
     }
 
     fn pairing_inputs(&mut self, ui: &mut egui::Ui) {
@@ -381,6 +403,9 @@ impl App {
             auto_retries: 0,
             auto_retry_suppressed: false,
             auto_attempt_pending: false,
+            ttff_origin: Instant::now(),
+            connect_at: None,
+            ttff_logged: false,
             preview: None,
             preview_texture: None,
             preview_path,
@@ -604,6 +629,22 @@ fn auto_retry_delay(attempt: u32) -> std::time::Duration {
         _ => 15,
     };
     std::time::Duration::from_secs(seconds)
+}
+
+/// What the idle USB screen says. One next action, and it changes once a phone is
+/// actually there — the "plug in the cable" line is stale the moment it is.
+fn usb_idle_hint(phone_ready: bool, japanese: bool) -> &'static str {
+    if phone_ready {
+        if japanese {
+            "スマホを認識しました。次: 「接続」を押し、スマホでUSBとこのPCを許可してから「カメラ開始」を押してください。"
+        } else {
+            "Phone found. Next: press Connect, allow USB and this PC on the phone, then press Start camera."
+        }
+    } else if japanese {
+        "次: USBケーブルでスマホをこのPCにつなぎ、スマホでアプリを開いてください。"
+    } else {
+        "Next: plug the phone into this PC with a USB cable and open Mobile Webcam on it."
+    }
 }
 
 /// "retry 2 of 8 in 4 s" — what "retrying" leaves out, and the two things a waiting
@@ -832,6 +873,15 @@ impl eframe::App for App {
         };
         if snapshot != self.last_stats {
             self.last_stats = snapshot;
+            if let Some(line) = crate::ttff::first_frame(
+                &mut self.ttff_logged,
+                snapshot.map(|(_, submitted)| submitted).unwrap_or(0),
+                self.ttff_origin.elapsed().as_millis(),
+                self.connect_at.map(|at| at.elapsed().as_millis()),
+                &self.settings.transport,
+            ) {
+                eprintln!("{line}");
+            }
             if snapshot.is_some_and(|(decoded, _)| decoded > 0) {
                 self.last_stats_at = Some(std::time::Instant::now());
                 // Only the first stats of a session move the stamp, not every second.
@@ -979,6 +1029,10 @@ impl eframe::App for App {
                                         "Wi-Fi pairing received from the phone. Nothing to type.",
                                         "スマホからWi-Fi設定を受け取りました。入力は不要です。",
                                     ));
+                                    ui.label(self.text(
+                                        "On the phone, tap Wi-Fi. Press Switch to Wi-Fi here when this PC should follow.",
+                                        "スマホでWi-Fiを押してください。このPCも切り替えるときは「Wi-Fiに切り替える」を押します。",
+                                    ));
                                     ui.weak(address);
                                     ui.add_space(6.0);
                                     ui.horizontal(|ui| {
@@ -1054,10 +1108,10 @@ impl eframe::App for App {
                                 }
                             } else {
                                 if matches!(self.session.state, State::Idle) {
-                                    ui.label(self.text(
-                                        "On your phone, select USB in Mobile Webcam.\nConnect it to this PC with a USB cable.",
-                                        "スマホでアプリを開き、USBを選択。\nUSBケーブルでPCにつなぐ。",
-                                    ));
+                                    let ready = self.selected.is_some()
+                                        && !self.selection_lost
+                                        && !self.devices.is_empty();
+                                    ui.label(usb_idle_hint(ready, self.ja));
                                     ui.add_space(8.0);
                                 }
                                 let available = &self.devices;
@@ -1151,6 +1205,7 @@ impl eframe::App for App {
                                 // A deliberate press clears the earlier "stop".
                                 self.auto_retry_suppressed = false;
                                 self.auto_retries = 0;
+                                self.note_connect_attempt();
                                 #[cfg(target_os = "linux")]
                                 let result = if self.settings.transport == "usb"
                                     && self.session.usb_permission.is_some()
@@ -1601,6 +1656,17 @@ impl Drop for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usb_idle_hint_changes_when_the_phone_is_already_there() {
+        let waiting = usb_idle_hint(false, false);
+        let ready = usb_idle_hint(true, false);
+        assert!(waiting.contains("plug the phone"));
+        assert!(ready.contains("press Connect"));
+        assert!(!ready.contains("plug the phone"));
+        assert!(usb_idle_hint(false, true).contains("USBケーブル"));
+        assert!(usb_idle_hint(true, true).contains("接続"));
+    }
 
     #[test]
     fn ages_read_like_someone_says_them() {

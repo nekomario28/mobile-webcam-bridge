@@ -2,15 +2,17 @@
 
 Open Mobile Webcam on your phone and PC. Choose the same mode on both:
 
-- **USB:** connect the cable, select the phone on the PC, then press **Connect**.
+- **USB:** connect the cable. A single phone is selected for you; press **Connect**.
   Android asks once whether the app may use the accessory; tick the dialog's
   *always allow* option and the prompt does not come back (the grant is remembered per
   app and accessory, and it survives replugging — it is cleared by reinstalling the app).
-- **Wi-Fi (development build, Android 10+):** select Wi-Fi on the phone,
-  choose **Show pairing key**, and manually verify the SHA-256
-  certificate fingerprint against the phone display. Enter the displayed
-  128-bit access key and the phone IP in the Rust desktop client, then press
-  **Connect**. Secure Wi-Fi uses TLS 1.3 with certificate pinning. The old
+  Then allow this PC on the phone and press **Start camera**.
+- **Wi-Fi (development build, Android 10+):** the short path is the cable. After the
+  PC is allowed over USB, press **Send Wi-Fi pairing to PC** on the phone, tap
+  **Wi-Fi** there, and press **Switch to Wi-Fi** on the PC. Nothing is typed.
+  Secure Wi-Fi uses TLS 1.3 with certificate pinning. A PC that cannot use the
+  cable still uses **Details → Show pairing key**: verify the SHA-256 fingerprint
+  on the phone, then enter it, the 128-bit access key, and the phone IP. The old
   C++ host cannot connect to the secure-only phone listener.
 
 In authorization-v2 development builds, match the full PC ID and approve the

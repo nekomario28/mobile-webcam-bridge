@@ -52,6 +52,9 @@ pub fn run(options: Options) -> i32 {
         }
     };
     let settings = merge(settings, &options);
+    let ttff_transport = settings.transport.clone();
+    let ttff_origin = Instant::now();
+    let mut ttff_logged = false;
     if let Err(error) = settings.validate() {
         eprintln!("settings are not usable: {error}");
         return 2;
@@ -80,6 +83,16 @@ pub fn run(options: Options) -> i32 {
             return 2;
         }
     };
+    let connect_at = Instant::now();
+    eprintln!(
+        "{}",
+        crate::ttff::line(
+            "connect_started",
+            ttff_origin.elapsed().as_millis(),
+            None,
+            &ttff_transport,
+        )
+    );
     if let Err(error) = control::write(
         &mut stdin,
         &Command::Start {
@@ -118,6 +131,18 @@ pub fn run(options: Options) -> i32 {
                 }
                 match serde_json::from_str::<Event>(text) {
                     Ok(event) => {
+                        if let Event::Stats { submitted, .. } = &event
+                            && let Some(mark) = crate::ttff::first_frame(
+                                &mut ttff_logged,
+                                *submitted,
+                                ttff_origin.elapsed().as_millis(),
+                                Some(connect_at.elapsed().as_millis()),
+                                &ttff_transport,
+                            )
+                        {
+                            // stderr: stdout is the event JSON a script parses.
+                            eprintln!("{mark}");
+                        }
                         if matches!(event, Event::Stats { .. }) {
                             reached_stream = true;
                             // Ask once the stream exists: a mode change on a session that

@@ -195,6 +195,11 @@ class SecondarySurfaceWiringTest {
         assertTrue("the key itself is shown only in Details and only when revealed",
             secondary.contains("pairInfo.visibility = if (open && pairingKeyVisible)"))
         assertTrue(
+            "sending the pairing over USB is the short Wi-Fi path and must not wait for Details",
+            secondary.contains("sendPairingAction.visibility") &&
+                !secondary.contains("open && connectionMode == ConnectionMode.USB"),
+        )
+        assertTrue(
             "erasing the record is destructive and belongs behind Details, except when a failed read needs its remedy reachable",
             secondary.contains("storageAction.visibility = if (open || storageFailed)"),
         )
