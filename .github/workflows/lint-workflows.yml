@@ -35,6 +35,6 @@ jobs:
       # The security-relevant properties actionlint does not look at: expression
       # injection, credential handling, over-broad permissions, unpinned actions,
       # and caches a pull request could poison before a privileged job reads them.
-      - uses: zizmorcore/zizmor-action@e673c3917a1aef3c65c972347ed84ccd013ecda4 # v0.2.0
+      - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
         with:
           advanced-security: false
