@@ -32,3 +32,14 @@ jobs:
         with:
           args: --offline --no-progress '*.md' 'docs/**/*.md' 'specs/**/*.md'
           fail: true
+
+  ffmpeg-source-offer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Offer matches build_ffmpeg.py pins
+        run: python3 host-rs/tools/check_ffmpeg_source_offer.py
+

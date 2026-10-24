@@ -105,7 +105,14 @@ if(DEFINED AMB_RUST_EXECUTABLE)
     file(COPY "${repo}/linux/licenses/LGPL-2.1-or-later.txt" "${AMB_FFMPEG_ROOT}/build-manifest.json"
          DESTINATION "${stage}/licenses/ffmpeg")
     file(COPY "${repo}/host-rs/tools/build_ffmpeg.py" DESTINATION "${stage}/licenses/ffmpeg")
-    file(WRITE "${stage}/licenses/ffmpeg/SOURCE.txt" "FFmpeg source: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz\nReproduce using host-rs/tools/build_ffmpeg.py and the accompanying build manifest.\n")
+    if(EXISTS "${repo}/docs/licenses/FFMPEG_SOURCE_OFFER.md")
+        file(COPY "${repo}/docs/licenses/FFMPEG_SOURCE_OFFER.md"
+             DESTINATION "${stage}/licenses/ffmpeg")
+        file(RENAME "${stage}/licenses/ffmpeg/FFMPEG_SOURCE_OFFER.md"
+                    "${stage}/licenses/ffmpeg/SOURCE.md")
+    else()
+        file(WRITE "${stage}/licenses/ffmpeg/SOURCE.txt" "FFmpeg source: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz\nReproduce using host-rs/tools/build_ffmpeg.py and the accompanying build manifest.\n")
+    endif()
     find_program(AMB_PYTHON NAMES python3 python REQUIRED)
     execute_process(COMMAND "${AMB_PYTHON}" "${repo}/host-rs/tools/verify_distribution.py"
         windows "${stage}" --objdump "${CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND}"
