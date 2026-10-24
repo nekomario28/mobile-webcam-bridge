@@ -325,7 +325,7 @@ jobs:
           fi
       - name: Upload emulator diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: secure-wifi-emulator-logs
           path: build/secure-wifi
