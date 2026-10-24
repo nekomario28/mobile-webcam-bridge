@@ -343,8 +343,12 @@ pub fn end_to_end(
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     let stop = std::sync::atomic::AtomicBool::new(false);
-    let attempt = |transport: &mut crate::usb::Usb| {
-        crate::client_auth::exchange(
+    // The whole attempt, authorization and the exchange together: a reader failure after
+    // authorization is the same kind of spent-session symptom, and the retry has to cover it
+    // (measured 2026-10-24: the retry wrapped the exchange only, so a failure two seconds
+    // into the round trips was reported without a second attempt).
+    let attempt = |transport: &mut crate::usb::Usb| -> crate::Result<Report> {
+        match crate::client_auth::exchange(
             transport,
             &identity,
             crate::client_auth::Route::Usb,
@@ -354,46 +358,29 @@ pub fn end_to_end(
                 on_waiting(&client_id);
                 Ok(())
             },
-        )
+        )? {
+            crate::client_auth::Outcome::Authorized { .. } => {}
+            crate::client_auth::Outcome::Rejected(reason) => return Err(reason.into()),
+        }
+        run(transport, frames, budget)
     };
     let mut outcome = attempt(&mut transport);
     if let Err(error) = &outcome
         && a_hello_would_help(&error.to_string())
     {
         // Self-heal instead of asking the user to restart the app: say hello, which ends a
-        // spent session on the phone, then try the exchange once more.
+        // spent session on the phone, then try the whole attempt once more.
         println!("retrying after a host hello: {error}");
         reset_exchange(&mut transport, Duration::from_secs(2))?;
+        // A failed attempt can end mid-frame; a reader holding a partial header cannot
+        // resynchronise on its own, so forget that state before listening again.
+        if !transport.reset_stream()? {
+            println!("warning: the stream did not show a frame boundary after the reset");
+        }
         outcome = attempt(&mut transport);
     }
-    match outcome {
-        Ok(crate::client_auth::Outcome::Authorized { .. }) => {}
-        Ok(crate::client_auth::Outcome::Rejected(reason)) => {
-            // Show what the phone sent while we were talking to it. A second
-            // CLIENT_CHALLENGE here is the signature of two live sessions — the app opening
-            // the accessory again while an older session still reads the same endpoint —
-            // and that would explain a proof signed against the wrong session's nonce
-            // without any key being wrong.
-            let mut kinds = Vec::new();
-            for _ in 0..16 {
-                match transport.poll_receive(Duration::from_millis(200)) {
-                    Ok(Some(frame)) => kinds.push(format!("0x{:02x}", frame.header.kind)),
-                    _ => break,
-                }
-            }
-            return Err(format!(
-                "{reason}{}",
-                if kinds.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (frames still arriving: {})", kinds.join(","))
-                }
-            )
-            .into());
-        }
-        Err(error) => return Err(error),
-    }
-    let report = run(&mut transport, frames, budget)?;
+    let report = outcome?;
+
     Ok((report, after))
 }
 

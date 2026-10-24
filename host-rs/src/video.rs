@@ -215,6 +215,10 @@ fn receive(
         // The phone's accessory session is spent (it authorised somebody, and AOA reports no
         // disconnect). Saying hello ends it, so the phone issues a fresh challenge — no app
         // restart, no replug, which is what this used to cost.
+        // `reset_stream` is not available here yet: the transport is already a trait object,
+        // and the trait has no downcast. The probe (which owns a concrete `Usb`) does reset
+        // the stream between attempts; the shipping path will need the same, and that wants
+        // the USB branch to keep its concrete type until after the retry.
         crate::usb_probe::reset_exchange(transport.as_mut(), Duration::from_secs(2))?;
         outcome = attempt(transport.as_mut());
     }
