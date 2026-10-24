@@ -52,7 +52,7 @@ tempfile = "=3.27.0"
 proptest = "=1.12.0"
 # Same version as eframe: drives the real widget tree through AccessKit, so the host
 # UI can be tested without a display, a window manager or synthetic clicks.
-egui_kittest = { version = "=0.36.2", features = ["eframe"] }
+egui_kittest = { version = "=0.37.0", features = ["eframe"] }
 # The harness takes and returns egui types, so the test crate needs the same egui.
 egui = { version = "=0.36.2", features = ["default_fonts"] }
 
