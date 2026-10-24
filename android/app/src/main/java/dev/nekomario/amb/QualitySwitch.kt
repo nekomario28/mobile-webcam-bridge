@@ -11,6 +11,7 @@ object QualitySwitch {
     const val REASON_BUSY = 5
     const val REASON_DEADLINE = 6
     const val REASON_CAPTURE_FAILED = 7
+    const val REASON_EDITION = 8
     enum class Phase { Idle, Prepared, Staged, Starting, Applied, Failed }
     sealed interface Verdict {
         object Accept : Verdict

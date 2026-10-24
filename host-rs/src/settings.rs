@@ -26,6 +26,9 @@ pub struct Settings {
     pub quality_fps: u16,
     #[serde(skip)]
     pub quality_warning: Option<String>,
+    /// Load clamped the saved wish to the edition cap; `Store::load` persists it.
+    #[serde(skip)]
+    pub quality_clamped: bool,
 }
 
 impl std::fmt::Debug for Settings {
@@ -67,6 +70,7 @@ impl Default for Settings {
             quality_height: 0,
             quality_fps: 0,
             quality_warning: None,
+            quality_clamped: false,
         }
     }
 }
@@ -182,8 +186,20 @@ impl Settings {
             s.set_quality_wish(crate::quality::Wish::default());
             s.quality_warning = Some("invalid saved quality preference; using Auto".into());
         }
+        s.clamp_quality_to_edition(crate::quality::active_edition());
         s.validate()?;
         Ok(s)
+    }
+    /// A saved wish above the edition cap (4K, 720p60, ...) must not linger: it
+    /// would match a later phone that advertises Pro modes. Clamp at load.
+    fn clamp_quality_to_edition(&mut self, cap: crate::quality::EditionCap) {
+        let (wish, changed) = cap.clamp_wish(self.quality_wish());
+        if changed {
+            self.set_quality_wish(wish);
+            self.quality_clamped = true;
+            self.quality_warning =
+                Some("saved quality is above this edition's limit; using the best allowed".into());
+        }
     }
 }
 fn parse_quality(value: &str, invalid: &mut bool) -> u16 {
@@ -255,7 +271,24 @@ impl Store {
         Ok(path)
     }
 
+    /// Load settings; a saved quality wish above the edition cap is clamped and
+    /// the clamped value is written back immediately (best effort: a failed
+    /// write keeps the clamp in memory and says so in `quality_warning`).
     pub fn load(&self) -> crate::Result<Settings> {
+        let mut settings = self.read()?;
+        if settings.quality_clamped {
+            match self.save(&settings) {
+                Ok(()) => settings.quality_clamped = false,
+                Err(error) => {
+                    settings.quality_warning = Some(format!(
+                        "saved quality is above this edition's limit; using the best allowed (could not save: {error})"
+                    ));
+                }
+            }
+        }
+        Ok(settings)
+    }
+    fn read(&self) -> crate::Result<Settings> {
         #[cfg(unix)]
         {
             let mut values = BTreeMap::new();
@@ -675,6 +708,72 @@ mod tests {
                     .unwrap()
                     .contains("using Auto")
             );
+        }
+    }
+
+    #[test]
+    fn from_values_clamps_above_cap_wish_and_keeps_other_settings() {
+        let values = [
+            ("lanHost".into(), "192.168.4.7:48527".into()),
+            ("qualityWidth".into(), "3840".into()),
+            ("qualityHeight".into(), "2160".into()),
+            ("qualityFps".into(), "30".into()),
+        ]
+        .into_iter()
+        .collect();
+        let s = Settings::from_values(&values).unwrap();
+        assert_eq!(s.lan_host, "192.168.4.7:48527");
+        assert_eq!(s.quality_wish().tuple(), (0, 0, 30));
+        assert!(s.quality_clamped);
+        assert!(s.quality_warning.as_ref().unwrap().contains("edition"));
+        // Within the cap nothing changes.
+        let ok = [
+            ("qualityWidth".into(), "1920".into()),
+            ("qualityHeight".into(), "1080".into()),
+            ("qualityFps".into(), "30".into()),
+        ]
+        .into_iter()
+        .collect();
+        let s = Settings::from_values(&ok).unwrap();
+        assert_eq!(s.quality_wish().tuple(), (1920, 1080, 30));
+        assert!(!s.quality_clamped);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn load_persists_the_clamp_immediately() {
+        for (saved, expected) in [
+            (
+                "qualityWidth=3840\nqualityHeight=2160\nqualityFps=30",
+                "0,0,30",
+            ),
+            (
+                "qualityWidth=1280\nqualityHeight=720\nqualityFps=60",
+                "1280,720,0",
+            ),
+            ("qualityFps=60", "0,0,0"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("settings.conf");
+            std::fs::write(
+                &path,
+                format!("[General]\nlanHost=192.168.4.9\nunknown=@ByteArray(x)\n{saved}\n"),
+            )
+            .unwrap();
+            let store = Store::at(path.clone());
+            let loaded = store.load().unwrap();
+            let tuple = loaded.quality_wish().tuple();
+            assert_eq!(format!("{},{},{}", tuple.0, tuple.1, tuple.2), expected);
+            assert!(!loaded.quality_clamped);
+            assert!(loaded.quality_warning.is_some());
+            // On disk now: a second load sees the clamped values with no warning.
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert!(!text.contains("qualityWidth=3840"), "{text}");
+            assert!(!text.contains("qualityFps=60"), "{text}");
+            assert!(text.contains("unknown=@ByteArray(x)"));
+            assert_eq!(store.load().unwrap().lan_host, "192.168.4.9");
+            let again = store.load().unwrap();
+            assert_eq!(again.quality_wish().tuple(), tuple);
+            assert!(again.quality_warning.is_none());
         }
     }
     #[cfg(unix)]

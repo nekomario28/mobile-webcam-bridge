@@ -57,6 +57,7 @@ fn reason(label: &str) -> &'static str {
         "permission" => "camera permission is not granted",
         "unsupported-mode" => "the mode is not supported by the phone",
         "deadline" => "the apply deadline expired",
+        "edition" => "the mode exceeds this edition's quality cap",
         "mismatch" => "the new mode did not match the request",
         "stopped" => "the apply was stopped",
         _ => panic!("invalid fixture reason: {label}"),

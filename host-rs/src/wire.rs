@@ -79,6 +79,7 @@ pub const REASON_STALE_REVISION: u8 = 4;
 pub const REASON_BUSY: u8 = 5;
 pub const REASON_DEADLINE: u8 = 6;
 pub const REASON_CAPTURE_FAILED: u8 = 7;
+pub const REASON_EDITION: u8 = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QualityMode {

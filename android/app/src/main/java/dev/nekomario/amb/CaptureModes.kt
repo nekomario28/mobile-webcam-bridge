@@ -119,6 +119,10 @@ object CaptureModes {
         return modes
     }
 
+    /** Modes [supported] permits after the active [EditionPolicy] filter. */
+    fun published(caps: Capabilities, policy: EditionPolicy = EditionPolicy.active): List<CaptureMode> =
+        policy.filter(supported(caps))
+
     /**
      * The AE range for a candidate fps: only ranges whose upper bound equals
      * the candidate (a 15–30 range cannot promise 24), fixed ranges first,
@@ -144,10 +148,14 @@ object CaptureModes {
     }
 
     /** Resolve a preference against the capabilities; exact explicit or auto. */
-    fun resolve(caps: Capabilities, preference: CapturePreference): Resolution {
-        val modes = supported(caps)
+    fun resolve(
+        caps: Capabilities,
+        preference: CapturePreference,
+        policy: EditionPolicy = EditionPolicy.active,
+    ): Resolution {
+        val modes = published(caps, policy)
         if (modes.isEmpty()) {
-            return Resolution.Rejected("camera ${caps.cameraId} exposes no supported capture mode")
+            return Resolution.Rejected("camera ${caps.cameraId} exposes no supported capture mode for this edition")
         }
         if (!preference.isAuto) {
             val matched = modes.filter { mode ->
