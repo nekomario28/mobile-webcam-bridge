@@ -64,6 +64,10 @@ object Wire {
     const val REASON_FOREGROUND = 2
     const val REASON_UNSUPPORTED_MODE = 3
     const val REASON_STALE_REVISION = 4
+    const val REASON_BUSY = 5
+    const val REASON_DEADLINE = 6
+    const val REASON_CAPTURE_FAILED = 7
+    const val REASON_EDITION = 8
 
     /** ClientAuthResult states and reasons. */
     const val AUTH_AUTHORIZED = 0

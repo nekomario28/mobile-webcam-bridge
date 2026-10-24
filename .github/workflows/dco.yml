@@ -1,0 +1,40 @@
+name: dco
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  signoff:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Require Signed-off-by on each PR commit
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          missing=0
+          while IFS= read -r commit; do
+            body=$(git log -1 --format=%B "$commit")
+            email=$(git log -1 --format=%ae "$commit")
+            name=$(git log -1 --format=%an "$commit")
+            if ! grep -Fqx "Signed-off-by: $name <$email>" <<<"$body"; then
+              echo "Missing or mismatched Signed-off-by on $commit ($name <$email>)"
+              missing=1
+            fi
+          done < <(git rev-list --reverse "${BASE}..${HEAD}")
+          if [ "$missing" -ne 0 ]; then
+            echo "Add Signed-off-by with: git commit --amend --signoff (or rebase -i -s)"
+            exit 1
+          fi
+          echo "All commits carry a matching Signed-off-by"

@@ -51,6 +51,7 @@ class MainActivity : Activity() {
     private var lanServer: LanServer? = null
     private var capabilityRevision = 0
     @Volatile private var advertisedCapabilities: Wire.Capabilities? = null
+    private var deviceCaptureModes: List<CaptureModes.CaptureMode> = emptyList()
     private var captureModes: List<CaptureModes.CaptureMode> = emptyList()
     private var qualityController: PhoneQualityController? = null
     private val qualityDeadlineRunnable = object : Runnable {
@@ -454,11 +455,12 @@ class MainActivity : Activity() {
      * immutable snapshot, never camera or Activity state. */
     private fun refreshQualityCapabilities() {
         val previousModes = captureModes
-        captureModes = runCatching {
+        deviceCaptureModes = runCatching {
             val cameras = CameraCatalog.enumerate(this)
             val camera = cameras.firstOrNull { it.lensFacing == CameraCharacteristics.LENS_FACING_BACK } ?: cameras.firstOrNull()
             camera?.let { CaptureModes.collectCapabilities(this, it.id) }?.let(CaptureModes::supported).orEmpty()
         }.getOrDefault(emptyList())
+        captureModes = EditionPolicy.active.filter(deviceCaptureModes)
         val permission = when {
             checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED -> Wire.PERMISSION_PENDING
             captureModes.isEmpty() || captureModes.size > Wire.MAX_QUALITY_MODES -> Wire.PERMISSION_UNAVAILABLE
@@ -489,6 +491,7 @@ class MainActivity : Activity() {
             stopCapture = { clearStartRequest -> stopCamera(clearStartRequest = clearStartRequest, cancelQuality = false) },
             startCapture = { mode -> cameraStartRequested = true; startCamera(mode) },
             startingEpoch = advertisedCapabilities?.streamEpoch ?: 0,
+            deviceModes = { deviceCaptureModes },
         )
     }
 

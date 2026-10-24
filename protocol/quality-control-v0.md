@@ -44,7 +44,7 @@ must never be used as an authorization fallback.
 - `QUALITY_RESULT`: `u32 requestId`, `u8 status` (0 switching, 1 rejected,
   2 capture-started, 3 staged-waiting-for-phone-user), `u8 reason`
   (0 none, 1 permission, 2 foreground, 3 unsupported-mode, 4 stale-revision,
-  5 busy, 6 deadline, 7 capture-failed), `u16 appliedWidth`,
+  5 busy, 6 deadline, 7 capture-failed, 8 edition-cap), `u16 appliedWidth`,
   `u16 appliedHeight`, `u16 appliedFps`, `u16 reserved` (14 bytes).
 - `PAUSED` / `COMMIT_QUALITY`: `u32 requestId`, `u32 streamEpoch` (8 bytes).
 

@@ -13,6 +13,8 @@ class PhoneQualityController(
     private val startCapture: (CaptureModes.CaptureMode) -> Unit,
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000L },
     startingEpoch: Long = 0,
+    /** Unfiltered device modes (before edition). Defaults to [modes]. */
+    private val deviceModes: () -> List<CaptureModes.CaptureMode> = modes,
 ) {
     private val machine = QualitySwitch.Machine(startingEpoch)
     private var preparedMode: CaptureModes.CaptureMode? = null
@@ -27,10 +29,12 @@ class PhoneQualityController(
             is Wire.HostCommand.Prepare -> {
                 val request = command.request
                 val mode = modes().firstOrNull { it.width == request.width && it.height == request.height && it.targetFps == request.targetFps }
+                val deviceHas = deviceModes().any { it.width == request.width && it.height == request.height && it.targetFps == request.targetFps }
                 val reason = when {
                     !permissionReady() -> QualitySwitch.REASON_PERMISSION
                     !foreground() -> QualitySwitch.REASON_FOREGROUND
                     request.catalogRevision != revision() -> QualitySwitch.REASON_STALE_REVISION
+                    mode == null && deviceHas -> QualitySwitch.REASON_EDITION
                     mode == null -> QualitySwitch.REASON_UNSUPPORTED_MODE
                     else -> 0
                 }
