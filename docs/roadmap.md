@@ -56,28 +56,16 @@ the claim each one would let us make.
 
 ## P1 — next, each with its closing test
 
-- **USB end to end on this branch.** Two operational facts to keep: a failed USB attempt
-  leaves the phone in accessory mode (AOA has no exit request) and the host now says to
-  replug; `adb shell svc usb resetUsbPort` clears it without touching the cable. And the
-  accessory description we present — `"Low-latency Android to Linux media bridge"` — is
-  what the phone's approval dialog shows, pinned by
-  `specs/rust-host-rewrite/contracts.md`; changing it is a spec change.
-  Partly measured 2026-10-24: **G0 passes** (the phone
-  re-enumerates as `18d1:2d01`), and **G0.5 passes at 50 round trips** (rtt p50 80 µs, 0
-  mismatches, 0 timeouts) but is **2 of 3 attempts** and has not completed at 1000. Three
-  host defects behind that are fixed (stream alignment at connect, stale-challenge signing,
-  replies mixed with capability frames); what remains looks like the phone's session
-  lifecycle, since the app sends one challenge per accessory session and needs a tap to
-  approve the USB accessory on every attach. See
-  [evidence/2026-10-24-usb-g0.md](evidence/2026-10-24-usb-g0.md).
-  *Closes when:* G0.5 completes at 1000 round trips with no mismatches, timeouts or
-  disconnects across repeated runs. **Blocked on an app-side defect**, not on the host:
-  the phone sends `QUALITY_CAPABILITIES` before its authorization result in some attempts,
-  which `protocol/client-authorization-v2.md` calls a protocol error and the host correctly
-  refuses; and it sends one challenge per accessory session, so a host that reconnects can
-  find no session to authorize.
-
-  *Closes when:* gates G0, G0.5 and G1 pass with captured `lsusb` and stdout.
+- ~~**USB end to end on this branch.**~~ Closed 2026-10-24: **G0 passes** (the phone
+  re-enumerates as `18d1:2d01`) and **G0.5 passes at 1000 round trips** — 1000 sequences
+  matched, the 8-byte challenge echoed every time, 0 mismatches, 0 timeouts, 0 disconnects,
+  rtt p50 550 µs. Getting there needed three host fixes (stream alignment at connect, a
+  `HOST_HELLO` reset for a spent accessory session, and pacing the round trips under the
+  phone'"'"'s own PING rate limit — the last one being an instrument that was measuring its own
+  violation). Evidence and the ordered story:
+  [evidence/2026-10-24-usb-g0.md](evidence/2026-10-24-usb-g0.md). Remaining on this path: the
+  same run repeated, and the app-side items in #78 (a per-attach USB approval, and the session
+  lifetime that makes `HOST_HELLO` necessary).
 - **The device actually shows the newest UX.** The installed build predates the
   receiver name, the approved-PC count and the key auto-hide.
   *Closes when:* an APK built from `main` is on the phone and a screenshot shows

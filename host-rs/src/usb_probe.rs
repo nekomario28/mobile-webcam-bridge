@@ -25,6 +25,16 @@ pub struct Options {
     pub frames: u64,
     /// Per-exchange budget.
     pub budget: Duration,
+    /// Round trips per second, sent no faster than the phone allows.
+    ///
+    /// The phone rate-limits `PING` to 64 per second and refuses the *session* when a peer
+    /// exceeds it — a deliberate protection, and the protocol's own rule for controls on an
+    /// unauthorized session. Probed at full speed (`~2000/s` on loopback-fast USB) the run
+    /// therefore ended its own session every ~60 exchanges: measured 2026-10-24, 576 round
+    /// trips across nine seams, with 0 mismatches and 0 timeouts — a healthy link being
+    /// killed by the instrument. Half the phone's limit leaves room for its own 1-second
+    /// window and keeps 1000 round trips inside the gate's intent.
+    pub rate_per_second: u32,
 }
 
 impl Default for Options {
@@ -32,6 +42,7 @@ impl Default for Options {
         Self {
             frames: 1000,
             budget: Duration::from_millis(2000),
+            rate_per_second: 32,
         }
     }
 }
@@ -39,20 +50,27 @@ impl Default for Options {
 /// Run `Options` against an attached phone and print the gate's evidence.
 pub fn cli(options: &Options) -> i32 {
     println!(
-        "usb probe: {} round trips, {} ms budget each",
+        "usb probe: {} round trips, {} ms budget each, at most {} per second",
         options.frames,
-        options.budget.as_millis()
+        options.budget.as_millis(),
+        options.rate_per_second
     );
     let announced = std::cell::Cell::new(false);
-    let result = end_to_end(None, options.frames, options.budget, |client_id| {
-        if !announced.get() {
-            announced.set(true);
-            println!(
-                "waiting for the phone to approve this PC (PC ID {client_id}); \
+    let result = end_to_end(
+        None,
+        options.frames,
+        options.budget,
+        options.rate_per_second,
+        |client_id| {
+            if !announced.get() {
+                announced.set(true);
+                println!(
+                    "waiting for the phone to approve this PC (PC ID {client_id}); \
                  tap Allow on the phone if it asks"
-            );
-        }
-    });
+                );
+            }
+        },
+    );
     match result {
         Ok((report, after)) => {
             println!(
@@ -98,6 +116,10 @@ pub struct Report {
     /// too; the first version of this probe read one as "the reply" and reported a
     /// sequence mismatch for every single exchange.
     pub skipped: u64,
+    /// The peer started a fresh exchange while we were counting: the phone rebuilds its
+    /// accessory session on an absolute proof deadline, so a long run legitimately crosses
+    /// one. The caller re-authorizes and continues; the count accumulates across the seam.
+    pub rechallenged: bool,
     pub rtts_us: Vec<u64>,
 }
 
@@ -145,6 +167,14 @@ impl Report {
             if self.pass(expected) { "PASS" } else { "FAIL" }
         )
     }
+}
+
+/// How long to wait before the next round trip, given the last one took `elapsed`.
+///
+/// Pure so the pacing can be tested without a clock: at or above the target rate the delay
+/// is zero, below it is the remainder of the period.
+pub fn pace_delay(elapsed: Duration, period: Duration) -> Duration {
+    period.saturating_sub(elapsed)
 }
 
 /// The 8-byte challenge for a sequence number: deterministic, so a run is reproducible.
@@ -316,6 +346,7 @@ pub fn end_to_end(
     device: Option<crate::usb::DeviceId>,
     frames: u64,
     budget: Duration,
+    options_rate: u32,
     on_waiting: impl Fn(&str),
 ) -> crate::Result<(Report, crate::usb::DeviceId)> {
     let target = match device {
@@ -343,11 +374,12 @@ pub fn end_to_end(
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     let stop = std::sync::atomic::AtomicBool::new(false);
-    // The whole attempt, authorization and the exchange together: a reader failure after
-    // authorization is the same kind of spent-session symptom, and the retry has to cover it
-    // (measured 2026-10-24: the retry wrapped the exchange only, so a failure two seconds
-    // into the round trips was reported without a second attempt).
-    let attempt = |transport: &mut crate::usb::Usb| -> crate::Result<Report> {
+    // Authorization and the exchange, and then again if the peer starts a new exchange:
+    // the phone rebuilds its accessory session on an absolute proof deadline (by design),
+    // so a long run crosses seams. Continuing across them is what keeps the count honest —
+    // the alternative was the host pinging an unauthorized session, which the phone refuses
+    // as a protocol error and which is what the run kept dying of.
+    let authorize = |transport: &mut crate::usb::Usb| -> crate::Result<()> {
         match crate::client_auth::exchange(
             transport,
             &identity,
@@ -359,35 +391,73 @@ pub fn end_to_end(
                 Ok(())
             },
         )? {
-            crate::client_auth::Outcome::Authorized { .. } => {}
-            crate::client_auth::Outcome::Rejected(reason) => return Err(reason.into()),
+            crate::client_auth::Outcome::Authorized { .. } => Ok(()),
+            crate::client_auth::Outcome::Rejected(reason) => Err(reason.into()),
         }
-        run(transport, frames, budget)
     };
-    let mut outcome = attempt(&mut transport);
-    if let Err(error) = &outcome
-        && a_hello_would_help(&error.to_string())
-    {
-        // Self-heal instead of asking the user to restart the app: say hello, which ends a
-        // spent session on the phone, then try the whole attempt once more.
-        println!("retrying after a host hello: {error}");
-        reset_exchange(&mut transport, Duration::from_secs(2))?;
-        // A failed attempt can end mid-frame; a reader holding a partial header cannot
-        // resynchronise on its own, so forget that state before listening again.
-        if !transport.reset_stream()? {
-            println!("warning: the stream did not show a frame boundary after the reset");
+    let authorize_with_reset = |transport: &mut crate::usb::Usb| -> crate::Result<()> {
+        match authorize(transport) {
+            Ok(()) => Ok(()),
+            Err(error) if a_hello_would_help(&error.to_string()) => {
+                println!("retrying after a host hello: {error}");
+                reset_exchange(transport, Duration::from_secs(2))?;
+                if !transport.reset_stream()? {
+                    println!("warning: the stream did not show a frame boundary after the reset");
+                }
+                authorize(transport)
+            }
+            Err(error) => Err(error),
         }
-        outcome = attempt(&mut transport);
+    };
+
+    let period = if options_rate > 1000 {
+        Duration::ZERO
+    } else {
+        Duration::from_micros(1_000_000 / options_rate.max(1) as u64)
+    };
+    let mut report = Report::default();
+    let mut remaining = frames;
+    let mut seams = 0;
+    authorize_with_reset(&mut transport)?;
+    loop {
+        let part = run(&mut transport, remaining, budget, period)?;
+        report.sent += part.sent;
+        report.echoed += part.echoed;
+        report.sequence_mismatch += part.sequence_mismatch;
+        report.payload_mismatch += part.payload_mismatch;
+        report.timed_out += part.timed_out;
+        report.skipped += part.skipped;
+        report.rtts_us.extend_from_slice(&part.rtts_us);
+        remaining = remaining.saturating_sub(part.echoed);
+        if remaining == 0 || !part.rechallenged {
+            report.rechallenged = part.rechallenged;
+            break;
+        }
+        seams += 1;
+        if seams > 8 {
+            // Bounded: a peer that restarts its exchange for ever is not a session seam, it
+            // is a peer that cannot hold one, and saying so is more useful than a long wait.
+            println!("stopped after {seams} session seams without finishing");
+            report.rechallenged = true;
+            break;
+        }
+        println!("the phone started a new exchange; re-authorizing and continuing");
+        authorize(&mut transport)?;
     }
-    let report = outcome?;
 
     Ok((report, after))
 }
 
 /// Run `frames` PING/PONG exchanges on an already-authorised transport.
-pub fn run(transport: &mut dyn Transport, frames: u64, budget: Duration) -> crate::Result<Report> {
+pub fn run(
+    transport: &mut dyn Transport,
+    frames: u64,
+    budget: Duration,
+    period: Duration,
+) -> crate::Result<Report> {
     let mut report = Report::default();
     for index in 0..frames {
+        let exchange_started = Instant::now();
         let sequence = (index as u32).wrapping_add(1);
         let challenge = challenge(sequence);
         let mut frame = Frame::new(wire::PING, sequence, challenge.to_vec())?;
@@ -409,6 +479,16 @@ pub fn run(transport: &mut dyn Transport, frames: u64, budget: Duration) -> crat
                 // waiting for — the phone advertises its capabilities right after
                 // authorizing. Counting them and continuing is what the shipping session
                 // does; treating one as the reply makes every exchange look mismatched.
+                // A fresh challenge is not noise: the phone has started a new exchange
+                // (its previous session hit the absolute proof deadline, which is by
+                // design), so this session is no longer authorized and the next PING would
+                // be a control frame on an unauthorized session — the protocol's own
+                // protocol-error case, and what the phone correctly refuses. Stop and let
+                // the caller re-authorize.
+                Some(candidate) if candidate.header.kind == wire::CLIENT_CHALLENGE => {
+                    report.rechallenged = true;
+                    break None;
+                }
                 Some(candidate) if candidate.header.kind != wire::PONG => {
                     report.skipped += 1;
                     continue;
@@ -417,6 +497,10 @@ pub fn run(transport: &mut dyn Transport, frames: u64, budget: Duration) -> crat
                 None => continue,
             }
         };
+        if report.rechallenged {
+            report.sent -= 1; // this PING was never answered; it does not count as sent
+            break;
+        }
         match classify(sequence, &challenge, reply.as_ref()) {
             Verdict::Echoed => {
                 report.echoed += 1;
@@ -425,6 +509,10 @@ pub fn run(transport: &mut dyn Transport, frames: u64, budget: Duration) -> crat
             Verdict::SequenceMismatch => report.sequence_mismatch += 1,
             Verdict::PayloadMismatch => report.payload_mismatch += 1,
             Verdict::TimedOut => report.timed_out += 1,
+        }
+        let delay = pace_delay(exchange_started.elapsed(), period);
+        if !delay.is_zero() {
+            std::thread::sleep(delay);
         }
     }
     Ok(report)
@@ -479,6 +567,65 @@ mod tests {
     }
 
     #[test]
+    fn a_fresh_challenge_stops_the_count_instead_of_being_pinged_through() {
+        // The phone rebuilds its accessory session on an absolute proof deadline, and a
+        // control frame on an unauthorized session is a protocol error it correctly refuses.
+        // So a new challenge must stop the round trips and be reported, not be skipped.
+        struct Rechallenging {
+            pings: u64,
+        }
+        impl Transport for Rechallenging {
+            fn receive(&mut self, timeout: Duration) -> crate::Result<Frame> {
+                self.poll_receive(timeout)?.ok_or_else(|| "no reply".into())
+            }
+            fn send(&mut self, _frame: &Frame, _timeout: Duration) -> crate::Result<()> {
+                self.pings += 1;
+                Ok(())
+            }
+            fn poll_receive(&mut self, _timeout: Duration) -> crate::Result<Option<Frame>> {
+                if self.pings >= 3 {
+                    // The seam: a new exchange begins where the third reply would have been.
+                    return Ok(Some(
+                        Frame::new(wire::CLIENT_CHALLENGE, 0, vec![0u8; 66]).unwrap(),
+                    ));
+                }
+                let sequence = self.pings as u32;
+                Ok(Some(
+                    Frame::new(wire::PONG, sequence, challenge(sequence).to_vec()).unwrap(),
+                ))
+            }
+        }
+        let mut transport = Rechallenging { pings: 0 };
+        let report = run(
+            &mut transport,
+            100,
+            Duration::from_millis(50),
+            Duration::ZERO,
+        )
+        .unwrap();
+        assert!(report.rechallenged, "the seam must be reported");
+        assert_eq!(report.echoed, 2, "the two answered round trips count");
+        assert_eq!(report.skipped, 0, "a challenge is not noise to be skipped");
+        assert_eq!(report.sent, 2, "the unanswered PING is not counted as sent");
+        assert!(!report.pass(100));
+    }
+
+    #[test]
+    fn pacing_waits_only_for_the_remainder_of_the_period() {
+        let period = Duration::from_millis(30);
+        assert_eq!(
+            pace_delay(Duration::from_millis(5), period),
+            Duration::from_millis(25)
+        );
+        assert_eq!(pace_delay(period, period), Duration::ZERO);
+        assert_eq!(
+            pace_delay(Duration::from_millis(80), period),
+            Duration::ZERO,
+            "a slow exchange is not penalised twice"
+        );
+    }
+
+    #[test]
     fn only_a_spent_session_is_worth_a_hello() {
         // The failures a hello can reset: a session that authorised somebody is quiet, or
         // still answering with the older connection's frames.
@@ -508,7 +655,13 @@ mod tests {
     #[test]
     fn a_clean_exchange_passes_and_reports_percentiles() {
         let mut transport = fake(false, false);
-        let report = run(&mut transport, 20, Duration::from_millis(50)).unwrap();
+        let report = run(
+            &mut transport,
+            20,
+            Duration::from_millis(50),
+            Duration::ZERO,
+        )
+        .unwrap();
         assert!(report.pass(20), "{report:?}");
         assert_eq!(report.sent, 20);
         assert_eq!(transport.sent, (1..=20).collect::<Vec<_>>());
@@ -526,7 +679,7 @@ mod tests {
         // The gate says "sequence matches on every exchange", so one mismatch must fail the
         // run: a mean RTT cannot express a framing error.
         let mut transport = fake(true, false);
-        let report = run(&mut transport, 5, Duration::from_millis(50)).unwrap();
+        let report = run(&mut transport, 5, Duration::from_millis(50), Duration::ZERO).unwrap();
         assert_eq!(report.sequence_mismatch, 5);
         assert!(!report.pass(5));
         assert!(report.summary(5).contains("FAIL"));
@@ -535,7 +688,7 @@ mod tests {
     #[test]
     fn a_changed_payload_is_its_own_failure() {
         let mut transport = fake(false, true);
-        let report = run(&mut transport, 5, Duration::from_millis(50)).unwrap();
+        let report = run(&mut transport, 5, Duration::from_millis(50), Duration::ZERO).unwrap();
         assert_eq!(report.payload_mismatch, 5);
         assert_eq!(report.sequence_mismatch, 0, "the sequence was fine");
         assert!(!report.pass(5));
@@ -558,7 +711,7 @@ mod tests {
             }
         }
         let mut transport = Silent;
-        let report = run(&mut transport, 3, Duration::from_millis(10)).unwrap();
+        let report = run(&mut transport, 3, Duration::from_millis(10), Duration::ZERO).unwrap();
         assert_eq!(report.timed_out, 3);
         assert_eq!(report.echoed, 0);
         assert!(!report.pass(3));
