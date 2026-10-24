@@ -79,32 +79,49 @@ the documented one — a proof answered against a replaced challenge (`BAD_SIGNA
 capability frame ahead of the authorization result — but the reason is refusal, not theft. The
 guard is what keeps the phone out of that state.
 
-## The build that was measured
+## Which build ran
 
-The app installed on the phone is `versionCode 2000 / versionName 0.2.0`, and it has no
-`readerAlive()` — `NoSuchMethodError` — so it predates the ID-002 fix. Its `closeAndAwait` is
-the one quoted below, and the reading above therefore applies to what that build ran:
+The runs did not all run the same APK, and the difference is recorded rather than smoothed over:
 
-```kotlin
-fun closeAndAwait(timeoutMs: Long): Boolean {
-    running.set(false); runCatching { pfd.close() }; closeMedia()
-    val reader = readerThread
-    readerThread = null
-    if (reader != null && Thread.currentThread() !== reader) {
-        reader.interrupt(); runCatching { reader.join(timeoutMs) }
-        return !reader.isAlive
-    }
-    return true
-}
-```
+- The first two runs measured the app that happened to be installed — `versionCode 2000 /
+  versionName 0.2.0` — whose `AccessorySession` has no `readerAlive()`
+  (`NoSuchMethodError`), so it predates the ID-002 fix. Its `closeAndAwait` is:
 
-The release semantics are unchanged by the fix (`return !reader.isAlive` both before and
-after); what the fix adds is keeping the handle. So the rate stands for the shipping code, and
-the *durability* half is not what this document measured — `ReaderHandoverTest` covers the
-object it feeds.
+  ```kotlin
+  fun closeAndAwait(timeoutMs: Long): Boolean {
+      running.set(false); runCatching { pfd.close() }; closeMedia()
+      val reader = readerThread
+      readerThread = null
+      if (reader != null && Thread.currentThread() !== reader) {
+          reader.interrupt(); runCatching { reader.join(timeoutMs) }
+          return !reader.isAlive
+      }
+      return true
+  }
+  ```
 
-Only the androidTest APK was installed, deliberately: reinstalling the app APK clears its USB
-grant for the accessory, and the measurement needs the grant to open the endpoint at all.
+  The release semantics are the fixed ones already (`return !reader.isAlive`); what the fix adds
+  is keeping the handle when the reader survived. So the rate applies to both, and the
+  *durability* half is not what this document measured — `ReaderHandoverTest` covers the object
+  it feeds.
+- The final run reinstalled the **branch build itself** — `adb install -r` of the debug APK
+  `assembleDebug` produced from the branch — and measured again: identical, 10/10 and 10/10,
+  both descriptors open, `EIO` on the second reader. The build is verified rather than assumed:
+  `ReaderHandover` and `StopAction` exist only on the branch, and both are in the installed
+  APK's `classes3.dex`.
+
+**No permission dialog appeared and no tap was issued.** The USB grant survived the update —
+`dumpsys usb` still lists the app's uid under `accessory_permissions`, and the harness's own
+"no USB permission for this accessory: asking the device now" line never appears in the log.
+That narrows the repository's earlier note that the grant is "cleared by reinstalling or
+updating the app": what was measured here is an update at the *same* `versionCode`, which kept
+it. A version bump was not tried, so the note is not contradicted, only narrowed.
+
+The attempt to answer a dialog automatically is recorded for what it cost. The helper dumped
+whatever window was focused and read the phone's unrelated UI, because it never checked which
+window it was looking at. It issued no tap — the helper prints a line for every tap and the log
+has none — and the measurement did not need one. An instrument that answers a security dialog
+must confirm the focused window is that dialog first.
 
 ## Verification boundary
 
@@ -113,7 +130,8 @@ grant for the accessory, and the measurement needs the grant to open the endpoin
   old reader still holds the endpoint — is **not** measured here and is not claimed. A clean
   rate here is not evidence that the guard is unnecessary; it is evidence that the cheap half
   of the claim is reproducible without a host, and which half needs one.
-- One device, one host, two runs of the same instrument. The 0 ms figures are the same clock on
+- One device, one host, three runs of the same instrument — two against the previously
+  installed build, one against the branch build reinstalled. The 0 ms figures are the same clock on
   the phone and are not a statement about USB latency.
 - `UsbReaderReleaseMeasurement` runs as part of the instrumentation APK, so nothing in CI
   exercises it: the emulator has no accessory. It is a device instrument, run by hand like

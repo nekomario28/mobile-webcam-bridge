@@ -42,6 +42,10 @@
   `libcore.io.Linux.readBytes` when the close ran. Two `openAccessory` calls both succeed, so
   the platform does not prevent two readers — the app-level guard is the only thing that does —
   and the observed mechanism is refusal (`EIO` on the second reader) rather than frame theft.
+  Re-measured against the shipping build itself: the app APK was reinstalled and the numbers
+  were identical, and the USB grant survived the update at the same `versionCode`, so the
+  dialog the run had prepared for never appeared — which narrows, without contradicting, the
+  note that reinstalling clears the grant.
   Evidence and its boundary:
   [docs/evidence/2026-10-25-usb-reader-release.md](docs/evidence/2026-10-25-usb-reader-release.md).
 

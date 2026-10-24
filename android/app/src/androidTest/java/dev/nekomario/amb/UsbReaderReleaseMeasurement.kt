@@ -56,6 +56,17 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
         report.append("usb-reader measurement on ").append(Build.MODEL)
             .append(" (API ").append(Build.VERSION.SDK_INT).append("), accessory ")
             .append(accessory.manufacturer).append(' ').append(accessory.model).append('\n')
+        if (!manager.hasPermission(accessory)) {
+            report.append("no USB permission for this accessory: asking the device now\n")
+            val started = System.currentTimeMillis()
+            if (!awaitPermission(manager, accessory, 180_000L)) {
+                report.append("FAIL usb-reader: permission was not granted in 180 s")
+                    .append(" — answer the dialog on the phone and run it again\n")
+                return report.toString()
+            }
+            report.append("permission granted after ")
+                .append(System.currentTimeMillis() - started).append(" ms\n")
+        }
         rawRelease(manager, accessory, report)
         sessionRelease(manager, accessory, report)
         twoDescriptors(manager, accessory, report)
@@ -172,6 +183,34 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
         Thread.sleep(400)
         report.append("  after closing descriptor 2: reader1=").append(reader1.outcome)
             .append(" reader2=").append(reader2.outcome).append('\n')
+    }
+
+    /**
+     * Ask the device for the accessory and wait for the owner to answer the dialog.
+     *
+     * The request goes through the app's own [MainActivity.createUsbPermissionRequest], so the
+     * instrument exercises the same path the product does. Polling `hasPermission` rather than
+     * reading the broadcast's extra keeps this independent of what the system fills in.
+     *
+     * **Not exercised by the runs recorded in `docs/evidence/2026-10-25-usb-reader-release.md`:**
+     * the USB grant survived `adb install -r` at the same versionCode, so `hasPermission` was
+     * already true and this path never ran. It is here for a device where the grant is absent,
+     * and it is untested until a run reports answering that dialog.
+     */
+    private fun awaitPermission(manager: UsbManager, accessory: UsbAccessory, timeoutMs: Long): Boolean {
+        val context = instrumentation.targetContext
+        val started = System.currentTimeMillis()
+        runCatching {
+            manager.requestPermission(
+                accessory,
+                MainActivity.createUsbPermissionRequest(context, "usb-reader-measurement"),
+            )
+        }
+        while (System.currentTimeMillis() - started < timeoutMs) {
+            if (manager.hasPermission(accessory)) return true
+            Thread.sleep(500)
+        }
+        return manager.hasPermission(accessory)
     }
 
     private fun threadNamed(name: String): Thread? =
