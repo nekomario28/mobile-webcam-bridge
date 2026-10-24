@@ -42,9 +42,11 @@ the device rows, on a real XQ-GE44 over Wi-Fi.
    fallback now supplies defaults instead of denying startup, the settings temp name is
    unpredictable, and the largest accepted frame is measured (113 MiB transient on Linux,
    192 MiB on Windows) rather than argued about — all three with tests or a number.
-4. **Bounded worker control and real-phone switching acceptance** (#10, #8). The
-   staged-apply state machine and the bounded control queue need the real-phone
-   matrix from #8 run against them, not the synthetic peer.
+4. ~~**Bounded worker control and real-phone switching acceptance**~~ Closed
+   2026-10-24: the switch is accepted on a physical phone through the real capture path —
+   `640x480@30` and `1280x720@15` both applied and confirmed by the device
+   ([evidence](evidence/2026-10-24-quality-switch-acceptance.md)), driven by a repeatable
+   `--quality` argument rather than by clicking a GUI.
    *Closes when:* the #8 matrix passes on hardware and its evidence is attached.
 
 ## What other projects offer
