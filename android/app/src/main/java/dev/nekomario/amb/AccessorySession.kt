@@ -49,11 +49,33 @@ class AccessorySession(
     }
 
     override fun close() {
+        closeAndAwait(500)
+    }
+
+    /**
+     * Close, and say whether the reader is really gone.
+     *
+     * A blocked read on the accessory stream is not interruptible, so closing the
+     * descriptor is what unblocks it — and if that does not take effect inside the wait,
+     * the old reader is still alive on the *same* endpoint. Starting a new session then
+     * gives one accessory two readers: the older one takes the new connection's proof,
+     * answers it against its own (already replaced) challenge, and its writer can put
+     * capability frames in front of the authorization result. Measured on a real phone
+     * 2026-10-24 as `BAD_SIGNATURE` and `expected authorization outcome before
+     * capabilities/media`, both intermittent. Callers that are about to open a new session
+     * must check this and refuse to run two.
+     */
+    fun closeAndAwait(timeoutMs: Long): Boolean {
         running.set(false)
         runCatching { pfd.close() }
         closeMedia()
-        readerThread?.interrupt()
-        if (Thread.currentThread() !== readerThread) runCatching { readerThread?.join(500) }
+        val reader = readerThread
         readerThread = null
+        if (reader != null && Thread.currentThread() !== reader) {
+            reader.interrupt()
+            runCatching { reader.join(timeoutMs) }
+            return !reader.isAlive
+        }
+        return true
     }
 }

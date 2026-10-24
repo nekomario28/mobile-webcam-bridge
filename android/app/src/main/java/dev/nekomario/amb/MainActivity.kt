@@ -715,7 +715,18 @@ class MainActivity : Activity() {
         val authorization = authorizationOwner ?: return
         // Every physical connection is a fresh consent boundary. A prior Start
         // intent is never inherited, even after the old session became null.
-        closeSession()
+        //
+        // And the previous session's reader must be *gone* before a new one opens: on USB
+        // those two readers share one endpoint, so a surviving one consumes this
+        // connection's challenge and the host sees frames that belong to the old session.
+        if (!closeSession()) {
+            show(ui(
+                "The previous USB session did not stop. Unplug and replug the cable.",
+                "前のUSBセッションが停止しませんでした。ケーブルを挿し直してください。"
+            ))
+            scheduleRediscover()
+            return
+        }
         val pfd = usb.openAccessory(accessory)
         if (pfd == null) {
             show(ui("Could not open USB accessory. Retrying…", "USB accessoryを開けません。再試行します…"))
@@ -1052,15 +1063,21 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun closeSession(clearStartRequest: Boolean = true) {
+    private fun closeSession(clearStartRequest: Boolean = true): Boolean {
         val current = session
         session = null
         qualityController = null
         handler.removeCallbacks(qualityDeadlineRunnable)
         stopCamera(clearStartRequest)
+        // A USB session's reader is a blocked read on the accessory stream: closing the
+        // session is not the same as that read having returned. The answer decides whether
+        // a new session may open, because two readers on one endpoint take each other's
+        // frames (see AccessorySession.closeAndAwait).
+        val stopped = (current as? AccessorySession)?.closeAndAwait(1500) ?: true
         runCatching { current?.close() }
         runCatching { accessoryFd?.close() }
         accessoryFd = null
+        return stopped
     }
 
     private fun stopConnections() {
