@@ -4,6 +4,7 @@ import android.app.Instrumentation
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.util.Collections
 
@@ -11,140 +12,192 @@ import java.util.Collections
  * Asks who consumes a frame the host sends while an *old* reader holds the endpoint.
  *
  * The single-reader guard exists because of a state the repository has only ever seen from the
- * host side: an old accessory reader stays blocked on the endpoint, a new session opens on top
- * of it, and the host's bytes go somewhere other than the session it thinks it is talking to.
- * `docs/evidence/2026-10-25-usb-reader-release.md` measured the *price* of the guard (closing
- * the descriptor releases the reader, and two descriptors both open) but not this, because it
- * needs a host that writes.
+ * host side: an old accessory reader stays blocked on the endpoint, a new session opens on top of
+ * it, and the host's bytes go somewhere other than the session it thinks it is talking to.
+ * `docs/evidence/2026-10-25-usb-reader-release.md` measured the *price* of the guard (closing the
+ * descriptor releases the reader, and two descriptors both open) but not this, because it needs a
+ * host that writes. The host half is `host-rs/tools/send-hello.py`.
  *
- * So this leaves the endpoint idle for a control window, announces itself, and then waits for
- * the host to write exactly one frame (see `host-rs/tools/send-hello.py`). The two outcomes are
- * distinguishable without trusting either side's narrative:
+ * The instrument **waits for the accessory to appear** rather than requiring it, because the host
+ * half does the AOA switch itself and that re-enumerates the phone: the run is started while the
+ * phone is still in its normal mode. It then arms a fresh blocked reader repeatedly, because a
+ * proof deadline is absolute and 5 s long: an iteration that ends by deadline is itself the
+ * control - proof that an idle endpoint delivers nothing - and the host's frame lands in whichever
+ * iteration it arrives in. The outcomes are distinguishable without trusting either side's
+ * narrative:
  *
- * - **the old session consumes it** — its reader leaves the read and the session ends, with the
+ * - **the old session consumes it** — its reader leaves the read and the session ends with the
  *   reason `PhoneAuthorization` gives for a frame that is not a proof ("PC authorization proof
- *   rejected"). That string is the ID-001 path: a control frame arriving at a session still
- *   waiting for its proof is refused *there*, and ends the session.
- * - **nothing consumes it** — the old reader is still blocked when the wait expires, which is
- *   the falsification of the premise, and the report says so.
+ *   rejected"). That string is the ID-001 path: a control frame reaching a session still waiting
+ *   for its proof is refused *there*, and ends the session.
+ * - **nothing consumes it** — the old reader is still blocked when the wait expires, which
+ *   falsifies the premise and the report says so.
  *
- * The control window is inside the run rather than assumed: the old reader must still be blocked
- * after the second session opens and after three seconds of silence, or the measurement is void
- * and says so.
+ * The control is inside the run rather than assumed: an iteration ending with
+ * `PC authorization deadline expired` is the proof that nothing arrives on an idle endpoint, which
+ * is what makes a later `PC authorization proof rejected` attributable to the host.
+ *
+ * Every report line is also written to logcat under the [tag], because the AOA switch can take
+ * adb away for the duration and `am instrument`'s own stream may not be readable afterwards.
  *
  * No app state is touched: the authorization owner is an in-memory repository.
- *
- * **Never run.** On 2026-10-25 the host could not claim the accessory interface while adb was
- * attached, and the device side needs adb to be driven and to report — so the pair has no
- * configuration in which both halves work yet. The evidence, and what would unblock it, is in
- * `docs/evidence/2026-10-25-usb-frame-owner-blocked.md`; nothing here is a measured claim.
  */
 class UsbFrameOwnerMeasurement(private val instrumentation: Instrumentation) {
-    private val oldSessionIndex = "A"
-    private val newSessionIndex = "B"
     private val controlMs = 3_000L
     private val waitForHostMs = 25_000L
-
+    private val waitForAccessoryMs = 120_000L
     private val tag = "UsbFrameOwner"
 
     fun run(): String {
         val manager = instrumentation.targetContext.getSystemService(UsbManager::class.java)
-            ?: return "FAIL usb-frame-owner: no UsbManager\n"
-        val accessory = manager.accessoryList?.firstOrNull()
-            ?: return "FAIL usb-frame-owner: no accessory is attached (AOA not active)\n"
-        val report = StringBuilder()
-        report.append("usb frame-owner measurement on ").append(Build.MODEL)
-            .append(" (API ").append(Build.VERSION.SDK_INT).append("), accessory ")
-            .append(accessory.manufacturer).append(' ').append(accessory.model).append('\n')
+        if (manager == null) {
+            return done(report("FAIL usb-frame-owner: no UsbManager\n"))
+        }
+        val report = report(
+            "usb frame-owner measurement on " + Build.MODEL + " (API " + Build.VERSION.SDK_INT + ")\n",
+        )
+        val accessory = awaitAccessory(manager, report) ?: return done(report)
+        report.append("accessory ").append(accessory.manufacturer).append(' ')
+            .append(accessory.model).append('\n')
         if (!manager.hasPermission(accessory)) {
             report.append("FAIL usb-frame-owner: this app holds no USB permission for the accessory\n")
-            return report.toString()
+            return done(report)
         }
 
-        val oldErrors = Collections.synchronizedList(mutableListOf<String>())
         val newErrors = Collections.synchronizedList(mutableListOf<String>())
-        val oldPfd = manager.openAccessory(accessory)
-        if (oldPfd == null) {
-            report.append("FAIL usb-frame-owner: openAccessory returned null for the old session\n")
-            return report.toString()
-        }
-        val oldOwner = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = {})
-        val oldSession = AccessorySession(
-            oldPfd, {}, { reason -> oldErrors.add(reason) }, oldOwner, {}, {},
-        )
         var newPfd: android.os.ParcelFileDescriptor? = null
         var newOwner: PhoneAuthorization? = null
+        val held = mutableListOf<android.os.ParcelFileDescriptor>()
+        val heldOwners = mutableListOf<PhoneAuthorization>()
+        val heldSessions = mutableListOf<AccessorySession>()
         try {
-            oldSession.start()
-            Thread.sleep(300)
-            // Resolved while only the old session exists, so this reference is the old reader and
-            // not whichever thread happens to share its name later.
-            val oldReader = threadNamed("amb-accessory-reader")
-            report.append("old session started, reader alive=").append(oldReader?.isAlive == true)
-                .append(" stack=").append(topFrames(oldReader)).append('\n')
-            line("A-BLOCKED", "alive=" + (oldReader?.isAlive == true) + " " + topFrames(oldReader))
-
+            // The "new" session first: its reader is refused by the driver (measured separately
+            // as EIO), so the endpoint stays with whatever blocked reader came before it.
             newPfd = manager.openAccessory(accessory)
             newOwner = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = {})
             if (newPfd != null) {
-                val newSession = AccessorySession(
-                    newPfd, {}, { reason -> newErrors.add(reason) }, newOwner, {}, {},
-                )
-                newSession.start()
+                AccessorySession(newPfd, {}, { reason -> newErrors.add(reason) }, newOwner, {}, {}).start()
                 Thread.sleep(400)
-                report.append("new session started on a second descriptor, its errors=")
-                    .append(synchronized(newErrors) { newErrors.toList() }).append('\n')
-                line("B-STARTED", "errors=" + synchronized(newErrors) { newErrors.toList() })
-            } else {
-                report.append("second openAccessory returned null, so no second session was started\n")
-                line("B-NOT-OPENED", "")
+                report.append("new session started on an earlier descriptor, its errors=")
+                    .append(snapshot(newErrors)).append('\n')
+                line("B-STARTED", "errors=" + snapshot(newErrors))
             }
 
-            // Control window: silence, and the old reader must still be blocked at the end of it.
-            Thread.sleep(controlMs)
-            val controlAlive = oldReader?.isAlive == true
-            val controlErrors = synchronized(oldErrors) { oldErrors.toList() }
-            report.append("control window (").append(controlMs).append(" ms, no host traffic): oldReaderAlive=")
-                .append(controlAlive).append(" oldErrors=").append(controlErrors).append('\n')
-            line("CONTROL", "oldReaderAlive=" + controlAlive + " errors=" + controlErrors)
-            if (!controlAlive || controlErrors.isNotEmpty()) {
-                report.append("VOID: the old session was already ending without any host traffic,")
-                    .append(" so this run cannot attribute anything to the host\n")
-                line("VOID", "the old session did not survive the control window")
-                return report.toString()
-            }
-
-            line("READY-FOR-HOST-FRAME", "waiting up to " + waitForHostMs + " ms")
-            report.append("READY-FOR-HOST-FRAME: waiting up to ").append(waitForHostMs).append(" ms\n")
-            val started = System.currentTimeMillis()
-            var consumed = false
-            while (System.currentTimeMillis() - started < waitForHostMs) {
-                if (oldReader?.isAlive != true || synchronized(oldErrors) { oldErrors.isNotEmpty() }) {
-                    consumed = true
+            // A proof deadline is absolute and 5 s long, so a blocked reader cannot be held for
+            // ever in PROOF. Rather than race it, arm a fresh blocked reader repeatedly: an
+            // iteration that ends by deadline is itself the control (nothing arrives on an idle
+            // endpoint), and the frame shows up in whichever iteration it lands in.
+            val deadline = System.currentTimeMillis() + waitForHostMs
+            var iteration = 0
+            var answered: String? = null
+            while (System.currentTimeMillis() < deadline && answered == null) {
+                iteration++
+                val pfd = manager.openAccessory(accessory)
+                if (pfd == null) {
+                    report.append("FAIL usb-frame-owner: openAccessory returned null on iteration ")
+                        .append(iteration).append('\n')
                     break
                 }
-                Thread.sleep(100)
+                val owner = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = {})
+                val errors = Collections.synchronizedList(mutableListOf<String>())
+                val session = AccessorySession(pfd, {}, { reason -> errors.add(reason) }, owner, {}, {})
+                held.add(pfd); heldOwners.add(owner); heldSessions.add(session)
+                session.start()
+                Thread.sleep(200)
+                val reader = threadNamed()
+                report.append("iteration ").append(iteration)
+                    .append(": readerAlive=").append(reader?.isAlive == true)
+                    .append(" stack=").append(topFrames(reader)).append('\n')
+                line("A-ARMED", "iteration=" + iteration + " alive=" + (reader?.isAlive == true))
+                if (reader?.isAlive != true) {
+                    report.append("  the reader was not blocked, so this iteration says nothing\n")
+                    continue
+                }
+                line("READY-FOR-HOST-FRAME", "iteration=" + iteration)
+                report.append("READY-FOR-HOST-FRAME (iteration ").append(iteration).append(")\n")
+                val iterationDeadline = System.currentTimeMillis() + 4_500
+                while (System.currentTimeMillis() < iterationDeadline) {
+                    if (reader.isAlive.not() || snapshot(errors).isNotEmpty()) {
+                        answered = snapshot(errors).joinToString("; ")
+                        break
+                    }
+                    Thread.sleep(50)
+                }
+                val reason = if (answered != null) answered else "still blocked after 4.5 s"
+                report.append("  iteration ").append(iteration).append(" ended: ").append(reason)
+                    .append("\n")
+                line("ITERATION", "iteration=" + iteration + " ended=" + reason)
+                // Only a reason the *session* produces for a frame counts as consumption. A
+                // deadline is the idle-endpoint control, and EIO is the driver refusing this
+                // reader outright - counting either as "consumed" made the first version of this
+                // instrument report a false positive.
+                answered = answered?.takeIf { it.contains("proof rejected") }
             }
-            val elapsed = System.currentTimeMillis() - started
-            val reasons = synchronized(oldErrors) { oldErrors.toList() }
-            report.append("outcome: oldReaderConsumedTheFrame=").append(consumed)
-                .append(" after ").append(elapsed).append(" ms")
-                .append(", oldReaderAlive=").append(oldReader?.isAlive == true)
-                .append(", oldErrors=").append(reasons).append('\n')
-            report.append("  new session errors at the end: ")
-                .append(synchronized(newErrors) { newErrors.toList() }).append('\n')
-            line("OUTCOME", "consumed=" + consumed + " ms=" + elapsed + " errors=" + reasons)
-            if (!consumed) {
-                report.append("FALSIFIED: nothing consumed the frame the host wrote — the old reader")
-                    .append(" is still blocked, so the premise is not established here\n")
+            if (answered != null) {
+                report.append("outcome: the blocked reader consumed the host's frame — ").append(answered)
+                    .append(" (after ").append(iteration).append(" iteration(s))\n")
+                line("OUTCOME", "consumed=true reason=" + answered + " iterations=" + iteration)
+            } else {
+                report.append("FALSIFIED: no host frame reached the blocked reader in ")
+                    .append(iteration).append(" iteration(s); every one ended by its own proof")
+                    .append(" deadline, which is the control\n")
+                line("OUTCOME", "consumed=false iterations=" + iteration)
             }
+            report.append("  new session errors at the end: ").append(snapshot(newErrors)).append('\n')
         } finally {
-            runCatching { oldOwner.close() }
-            runCatching { oldSession.close() }
+            heldOwners.forEach { runCatching { it.close() } }
+            heldSessions.forEach { runCatching { it.close() } }
+            held.forEach { runCatching { it.close() } }
             runCatching { newOwner?.close() }
             runCatching { newPfd?.close() }
         }
+        return done(report)
+    }
+
+    /** The host half does the AOA switch, so the accessory may not exist yet. */
+    private fun awaitAccessory(manager: UsbManager, report: StringBuilder): UsbAccessory? {
+        val started = System.currentTimeMillis()
+        while (System.currentTimeMillis() - started < waitForAccessoryMs) {
+            manager.accessoryList?.firstOrNull()?.let { return it }
+            if (System.currentTimeMillis() - started > 5_000) {
+                report.append("waiting for the accessory (the host switches the phone): ")
+                    .append(System.currentTimeMillis() - started).append(" ms\n")
+                line("WAITING-FOR-ACCESSORY", "ms=" + (System.currentTimeMillis() - started))
+                return waitForAccessory(manager, started, report)
+            }
+            Thread.sleep(500)
+        }
+        report.append("FAIL usb-frame-owner: no accessory appeared within ")
+            .append(waitForAccessoryMs).append(" ms\n")
+        return null
+    }
+
+    private fun waitForAccessory(manager: UsbManager, started: Long, report: StringBuilder): UsbAccessory? {
+        var lastLog = System.currentTimeMillis()
+        while (System.currentTimeMillis() - started < waitForAccessoryMs) {
+            manager.accessoryList?.firstOrNull()?.let { return it }
+            if (System.currentTimeMillis() - lastLog > 10_000) {
+                lastLog = System.currentTimeMillis()
+                line("WAITING-FOR-ACCESSORY", "ms=" + (System.currentTimeMillis() - started))
+            }
+            Thread.sleep(500)
+        }
+        report.append("FAIL usb-frame-owner: no accessory appeared within ")
+            .append(waitForAccessoryMs).append(" ms\n")
+        return null
+    }
+
+    private fun report(text: String) = StringBuilder(text)
+
+    private fun snapshot(list: MutableList<String>): List<String> = synchronized(list) { list.toList() }
+
+    private fun done(report: StringBuilder): String {
+        logReport(report)
         return report.toString()
+    }
+
+    private fun logReport(report: StringBuilder) {
+        report.toString().split('\n').filter { it.isNotBlank() }.forEach { Log.i(tag, "REPORT " + it) }
     }
 
     private fun line(marker: String, detail: String) {
@@ -155,6 +208,6 @@ class UsbFrameOwnerMeasurement(private val instrumentation: Instrumentation) {
         thread?.stackTrace?.take(2)?.joinToString(" <- ") { it.className + "." + it.methodName }
             ?: "no thread"
 
-    private fun threadNamed(name: String): Thread? =
-        Thread.getAllStackTraces().keys.firstOrNull { it.name == name && it.isAlive }
+    private fun threadNamed(): Thread? =
+        Thread.getAllStackTraces().keys.firstOrNull { it.name == "amb-accessory-reader" && it.isAlive }
 }
