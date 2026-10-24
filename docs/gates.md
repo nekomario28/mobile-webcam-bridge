@@ -104,7 +104,11 @@ checking before concluding the build is broken. Each one was measured here:
    and name it in the *user* Gradle properties —
    `org.gradle.java.installations.paths=/path/to/jdk-17` in
    `~/.gradle/gradle.properties`. A `-Dorg.gradle.java.installations.paths=…` on
-   the command line is **not** enough (measured: it still fails).
+   the command line is **not** enough (measured: it still fails). On this machine that file
+   names `/home/yuu/.gradle/jdks/eclipse_adoptium-17-amd64-linux/jdk-17.0.19+10`, so
+   `./gradlew -q javaToolchains` lists *Eclipse Temurin JDK 17.0.19+10* beside the Arch JDKs
+   and the tests compile under **17** even though Gradle itself runs on 21. The distinction
+   matters when a local run is compared with CI, which runs Gradle on 17 as well.
 3. **The SDK.** The project needs `build-tools;34.0.0` and `platforms;android-35`
    with the licences accepted, or Gradle stops with `Failed to install the
    following Android SDK packages as some licences have not been accepted`
@@ -123,6 +127,45 @@ shipped in this repository, the three fixes above make the wrapper usable, and
 the wrapper is the only route that can be trusted for `android.*` behaviour. The
 measurement above — `Size.getWidth()` fine in the probe, unmocked under Gradle —
 is the reason to keep using the wrapper rather than the probe.
+
+## Local text gate (typos and offline links, without CI)
+
+`lint-text` has two legs and each is one command on a machine that has the tool:
+
+- **`typos`** — the repository's `_typos.toml` is discovered from the working directory, so
+  the command is literally `typos` at the repository root. CI pins `crate-ci/typos` `v1.51.1`
+  and the local tool was installed at the same version.
+- **`lychee --offline --no-progress '*.md' 'docs/**/*.md' 'specs/**/*.md'`** — the exact
+  argument string from `.github/workflows/lint-text.yml`. Offline is deliberate: relative
+  links are the ones this repository owns, and an external URL is somebody else's uptime.
+
+Both build from source here in about two minutes
+(`cargo install typos-cli --locked` → `typos-cli 1.51.1` in 46 s;
+`cargo install lychee --locked` → `lychee 0.24.2` in 1 m 55 s).
+
+Installing them is not the point; **being able to fail is**. Measured 2026-10-25 on this
+machine, so neither leg is a green light that proves nothing:
+
+| Injected into a tracked `.md` file | Result |
+|---|---|
+| a misspelled word | `typos` exits **2**, and names the word, the file and the line |
+| a relative markdown link to `docs/does-not-exist-xyz.md` | `lychee` exits **2**, `File not found`, with the file and the line |
+
+With nothing injected, `typos` exits 0 over the whole tree and `lychee` reports 0
+errors, so the two exit codes above are what a *finding* looks like rather than what
+green looks like.
+
+Both injections are *described* rather than quoted, and that is a measured lesson rather
+than style: the first version of this table reproduced them, so documenting the gate
+turned the gate red — `typos` flagged the misspelling inside a code span, and `lychee`
+resolved the example link and reported the file missing. Reproduce either in a scratch
+file when the raw output is wanted.
+
+The link leg has a cheaper stand-in that needs no tool: a relative-link existence check over
+the targets of `]()` (skipping `http(s)` and `mailto`). It was used while `lychee` was not
+installed here and agrees with it on this tree, but it is not the same target set —
+reference-style links, images and `file://` URLs are outside it — so prefer the real tool and
+read the stand-in's silence as "no broken relative link", nothing wider.
 
 ## Running the conformance on a physical phone
 
