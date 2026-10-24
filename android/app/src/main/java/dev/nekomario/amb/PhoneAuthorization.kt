@@ -258,6 +258,11 @@ class PhoneAuthorization(
         internal fun tickLocked() {
             if (active !== this || phase == Phase.CLOSED) return
             if (phase == Phase.AUTHORIZED) { checkAuthorized(); return }
+            // Absolute and non-renewable on purpose: a peer must not be able to keep its own
+            // window open, and `stalled_proofs_and_pending_approvals_have_absolute_nonrenewable_deadlines`
+            // pins that. A session that expires after an unanswered challenge is therefore
+            // *by design* — which is why a reconnecting host needs `HOST_HELLO` rather than a
+            // longer or renewable deadline here.
             if (nowMillis() >= deadline) finish("PC authorization deadline expired")
         }
 
