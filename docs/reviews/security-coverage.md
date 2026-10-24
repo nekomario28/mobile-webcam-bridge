@@ -19,6 +19,14 @@ no human sign-off.
 
 ## Security claims and the thing that proves each
 
+**2026-10-24 review:** a second independent session on the same model, pointed at what changed
+since the first (the `HOST_HELLO` frame, the single-reader handover, the rate limit and pacing,
+the new CLI surface, stream alignment). It found three defects, all Low, all in the *fixes* the
+first review prompted — see
+[independent-review-2026-10-24.md](independent-review-2026-10-24.md), whose disposition also
+carries the repair plan. The pattern it names is the one worth keeping: a test that drives a
+method rather than the wire is a test that can pin a behaviour no code path reaches.
+
 **2026-10-23 review:** an independent session on `aiand/deepseek-v4.1-flash`, under the
 request in `request-2026-10-21.md`, read the areas below and both findings it returned are
 fixed — see the disposition at the end of that report. It also named four tests that were

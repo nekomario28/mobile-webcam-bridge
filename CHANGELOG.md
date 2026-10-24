@@ -2,6 +2,13 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- A second independent security review. A fresh session (same model, no prior context) was
+  pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
+  handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment
+  — and returned **three defects, all Low, all inside the fixes the first review prompted**. It
+  also names five tests that would pass for the wrong reason. Report, disposition and the repair
+  plan: [docs/reviews/independent-review-2026-10-24.md](docs/reviews/independent-review-2026-10-24.md).
+
 - Accept the quality switch on a physical phone. Gate #8 wanted device verification of the
   resolution and frame-rate controls and there was no repeatable way to ask for a change: the
   GUI is the product but a script cannot click it. `--headless --quality WxH@fps` asks once
