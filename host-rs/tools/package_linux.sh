@@ -27,7 +27,14 @@ cp -a "$RUST_LICENSES" "$stage/usr/share/doc/mobile-webcam/licenses/rust"
 install -m0644 "$root/LICENSE" "$root/NOTICE" "$root/THIRD_PARTY_NOTICES.md" "$root/host-rs/README.md" "$stage/usr/share/doc/mobile-webcam/"
 install -m0644 "$root/linux/licenses/LGPL-2.1-or-later.txt" "$FFMPEG_DIR/build-manifest.json" "$stage/usr/share/doc/mobile-webcam/licenses/"
 install -m0755 "$root/host-rs/tools/build_ffmpeg.py" "$stage/usr/share/doc/mobile-webcam/"
-printf '%s\n' 'FFmpeg source: https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz' > "$stage/usr/share/doc/mobile-webcam/licenses/FFMPEG_SOURCE.txt"
+if [ -f "$root/docs/licenses/FFMPEG_SOURCE_OFFER.md" ]; then
+    install -m0644 "$root/docs/licenses/FFMPEG_SOURCE_OFFER.md" \
+        "$stage/usr/share/doc/mobile-webcam/licenses/FFMPEG_SOURCE.md"
+else
+    printf '%s\n' 'FFmpeg source: https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz' \
+        'See docs/licenses/FFMPEG_SOURCE_OFFER.md in the source tree.' \
+        > "$stage/usr/share/doc/mobile-webcam/licenses/FFMPEG_SOURCE.txt"
+fi
 # Reuse the established AppImage dependency resolver without its Qt plugin path.
 APPIMAGE_EXTRACT_AND_RUN=1 LD_LIBRARY_PATH="$FFMPEG_DIR/lib" "$LINUXDEPLOY" --appdir "$stage" \
     --library "$FFMPEG_DIR/lib/libavcodec.so.61" --library "$FFMPEG_DIR/lib/libavutil.so.59" --library "$FFMPEG_DIR/lib/libswscale.so.8" \
