@@ -96,3 +96,25 @@ The Android Keystore TLS signing identity uses alias v2 and authorizes
 `DIGEST_NONE` alongside `DIGEST_SHA256`: Android's TLS implementation
 signs a pre-digested transcript. Clients paired with the earlier development
 v1 certificate must compare and re-pin the new certificate fingerprint.
+
+## Linux host integration setup
+
+The Rust host runs `pkexec --disable-internal-agent /bin/sh -s --` and writes
+the setup script on that shell's standard input. The script text and the udev
+and modprobe files it installs are compiled into the binary. `pkexec` does not
+execute `install-host-integration.sh` from a path next to the executable.
+
+The Linux release artifact is an AppImage. Packaging has no root install step
+that could place the script at a fixed `/usr/libexec` path, so that layout is
+not what the host executes. A polkit action allowing `/bin/sh` would authorize
+a shell, and polkit cannot pin standard input, so no `org.*.policy` file is
+shipped.
+
+Arguments after `--` are a packaged USB helper path (absolute, final component
+`mobile-webcam-usb`, a regular file, not a symbolic link), `--switch-parent`
+with a non-zero numeric PID, and `--device-json` built only from that device's
+numeric bus, address, vendor, product and port fields. The script still refuses
+to replace a modified modprobe or modules-load file. When a USB switch is
+required, the helper is installed to `/usr/lib/mobile-webcam/mobile-webcam-usb`
+and executed only at that path, with the device JSON on its standard input.
+Manual `sudo` and the classic Qt host still use the on-disk script.
