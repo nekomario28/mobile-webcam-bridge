@@ -9,27 +9,23 @@ AMB1 framing remains version 1. Integers below are little-endian unless stated.
 Wi-Fi first completes pinned TLS 1.3 and access-key HELLO/HELLO_ACK as in
 [secure LAN](wire-secure-lan.md). USB starts at the challenge without a QR or
 HELLO credential. Both then follow the same mandatory authorization exchange.
-### Host hello: who speaks first on a reconnect (2026-10-24)
+### Host hello: who speaks first on a reconnect (2026-10-24, corrected 2026-10-25)
 
-USB has no session boundary and AOA reports no disconnect, so a host that reconnects finds
-the accessory session the previous connection used — quiet (it authorised somebody) or still
-answering with the older connection's frames. Neither looks like a live peer, and the only
-way to get a fresh exchange used to be restarting the app or replugging the cable.
+USB has no session boundary and AOA reports no disconnect, so a host that reconnects finds the
+accessory session the previous connection used — quiet (it authorised somebody) or still
+answering with the older connection's frames. `HOST_HELLO` (`0x0e`, zero payload) is the host
+saying "a host is here", and the phone answers by state:
 
-`HOST_HELLO` (`0x0e`, zero payload) is the host saying "a host is here". The phone answers:
-
-- **waiting for a proof** — re-send the *same* challenge (same nonce), because the peer may
-  have read a challenge this session already sent and lost it;
-- **already answered** (authorised, pending or denied) — end the session, so the next host
-  gets a fresh challenge;
+- **already challenged** — end the session, so the next connection gets a fresh challenge. This
+  covers "authorised", "pending" and "waiting for a proof" alike.
 - **not yet challenged** — ignore; a challenge is on its way.
 
-It carries no identity and grants nothing, so it is safe to send to a phone that does not
-know this protocol yet: an app that does not handle the type treats it as an unexpected
-control frame, ends that session and rediscovers — which is the behaviour the hello exists
-to produce. The host sends it only after a failure that a spent session explains (a silent
-budget, a stream that will not parse, a first frame that is not a challenge), then retries
-the exchange once; a *rejection* is an answer and is reported as one.
+It carries no identity and grants nothing, so it is safe against a phone that does not know the
+type yet: such an app treats it as an unexpected control frame, ends that session and
+rediscovers — which is what the behaviour above produces anyway. The host sends it only after a
+failure a spent session explains (a silent budget, a stream that will not parse, a first frame
+that is not a challenge), then retries the exchange once; a *rejection* is an answer and is
+reported as one.
 
 The phone sends no capabilities/media and accepts no quality/PING/IDR controls
 until Authorized. Unsupported peers close, never fall back to bearer-only access.

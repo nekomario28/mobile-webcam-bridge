@@ -183,19 +183,18 @@ class PhoneAuthorizationTest {
         }
     }
 
-    @Test fun a_host_hello_resends_the_same_challenge_while_waiting_for_a_proof() {
+    @Test fun a_host_hello_ends_a_session_that_is_waiting_for_a_proof() {
+        // The wire's behaviour, not a method's: `readMedia` routes to the control handler only
+        // while authorized, so a hello during PROOF is refused by the gate and ends the
+        // session. An earlier version of this file pinned a re-send that no code path reached,
+        // which is why the rule now matches what the wire does. (The routing itself still needs
+        // a socket-level test; this pins the session half.)
         Harness().use { h ->
             h.open()
-            val first = h.challenge
-            // A host that said hello twice must not get two different sessions: the same
-            // nonce is what keeps this session the one that answers the proof.
+            assertFalse(h.session.isAuthorized())
             h.session.onHostHello()
-            h.session.onHostHello()
-            val challenges = h.sent.filter { it.first == Wire.TYPE_CLIENT_CHALLENGE }
-            assertEquals("hello must re-send, not start over", 3, challenges.size)
-            for ((_, payload) in challenges) {
-                assertEquals(first.nonce.toList(), Wire.decodeClientChallenge(payload).nonce.toList())
-            }
+            assertFalse(h.session.isAuthorized())
+            assertEquals("the session must end so the next host gets a challenge", 1, h.closed.size)
         }
     }
 

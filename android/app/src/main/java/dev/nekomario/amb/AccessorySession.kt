@@ -70,12 +70,21 @@ class AccessorySession(
         runCatching { pfd.close() }
         closeMedia()
         val reader = readerThread
-        readerThread = null
-        if (reader != null && Thread.currentThread() !== reader) {
-            reader.interrupt()
-            runCatching { reader.join(timeoutMs) }
-            return !reader.isAlive
+        if (reader == null || Thread.currentThread() === reader) {
+            readerThread = null
+            return true
         }
-        return true
+        reader.interrupt()
+        runCatching { reader.join(timeoutMs) }
+        // Keep the handle when the reader survived: clearing it made a second call report
+        // success unconditionally, which is how the single-reader guard was defeated
+        // (independent review, ID-002).
+        if (!reader.isAlive) {
+            readerThread = null
+        }
+        return !reader.isAlive
     }
+
+    /** Whether this session's reader is still running. */
+    fun readerAlive(): Boolean = readerThread?.isAlive == true
 }

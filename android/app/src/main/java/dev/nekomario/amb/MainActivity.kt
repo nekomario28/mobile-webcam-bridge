@@ -40,6 +40,10 @@ class MainActivity : Activity() {
     private var receiverRegistered = false
     private var connectionMode = ConnectionMode.USB
     private var accessoryFd: ParcelFileDescriptor? = null
+    /// A session whose reader refused to stop. Until it is gone, opening another one would put
+    /// two readers on one endpoint (independent review, ID-002: the first guard held for exactly
+    /// one iteration, because `closeSession` nulls the session before it answers).
+    private var unstoppedAccessory: AccessorySession? = null
     // Read from the capture-teardown thread as well as the UI thread.
     @Volatile private var session: MediaSession? = null
     private var authorizationOwner: PhoneAuthorization? = null
@@ -726,6 +730,17 @@ class MainActivity : Activity() {
         // And the previous session's reader must be *gone* before a new one opens: on USB
         // those two readers share one endpoint, so a surviving one consumes this
         // connection's challenge and the host sees frames that belong to the old session.
+        // Refuse while a reader from an earlier session is still alive on this endpoint, and
+        // refuse on the object itself rather than on a field that was already cleared.
+        if (unstoppedAccessory?.readerAlive() == true) {
+            show(ui(
+                "The previous USB session is still reading. Unplug and replug the cable.",
+                "前のUSBセッションがまだ読み取り中です。ケーブルを挿し直してください。"
+            ))
+            scheduleRediscover()
+            return
+        }
+        unstoppedAccessory = null
         if (!closeSession()) {
             show(ui(
                 "The previous USB session did not stop. Unplug and replug the cable.",
@@ -1021,8 +1036,12 @@ class MainActivity : Activity() {
         rotateAction.visibility =
             if (open && connectionMode == ConnectionMode.LAN) View.VISIBLE else View.GONE
         // Sending pairing details needs the cable and a live session to send them on.
+        // Only for an authorized PC: that is what the hand-off is for, and an unauthorized write
+        // is refused by the host's authorization exchange (independent review, ID-003).
         sendPairingAction.visibility =
-            if (open && connectionMode == ConnectionMode.USB && session != null) View.VISIBLE else View.GONE
+            if (open && connectionMode == ConnectionMode.USB &&
+                session?.clientAuthorization?.isAuthorized() == true
+            ) View.VISIBLE else View.GONE
     }
 
     private fun saveConnectionMode() {
@@ -1081,6 +1100,11 @@ class MainActivity : Activity() {
         // a new session may open, because two readers on one endpoint take each other's
         // frames (see AccessorySession.closeAndAwait).
         val stopped = (current as? AccessorySession)?.closeAndAwait(1500) ?: true
+        if (!stopped) {
+            // Remember which session it was: the next attempt must ask *this* object whether its
+            // reader is still there, since the field above no longer holds it.
+            unstoppedAccessory = current as? AccessorySession
+        }
         runCatching { current?.close() }
         runCatching { accessoryFd?.close() }
         accessoryFd = null

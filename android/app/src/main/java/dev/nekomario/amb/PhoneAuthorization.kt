@@ -155,23 +155,22 @@ class PhoneAuthorization(
         /**
          * A host said hello (see `Wire.TYPE_HOST_HELLO`).
          *
-         * - **Waiting for a proof**: re-send the same challenge. The peer may have read a
-         *   challenge this session already sent and lost it (a previous host consumed the
-         *   bytes), and re-sending the same nonce keeps this session the one that answers.
-         * - **Already answered** (authorised, pending or denied): end the session. USB gives
-         *   no disconnect signal, so this is the only way a reconnecting host gets a fresh
-         *   challenge instead of a dead session.
-         * - **Not yet challenged**: ignore; a challenge is on its way.
+         * A session that has **already sent its challenge** ends, whatever it is waiting for:
+         * its peer is gone (AOA reports no disconnect and USB has no session boundary), so the
+         * next connection has to start a fresh exchange. A session that has not challenged yet
+         * ignores the hello, because a challenge is on its way.
+         *
+         * This is also what the wire does today, which is why the rule is written to match it:
+         * `readMedia` routes a frame to the control handler only while the session is
+         * authorized, so a hello arriving during `PROOF` reaches the authorization gate, is
+         * refused there, and ends the session. An earlier version documented a re-send in
+         * `PROOF` that no code path could reach — and renewing the proof deadline, which this
+         * file's `tickLocked` pins as absolute. Both are gone; the branch that survives is the
+         * one the wire hands us.
          */
         fun onHostHello() = synchronized(lock) {
             tickLocked()
             if (active !== this || phase == Phase.NEW || failed || closed) return@synchronized
-            if (phase == Phase.PROOF) {
-                send(Wire.TYPE_CLIENT_CHALLENGE,
-                    Wire.encodeClientChallenge(Wire.ClientChallenge(Wire.CLIENT_AUTH_VERSION, transport, phoneBinding, nonce)))
-                deadline = nowMillis() + PROOF_TIMEOUT_MS
-                return@synchronized
-            }
             finish("a new host asked for a fresh exchange")
         }
 

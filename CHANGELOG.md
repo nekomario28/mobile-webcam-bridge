@@ -2,6 +2,16 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- Fix the three findings of the second security review, in its order. `HOST_HELLO` no longer
+  documents a re-send that no code path can reach, and no longer renews a proof deadline this
+  file pins as absolute — the rule now matches the wire (a session that has already challenged
+  ends, one that has not yet challenged ignores the hello), with a test that pins *that*.
+  `closeAndAwait` keeps the reader handle when the reader survived, `readerAlive()` answers
+  whether it is still running, and the window remembers the object whose reader refused to stop —
+  so the single-reader refusal is durable instead of one iteration deep. And `sendPairingInfo` is
+  gated on `permitted()` like every other sender, with the action offered only for an authorized
+  session, because that is what the hand-off is for.
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment
