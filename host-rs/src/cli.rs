@@ -21,6 +21,8 @@ Usage: mobile-webcam [--help]
   --transport MODE     Override the stored transport for this run.
   --host ADDRESS       Override the stored Wi-Fi address for this run.
   --seconds N          Stop after N seconds.
+  --quality WxH@fps    Ask the phone to switch capture mode once streaming starts, and
+                       exit 1 unless it confirms that exact mode (gate #8).
   --usb-probe          Run the USB end-to-end gate against an attached phone: the AOA
                        transition, the per-PC authorization, then N synchronous
                        PING/PONG round trips with sequence and payload checked on every
@@ -83,6 +85,9 @@ fn headless(rest: &[&str]) -> Result<Command, String> {
                 ));
             }
             ("--host", Some(host)) if !host.is_empty() => options.host = Some(host.to_string()),
+            ("--quality", Some(mode)) => {
+                options.quality = Some(crate::headless::parse_quality(mode)?)
+            }
             ("--host", Some(_)) => return Err("--host needs an address".into()),
             ("--seconds", Some(n)) => match n.parse::<u64>() {
                 Ok(seconds) if seconds > 0 => options.seconds = Some(seconds),
