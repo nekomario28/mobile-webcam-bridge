@@ -2,6 +2,18 @@
 
 ## Unreleased — per-PC authorization (independent review returned a merge blocker)
 
+- **G0.5 passes at 1000 round trips.** The USB gate now completes: 1000 sequences matched,
+  the 8-byte challenge echoed on every exchange, 0 mismatches, 0 timeouts, 0 disconnects,
+  rtt p50 550 µs (paced). The blocker turned out to be the instrument — the phone rate-limits
+  `PING` to 64 per second and refuses the session when a peer exceeds it, so a probe sending
+  ~2000 per second was killing its own session every ~60 exchanges (measured: 576 round trips
+  across nine seams, 0 mismatches — a healthy link). `--rate` now paces at 32 per second, which
+  also explains the earlier `5 FAIL / 60 PASS / 1000 FAIL` bracket. Two further host fixes were
+  needed first: the stream is aligned at connect (the accessory endpoint holds a previous
+  connection's frames and AOA reports no disconnect), and a spent accessory session can be
+  reset (`HOST_HELLO` plus `reset_stream`), because the phone sends one challenge per session
+  by design.
+
 - Let a reconnecting host start a fresh exchange. USB has no session boundary and AOA
   reports no disconnect, so a host that reconnects found the accessory session the previous
   connection had used — quiet if it had authorised somebody, or answering with the older

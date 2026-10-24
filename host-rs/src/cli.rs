@@ -27,6 +27,9 @@ Usage: mobile-webcam [--help]
                        one. Exits 0 on PASS, 1 on FAIL, 2 if it could not start.
   --frames N           Round trips for --usb-probe (default 1000, the G0.5 count).
   --budget-ms N        Per-exchange timeout for --usb-probe (default 2000).
+  --rate N             Round trips per second for --usb-probe (default 32, half the
+                       phone's PING limit; the phone refuses the session if a peer
+                       exceeds its own rate).
   --replace-identity   Move an unreadable stored PC key aside and publish a new
                        one. Every phone that approved this PC must approve it
                        again. Refused while the stored key is still readable,
@@ -103,6 +106,10 @@ fn usb_probe(rest: &[&str]) -> Result<Command, String> {
             ("--frames", Some(n)) => match n.parse::<u64>() {
                 Ok(frames) if frames > 0 => options.frames = frames,
                 _ => return Err(format!("--frames needs a positive number, got {n:?}")),
+            },
+            ("--rate", Some(n)) => match n.parse::<u32>() {
+                Ok(rate) if rate > 0 => options.rate_per_second = rate,
+                _ => return Err(format!("--rate needs a positive number, got {n:?}")),
             },
             ("--budget-ms", Some(n)) => match n.parse::<u64>() {
                 Ok(ms) if ms > 0 => options.budget = std::time::Duration::from_millis(ms),
