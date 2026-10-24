@@ -9,3 +9,9 @@
 *.iml
 local.properties
 .DS_Store
+*.jks
+*.keystore
+*.p12
+*.pem
+.env
+.env.*
