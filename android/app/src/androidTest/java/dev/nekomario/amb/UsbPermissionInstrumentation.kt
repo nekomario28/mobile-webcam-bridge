@@ -357,8 +357,9 @@ class UsbPermissionInstrumentation : Instrumentation() {
             }
             if (usbFrameOwner) {
                 // Same reason as the reader-release instrument: it measures the endpoint rather
-                // than the app, and uses an in-memory repository. It has never run — see
-                // docs/evidence/2026-10-25-usb-frame-owner-blocked.md for what blocked it.
+                // than the app, and uses an in-memory repository. Measured 2026-10-25: the host's
+                // frame completed and the blocked reader consumed it — docs/evidence/
+                // 2026-10-25-usb-frame-owner.md.
                 val marker = UsbFrameOwnerMeasurement(this).run()
                 finish(Activity.RESULT_OK, Bundle().apply { putString("stream", marker) })
                 return

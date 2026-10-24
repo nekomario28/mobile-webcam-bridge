@@ -49,6 +49,18 @@
   Evidence and its boundary:
   [docs/evidence/2026-10-25-usb-reader-release.md](docs/evidence/2026-10-25-usb-reader-release.md).
 
+- Measure the last mode of the single-reader handover: who consumes a host frame while a blocked
+  reader holds the endpoint. With one reader blocked, the host's 24-byte `HOST_HELLO` completed and
+  that reader's session ended with `PC authorization proof rejected` — the frame reached the reader
+  holding the endpoint and was refused at that session's proof gate, which is the ID-001 path
+  measured on the wire. The control is in the same instrument: with the endpoint idle, iterations
+  end only by their own absolute 5 s proof deadline and never with that reason. Two of this
+  attempt's own steps are kept in the record rather than tidied away — a first diagnosis that
+  blamed the environment for holding the accessory interface (wrong: subclass `0x42` with protocol
+  `1` is adb's interface, not the accessory's) and an over-broad `pkill` that cost the phone its adb
+  link until a host-side re-enumeration restored it. Evidence:
+  [docs/evidence/2026-10-25-usb-frame-owner.md](docs/evidence/2026-10-25-usb-frame-owner.md).
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment

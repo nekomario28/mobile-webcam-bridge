@@ -71,18 +71,10 @@ class UsbFrameOwnerMeasurement(private val instrumentation: Instrumentation) {
         val heldOwners = mutableListOf<PhoneAuthorization>()
         val heldSessions = mutableListOf<AccessorySession>()
         try {
-            // The "new" session first: its reader is refused by the driver (measured separately
-            // as EIO), so the endpoint stays with whatever blocked reader came before it.
-            newPfd = manager.openAccessory(accessory)
-            newOwner = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = {})
-            if (newPfd != null) {
-                AccessorySession(newPfd, {}, { reason -> newErrors.add(reason) }, newOwner, {}, {}).start()
-                Thread.sleep(400)
-                report.append("new session started on an earlier descriptor, its errors=")
-                    .append(snapshot(newErrors)).append('\n')
-                line("B-STARTED", "errors=" + snapshot(newErrors))
-            }
-
+            // One blocked reader only: that is the state the shipping app is in, and the state
+            // in which the host can write (measured, after the cable was re-seated: 24 bytes
+            // completed). The two-descriptor case belongs to UsbReaderReleaseMeasurement, and its
+            // second reader is refused with EIO anyway, so it could consume nothing.
             // A proof deadline is absolute and 5 s long, so a blocked reader cannot be held for
             // ever in PROOF. Rather than race it, arm a fresh blocked reader repeatedly: an
             // iteration that ends by deadline is itself the control (nothing arrives on an idle
