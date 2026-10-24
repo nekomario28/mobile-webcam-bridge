@@ -20,6 +20,17 @@
   authorization result. All three are proven able to fail: restoring the review's naive repair
   reddens exactly the hello test, and removing either authorization gate reddens the other two.
 
+- Make the two false-green tests the review named behavioural, without pulling in an Activity
+  harness. The single-reader handover and the notification's Stop credential each got an owner —
+  `ReaderHandover` and `StopAction` — so the assertions can drive the properties the source-text
+  versions could not see: that `stopped` leaves nothing armed (including the `?: true` default
+  for a session that is not an accessory), that the refusal is durable instead of one iteration
+  deep, and that it asks about the reader now rather than snapshotting it; and, for Stop, that the
+  action alone, an empty extra, a foreign token, a near miss and a case-folded copy are all
+  refused while two independently generated tokens differ. Each guard was proven able to fail on
+  its own defect: a snapshot reddens one test, ignoring the token reddens two, and reverting
+  `MainActivity` to a literal comparison reddens one, with the other 144 green. 148 Android tests.
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment

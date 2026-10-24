@@ -41,9 +41,11 @@ class MainActivity : Activity() {
     private var connectionMode = ConnectionMode.USB
     private var accessoryFd: ParcelFileDescriptor? = null
     /// A session whose reader refused to stop. Until it is gone, opening another one would put
-    /// two readers on one endpoint (independent review, ID-002: the first guard held for exactly
-    /// one iteration, because `closeSession` nulls the session before it answers).
-    private var unstoppedAccessory: AccessorySession? = null
+    /// two readers on one endpoint. The record keeps the *session object's* liveness question,
+    /// so it survives the field below being cleared (independent review, ID-002/WR2: the first
+    /// guard held for exactly one iteration because `closeSession` nulls its own field before
+    /// it answers).
+    private val readerHandover = ReaderHandover()
     // Read from the capture-teardown thread as well as the UI thread.
     @Volatile private var session: MediaSession? = null
     private var authorizationOwner: PhoneAuthorization? = null
@@ -441,8 +443,7 @@ class MainActivity : Activity() {
      * so the next genuine one is still honoured.
      */
     private fun consumeStopIntent(intent: Intent?): Boolean {
-        if (intent?.action != ACTION_STOP_SESSION) return false
-        if (intent.getStringExtra(EXTRA_STOP_TOKEN) != stopTokenValue) return false
+        if (!StopAction.accepts(intent?.action, intent?.getStringExtra(EXTRA_STOP_TOKEN))) return false
         setIntent(Intent(intent).setAction(null))
         stopCamera()
         // Measured on a physical phone: the camera really stopped (0 frames, the
@@ -735,7 +736,7 @@ class MainActivity : Activity() {
         // connection's challenge and the host sees frames that belong to the old session.
         // Refuse while a reader from an earlier session is still alive on this endpoint, and
         // refuse on the object itself rather than on a field that was already cleared.
-        if (unstoppedAccessory?.readerAlive() == true) {
+        if (readerHandover.refuseWhileReading()) {
             show(ui(
                 "The previous USB session is still reading. Unplug and replug the cable.",
                 "前のUSBセッションがまだ読み取り中です。ケーブルを挿し直してください。"
@@ -743,7 +744,7 @@ class MainActivity : Activity() {
             scheduleRediscover()
             return
         }
-        unstoppedAccessory = null
+        readerHandover.clear()
         if (!closeSession()) {
             show(ui(
                 "The previous USB session did not stop. Unplug and replug the cable.",
@@ -1102,12 +1103,11 @@ class MainActivity : Activity() {
         // session is not the same as that read having returned. The answer decides whether
         // a new session may open, because two readers on one endpoint take each other's
         // frames (see AccessorySession.closeAndAwait).
-        val stopped = (current as? AccessorySession)?.closeAndAwait(1500) ?: true
-        if (!stopped) {
-            // Remember which session it was: the next attempt must ask *this* object whether its
-            // reader is still there, since the field above no longer holds it.
-            unstoppedAccessory = current as? AccessorySession
-        }
+        val accessory = current as? AccessorySession
+        val stopped = accessory?.closeAndAwait(1500) ?: true
+        // Remember which session it was: the next attempt must ask *that object* whether its
+        // reader is still there, since the field above no longer holds it.
+        if (accessory != null) readerHandover.recordClose(stopped, accessory::readerAlive)
         runCatching { current?.close() }
         runCatching { accessoryFd?.close() }
         accessoryFd = null
@@ -1145,13 +1145,14 @@ class MainActivity : Activity() {
     companion object {
         internal const val ACTION_USB_PERMISSION = "dev.nekomario.amb.USB_PERMISSION"
 
-        /** From the foreground notification's Stop action. */
-        internal const val ACTION_STOP_SESSION = "dev.nekomario.amb.STOP_SESSION"
-        internal const val EXTRA_STOP_TOKEN = "dev.nekomario.amb.STOP_TOKEN"
+        /** From the foreground notification's Stop action. Whether the action may act is
+         *  decided by [StopAction], which also owns the token, so no value is written down
+         *  here for a revert to turn into a constant. */
+        internal const val ACTION_STOP_SESSION = StopAction.ACTION
+        internal const val EXTRA_STOP_TOKEN = StopAction.EXTRA_TOKEN
 
-        /** Random per process; the notification hands it back so a foreign app cannot. */
-        private val stopTokenValue: String = java.util.UUID.randomUUID().toString()
-        internal fun stopToken(): String = stopTokenValue
+        /** The process's own token; the notification hands it back so a foreign app cannot. */
+        internal fun stopToken(): String = StopAction.currentToken()
         internal const val EXTRA_USB_REQUEST_ID = "usb_permission_request_id"
         private const val CAMERA_PERMISSION_REQUEST = 1001
         private const val NOTIFICATION_PERMISSION_REQUEST = 1002

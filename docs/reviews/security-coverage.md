@@ -27,7 +27,9 @@ first review prompted — see
 carries the repair plan. The pattern it names is the one worth keeping: a test that drives a
 method rather than the wire is a test that can pin a behaviour no code path reaches. The two
 halves it left at that level — ID-001's *routing* and ID-003's *send* — are now driven through a
-real socket by `HostHelloAndPairingGateWireTest`.
+real socket by `HostHelloAndPairingGateWireTest`, and its WR2/WR3 note — two tests
+that would pass for the wrong reason — is closed the same way: those two rules got an owner
+(`ReaderHandover`, `StopAction`) and are driven in their own test files.
 
 **2026-10-23 review:** an independent session on `aiand/deepseek-v4.1-flash`, under the
 request in `request-2026-10-21.md`, read the areas below and both findings it returned are
@@ -51,7 +53,7 @@ device, the emulator, Gradle, the GUI or the CI workflows.
 | Settings that hold the key cannot be world-readable | `Store::load` refuses a file other users can read (measured on a real run) |
 | `HOST_HELLO` cannot authorize anything, and ends a session that has already challenged | It carries no identity at all (`readHostFrame` bounds its payload to 0 bytes) and grants nothing: `PhoneAuthorization.onHostHello` ends a session that has already sent its challenge and ignores one that has not. The wire path is pinned by `HostHelloAndPairingGateWireTest.a_host_hello_on_the_wire_ends_the_session_instead_of_being_answered`, proven able to fail against the naive repair that routes the hello to the control handler and re-sends the challenge |
 | A peer cannot spin the control channel: PING, `HOST_HELLO` and IDR requests are each limited per **anchored one-second window** | `SessionControl.dispatch` — 64 PINGs, 8 hellos and 8 IDR requests. An overrun is an *error* that ends the session for PING and a *drop* inside the window for the other two. The IDR limit exists because the asymmetry was the finding: an authorized PC could otherwise reach `MediaCodec.setParameters(REQUEST_SYNC_FRAME)` as fast as the session accepts messages. Read, not measured on a device; and the window is anchored, so 64 at the end of one window plus 64 at the start of the next is admitted — this row does not claim a token bucket |
-| Two accessory readers never share one endpoint | `AccessorySession.closeAndAwait` keeps the reader handle when the reader survived, `readerAlive()` answers whether it is still running, and `MainActivity` remembers the *object* whose reader refused to stop and refuses the next `openAccessory` on it. **The weakest row here:** its only test is a substring assertion on source text (`SessionServiceWiringTest.a_new_usb_session_is_refused_while_the_previous_reader_is_alive`), and the behaviour itself needs a device. Treat this cell as unreviewed |
+| Two accessory readers never share one endpoint | `AccessorySession.closeAndAwait` keeps the reader handle when the reader survived, `readerAlive()` answers whether it is still running, and `ReaderHandover` holds that *object's* liveness question — durable across attempts and asked now rather than snapshotted (`ReaderHandoverTest`). `MainActivity` refuses the next `openAccessory` on it, pinned by `SessionServiceWiringTest.the_handover_rule_is_the_activity_s_rule`. **Still the weakest row here:** what remains read rather than driven is `closeAndAwait`'s own answer, which needs a `ParcelFileDescriptor`, and no test has watched two readers on a real endpoint — treat the *device* half as unreviewed |
 | The USB probe cannot measure its own violation | `--usb-probe` paces at 32/s by default, half the phone's PING limit, because an earlier run killed a healthy link: measured *576 round trips across nine seams, 0 mismatches, 0 timeouts* with the probe's own rate as the fault, and `5 FAIL / 60 PASS / 1000 FAIL` before the pacing. After the fix G0.5 passes at 1000 round trips (1000 sent, 1000 echoed, 0 sequence or payload mismatch, 0 timeouts, rtt p50 550 µs, paced 32/s) — [evidence](../evidence/2026-10-24-usb-g0.md). The probe also refuses to PING an unauthorized session |
 
 ## Surfaces added since those reviews, and their trust assumptions
@@ -102,9 +104,9 @@ assumption that a reviewer should either accept or break:
 - Lockfiles and the dependency policy itself: `cargo audit` runs, but nobody has
   reviewed what the dependencies *do*.
 - The PipeWire and preview code above, and the refusal text path.
-- The stop action's credential (`MainActivity.consumeStopIntent`): its only test is a
-  substring assertion over the whole file, so a forged or replayed intent is exercised
-  nowhere in the suite.
+- The stop action's credential is a rule with a behaviour test now
+  (`StopAction`, `StopActionTest`), but no test presents a real `Intent`: a forged intent and
+  a replayed one are exercised at the decision, not through the framework or across processes.
 - Nothing here has been tested with an adversary holding the phone, the cable or the
   network — only with tests written by the same hand as the code.
 

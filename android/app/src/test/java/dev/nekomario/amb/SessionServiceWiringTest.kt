@@ -162,17 +162,39 @@ class SessionServiceWiringTest {
      * handover must be checked, not assumed.
      */
     @Test
-    fun a_new_usb_session_is_refused_while_the_previous_reader_is_alive() {
+    fun the_handover_rule_is_the_activity_s_rule() {
+        // The rule itself — what is remembered, that the refusal is durable, and that it asks
+        // about the reader now rather than at record time — is driven in `ReaderHandoverTest`.
+        // This test pins only that the Activity uses that rule and refuses *before* it opens
+        // anything. What stays read rather than driven, named here rather than implied:
+        // `AccessorySession.closeAndAwait`'s own answer, which needs a `ParcelFileDescriptor`
+        // and therefore a device or an emulator.
         val activity = mainActivitySource()
         val open = bodyOf(activity, "private fun openAccessory(")
         assertTrue(
-            "openAccessory must refuse to open a second reader",
+            "openAccessory must refuse while a remembered reader is alive",
+            open.contains("readerHandover.refuseWhileReading()"),
+        )
+        assertTrue(
+            "the refusal must come before the accessory is opened",
+            open.indexOf("readerHandover.refuseWhileReading()") < open.indexOf("usb.openAccessory(accessory)"),
+        )
+        assertFalse(
+            "the guard must not read a field that closeSession clears before it answers",
+            open.contains("unstoppedAccessory"),
+        )
+        assertTrue(
+            "openAccessory must still refuse when closing did not stop the reader",
             open.contains("if (!closeSession())"),
         )
         val close = bodyOf(activity, "private fun closeSession(")
         assertTrue(
             "closeSession must report whether the reader stopped",
             close.contains("closeAndAwait(") && close.contains("return stopped"),
+        )
+        assertTrue(
+            "and hand that answer to the record as a question about the object itself",
+            close.contains("readerHandover.recordClose(") && close.contains("::readerAlive"),
         )
         val session = read("AccessorySession.kt")
         assertTrue(
@@ -201,15 +223,27 @@ class SessionServiceWiringTest {
      * notification (same process) can hand it back.
      */
     @Test
-    fun the_stop_action_is_not_a_credential_any_app_can_present() {
+    fun the_stop_action_is_routed_through_the_one_rule() {
+        // The decision and the token's generation are driven in `StopActionTest`. This test
+        // pins that `MainActivity` keeps no token of its own, that both delivery paths consume
+        // the intent, and that a refused intent cannot reach `stopCamera`. What stays read
+        // rather than driven, and cannot be otherwise: `Intent` needs the framework, and "a
+        // second process cannot guess the token" is a property no in-process test observes.
         val activity = mainActivitySource()
         val consume = bodyOf(activity, "private fun consumeStopIntent(")
-        assertTrue("the action alone must not be enough",
-            consume.contains("getStringExtra(EXTRA_STOP_TOKEN)") && consume.contains("return false"))
+        assertTrue("the decision must come from StopAction, not from a comparison written here",
+            consume.contains("StopAction.accepts(") &&
+                consume.contains("getStringExtra(EXTRA_STOP_TOKEN)"))
+        assertTrue("a refused intent must not reach the camera",
+            consume.indexOf("StopAction.accepts(") < consume.indexOf("stopCamera("))
+        // The revert the old test could not see: a token value written down in this file. The
+        // companion is where it used to live, so nothing there may generate one.
+        assertFalse("the Activity must not generate a token of its own",
+            bodyOf(activity, "companion object").contains("UUID"))
+        assertTrue("it must ask the rule for the process token instead",
+            bodyOf(activity, "companion object").contains("StopAction.currentToken()"))
         assertTrue("the notification must send the token",
             serviceSource().contains("EXTRA_STOP_TOKEN, MainActivity.stopToken()"))
-        assertTrue("the token must be random per process, not a constant",
-            activity.contains("UUID.randomUUID().toString()"))
         // Both delivery paths: `singleTop` re-delivery arrives at onNewIntent, and
         // handling only onResume left the button dead while the app was in front.
         assertTrue("onResume must consume it",

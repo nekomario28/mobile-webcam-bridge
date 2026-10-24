@@ -321,12 +321,32 @@ a test that drives the wire instead of a method.
 Removing either authorization gate (`sendPairingInfo`, `updateCapabilities`) fails all three
 tests in a mutation run, so none of them is a test that passes for the wrong reason.
 
-Still open, from the review's own list: **WR2**
-(`a_new_usb_session_is_refused_while_the_previous_reader_is_alive`) and **WR3**
-(`the_stop_action_is_not_a_credential_any_app_can_present`) remain substring assertions on source
-text — both need an Activity-level harness this suite does not have — and **WR5**'s gap stands:
-`security-coverage.md` still has no row for `HOST_HELLO`, the single-reader handover, the
-PING/IDR/hello limits, or the probe and its pacing.
+**WR2 and WR3 are behavioural now, without an Activity harness.** Robolectric would have been a
+new test dependency and a change to a deliberate design choice — this suite has one test
+dependency and pins the Activity by reading it, which `SecondarySurfaceWiringTest` explains — so
+the two rules were given an owner instead and driven there:
+
+- `ReaderHandover` owns the single-reader record. `ReaderHandoverTest` drives what the substring
+  test could not see: that `stopped` leaves nothing armed (including the `?: true` default for a
+  session that is not an accessory), that the refusal is **durable** rather than one iteration
+  deep, and that it asks about the reader **now** rather than snapshotting it at record time. What
+  `SessionServiceWiringTest` still asserts is only that the Activity uses that rule, refuses
+  before it opens anything, and hands over `accessory::readerAlive`.
+- `StopAction` owns the credential: the token is generated once per process and never written
+  down, and `accepts` requires the action **and** the token. `StopActionTest` drives the action
+  alone, an empty extra, a token from another generation, a near miss and a case-folded copy —
+  plus that two generations differ, and that the process token is stable, since a token that
+  changed per call would leave Stop dead.
+- **Proven able to fail, separately:** a snapshot instead of a late-bound question reddens only
+  `the_refusal_asks_about_the_reader_now_instead_of_a_snapshot`; ignoring the token reddens the
+  two refusal tests; reverting `MainActivity` to a literal comparison reddens only the wiring
+  test. 144 of 148 tests stayed green under those three mutations.
+
+**WR5's rows were added** to `security-coverage.md` — `HOST_HELLO`, the single-reader handover,
+the PING/IDR/hello limits, and the probe's own pacing — each labelled with what was read versus
+measured. What remains read rather than driven is named in the two test comments rather than
+implied: `AccessorySession.closeAndAwait`'s answer needs a `ParcelFileDescriptor` (so a device or
+an emulator), and no in-process test can observe that a second process cannot guess a token.
 
 ### Original disposition note
 
