@@ -27,6 +27,21 @@ without putting Pro/billing code in the public OSS tree.
    allowed mode among published modes) and persisted, instead of failing the
    first apply. Explicit Apply of an unsupported wish still errors.
 
+4. **Load-time clamp (host)**: when preferences load, a saved wish above the
+   edition cap (long > 1920, short > 1080, or fps > 30) is clamped and written
+   back **immediately**, so a 4K / 720p60 wish cannot linger and match a later
+   phone that advertises Pro modes. Each field clamps independently to Auto:
+   an over-cap size → size Auto (fps kept if allowed); fps > 30 → fps Auto
+   (size kept if allowed); Auto then resolves to the best published mode when a
+   phone connects. The clamp never invents a size the phone might not support.
+   A failed write keeps the clamp in memory and says so in the warning; other
+   settings and unknown keys are untouched.
+
+The host cap is `quality::EditionCap`; shipped OSS uses `OSS_CAP_1080P30`
+(`1920/1080/30`) via `quality::active_edition()`. The private fork changes that
+one constant (or supplies its own `EditionCap`) to raise the cap — the clamp,
+filter and tests all read it, and public OSS carries no Pro/billing code.
+
 Wire: `QUALITY_RESULT` reason **8 = edition-cap** when the device could run the
 mode but this edition refuses it (defense in depth if a stale host asks).
 

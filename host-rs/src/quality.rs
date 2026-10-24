@@ -26,7 +26,10 @@ pub use preference::Wish;
 mod client;
 pub use client::Client;
 mod edition;
-pub use edition::{coerce_wish_to_available, filter_oss_cap_1080p30, oss_cap_1080p30_allows};
+pub use edition::{
+    EditionCap, OSS_CAP_1080P30, active as active_edition, coerce_wish_to_available,
+    filter_oss_cap_1080p30, oss_cap_1080p30_allows,
+};
 pub const APPLY_DEADLINE_MS: u64 = 5_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
