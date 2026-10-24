@@ -1,5 +1,12 @@
 #!/bin/sh
+# NOT for GitHub Releases from v0.2 onward.
+# Classic Qt + system GPL FFmpeg AppImage. Release tags must use
+# linux/build-rust-appimage.sh instead (see .github/workflows/release.yml).
 set -eu
+if [ "${AMB_ALLOW_CLASSIC_APPIMAGE:-}" != "1" ]; then
+  echo "Refusing classic Qt AppImage build. Set AMB_ALLOW_CLASSIC_APPIMAGE=1 to override, or use linux/build-rust-appimage.sh." >&2
+  exit 2
+fi
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)

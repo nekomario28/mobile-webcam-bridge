@@ -1,5 +1,6 @@
 #!/bin/sh
-# Run in the Debian 13 builder after build_linux.sh and package_licenses.py.
+# Run after build_linux.sh and package_licenses.py. Produces the Rust AppImage
+# (never the classic Qt AppImage from linux/build-appimage.sh).
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 : "${FFMPEG_DIR:?Minimal FFmpeg prefix required}"
@@ -9,7 +10,13 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 : "${PACKAGE_OUTPUT:?Output directory required}"
 command -v file >/dev/null
 printf '%s  %s\n' '8aea8da0f7f7039d2a2cecb14657d752a222a5e1d3825caeef186c82f751cdd1' "$LINUXDEPLOY" | sha256sum -c -
-name=Mobile_Webcam-0.2.0-linux-x86_64-rust-preview
+version=$(cat "$root/VERSION")
+if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-].+)?$'; then
+    echo "VERSION looks invalid: $version" >&2
+    exit 2
+fi
+# Product asset name matches release.yml / historical Qt naming so tags stay stable.
+name="Mobile_Webcam-${version}-x86_64"
 stage="$PACKAGE_OUTPUT/$name.AppDir"
 if [ -e "$stage" ]; then
     echo "Choose a new staging directory: $stage" >&2
@@ -17,7 +24,6 @@ if [ -e "$stage" ]; then
 fi
 mkdir -p "$stage/usr/bin" "$stage/usr/share/mobile-webcam/linux" "$stage/usr/share/doc/mobile-webcam/licenses"
 install -m0755 "$RUST_BIN_DIR/mobile-webcam" "$stage/usr/bin/"
-# The root-installed USB helper relies only on the distribution's libusb.
 install -m0755 "$RUST_BIN_DIR/mobile-webcam-usb" "$stage/usr/share/mobile-webcam/linux/"
 install -m0755 "$root/linux/install-host-integration.sh" "$stage/usr/share/mobile-webcam/linux/"
 install -m0644 "$root/host-rs/linux/70-mobile-webcam.rules" "$root/linux/mobile-webcam-modules-load.conf" "$root/linux/mobile-webcam-v4l2loopback.conf" "$stage/usr/share/mobile-webcam/linux/"
@@ -43,6 +49,6 @@ APPIMAGE_EXTRACT_AND_RUN=1 LD_LIBRARY_PATH="$FFMPEG_DIR/lib" "$LINUXDEPLOY" --ap
     --library "$(c++ -print-file-name=libstdc++.so.6)" --library "$(cc -print-file-name=libgcc_s.so.1)"
 python3 "$root/host-rs/tools/verify_distribution.py" linux "$stage"
 APPIMAGE_EXTRACT_AND_RUN=1 LD_LIBRARY_PATH="$FFMPEG_DIR/lib" \
-    LDAI_OUTPUT="$PACKAGE_OUTPUT/$name.AppImage" LINUXDEPLOY_OUTPUT_VERSION=0.2.0 \
+    LDAI_OUTPUT="$PACKAGE_OUTPUT/$name.AppImage" LINUXDEPLOY_OUTPUT_VERSION="$version" \
     "$LINUXDEPLOY" --appdir "$stage" --output appimage
 (cd "$PACKAGE_OUTPUT" && sha256sum "$name.AppImage" > "$name.AppImage.sha256")

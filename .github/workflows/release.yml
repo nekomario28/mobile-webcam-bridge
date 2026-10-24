@@ -3,12 +3,16 @@ name: release
 on:
   push:
     tags:
-      # Classic Qt releases use VERSION; Rust releases use native-CI artifacts.
-      - 'v0.1.*'
+      # Current product line (Rust host). Classic Qt used v0.1.* only.
+      - 'v0.2.*'
+      - 'v0.3.*'
+      - 'v0.[4-9].*'
+      - 'v[1-9].*.*'
       - '!v*-beta.*'
+      - '!v*-rc.*'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -16,8 +20,10 @@ concurrency:
 
 jobs:
   publish:
+    permissions:
+      contents: write
     runs-on: [self-hosted, Linux, X64, mobile-webcam]
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,6 +39,13 @@ jobs:
           test "$GITHUB_REF_NAME" = "v$version"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain)"
+          # Refuse classic Qt release path for this product line.
+          case "$version" in
+            0.1.*)
+              echo "v0.1.* tags are classic Qt; do not cut new ones on this workflow" >&2
+              exit 2
+              ;;
+          esac
 
       - uses: actions/setup-java@v4
         with:
@@ -47,8 +60,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
           gradle-version: '8.9'
-          # A release build must not read a cache a pull request could have written
-          # and then sign the result; measured by zizmor as cache poisoning.
           cache-disabled: true
 
       - name: Restore Android release signing key
@@ -81,21 +92,34 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" \
             verify --verbose --print-certs "$apk"
 
-      - name: Build and test Linux AppImage
+      - name: Build Rust Linux AppImage (not classic Qt)
         shell: bash
-        run: ./linux/build-appimage.sh
+        run: |
+          set -euo pipefail
+          # Explicitly do not invoke linux/build-appimage.sh (Qt + GPL FFmpeg).
+          ./linux/build-rust-appimage.sh
 
       - name: Prepare release assets
         shell: bash
         run: |
           set -euo pipefail
           version=$(cat VERSION)
+          mkdir -p dist
           apk="dist/Mobile_Webcam-$version-android.apk"
           cp android/app/build/outputs/apk/release/app-release.apk "$apk"
+          appimage="dist/Mobile_Webcam-$version-x86_64.AppImage"
+          test -s "$appimage"
+          # Attach FFmpeg corresponding-source offer when present.
+          offer=""
+          if [ -f docs/licenses/FFMPEG_SOURCE_OFFER.md ]; then
+            cp docs/licenses/FFMPEG_SOURCE_OFFER.md "dist/FFMPEG_SOURCE_OFFER.md"
+            offer="dist/FFMPEG_SOURCE_OFFER.md"
+          fi
           cd dist
+          sha256sum "$(basename "$apk")" "$(basename "$appimage")" ${offer:+FFMPEG_SOURCE_OFFER.md} > SHA256SUMS
+          # Keep per-file digests too for continuity with older releases.
           sha256sum "$(basename "$apk")" > "$(basename "$apk").sha256"
-          cat "Mobile_Webcam-$version-x86_64.AppImage.sha256" \
-              "$(basename "$apk").sha256" > SHA256SUMS
+          test -f "$(basename "$appimage").sha256"
 
       - name: Publish GitHub Release
         shell: bash
@@ -104,17 +128,118 @@ jobs:
         run: |
           set -euo pipefail
           version=$(cat VERSION)
+          assets=(
+            "dist/Mobile_Webcam-$version-x86_64.AppImage"
+            "dist/Mobile_Webcam-$version-android.apk"
+            dist/SHA256SUMS
+          )
+          if [ -f dist/FFMPEG_SOURCE_OFFER.md ]; then
+            assets+=(dist/FFMPEG_SOURCE_OFFER.md)
+          fi
+          notes=$(mktemp)
+          cat > "$notes" <<'NOTES'
+          Rust host + Android release.
+
+          - Linux AppImage is the Rust build (minimal LGPL FFmpeg), not the classic Qt/GPL AppImage from v0.1.x.
+          - Android APK is signed with the project release key.
+          - See THIRD_PARTY_NOTICES.md and FFMPEG_SOURCE_OFFER.md (when attached) for LGPL obligations.
+          NOTES
+          # Strip the leading indentation from the heredoc body.
+          sed -i 's/^          //' "$notes"
           gh release create "$GITHUB_REF_NAME" \
-            "dist/Mobile_Webcam-$version-x86_64.AppImage" \
-            "dist/Mobile_Webcam-$version-android.apk" \
-            dist/SHA256SUMS \
+            "${assets[@]}" \
             --verify-tag \
             --title "Mobile Webcam $version" \
-            --generate-notes
+            --notes-file "$notes"
 
-      # The self-hosted runner persists between jobs: never leave the signing
-      # key on its disk after a release, successful or not.
       - name: Remove the release signing key from the runner
         if: always()
         shell: bash
         run: rm -f build/release.keystore
+
+  # Windows Setup is built on GitHub-hosted runners (self-hosted Linux cannot cross-package NSIS easily).
+  windows:
+    permissions:
+      contents: write
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify tag matches VERSION
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(cat VERSION)
+          test "$GITHUB_REF_NAME" = "v$version"
+      - name: Pinned Rust GNU toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.98.1-x86_64-pc-windows-gnu --profile minimal
+          rustup default 1.98.1-x86_64-pc-windows-gnu
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          install: >-
+            make nasm python
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-libusb
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-nsis
+      - name: Build Rust Windows host and stage installer
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 host-rs/tools/build_ffmpeg.py windows --cross-prefix='' --prefix "$PWD/host-rs/target/native-windows" --cache "$PWD/host-rs/target/ffmpeg-source"
+          export FFMPEG_DIR="$(cygpath -am host-rs/target/native-windows)"
+          export PATH="$PWD/host-rs/target/native-windows/bin:$PATH"
+          export PKG_CONFIG_ALLOW_CROSS=1
+          export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=gcc
+          export CARGO_BUILD_JOBS=1
+          cargo build --manifest-path host-rs/Cargo.toml --target x86_64-pc-windows-gnu --release --bin mobile-webcam --locked
+          licenses="$PWD/host-rs/target/release-licenses-windows"
+          rm -rf "$licenses"
+          python3 host-rs/tools/package_licenses.py x86_64-pc-windows-gnu "$licenses" || mkdir -p "$licenses"
+          mkdir -p dist build/unity-capture
+          revision=3ed54c325e0ad71afcf4f246c07e5e17b3d7f2d2
+          for bits in 32 64; do
+            curl --fail --location --retry 2 \
+              "https://raw.githubusercontent.com/schellingb/UnityCapture/$revision/Install/UnityCaptureFilter$bits.dll" \
+              -o "build/unity-capture/UnityCaptureFilter$bits.dll"
+          done
+          (cd build/unity-capture && sha256sum --check "$PWD/../windows/unity-capture.sha256" 2>/dev/null) \
+            || (cd build/unity-capture && sha256sum --check ../../windows/unity-capture.sha256)
+          cmake -DAMB_BUILD_DIR="$PWD/host-rs/target/x86_64-pc-windows-gnu/release" \
+            -DAMB_MINGW_ROOT=/mingw64 \
+            -DAMB_FILTER_DIR="$PWD/build/unity-capture" \
+            -DAMB_OUTPUT_DIR="$PWD/dist" \
+            -DAMB_RUST_EXECUTABLE="$PWD/host-rs/target/x86_64-pc-windows-gnu/release/mobile-webcam.exe" \
+            -DAMB_FFMPEG_ROOT="$FFMPEG_DIR" \
+            -DAMB_RUST_LICENSES="$licenses" \
+            -P windows/package.cmake
+          ls -la dist
+      - name: Upload Windows artifact to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*Setup.exe dist/*.zip dist/SHA256SUMS)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No Windows artifacts produced" >&2
+            exit 1
+          fi
+          # Release may already exist from the Linux job; upload assets onto it.
+          # Up to 10 waits. The index is unused; behavior is sleep-until-visible.
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 30
+          done
+          gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
