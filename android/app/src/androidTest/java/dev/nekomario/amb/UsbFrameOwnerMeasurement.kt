@@ -95,10 +95,11 @@ class UsbFrameOwnerMeasurement(
             return done(report)
         }
 
-        val held = mutableListOf<android.os.ParcelFileDescriptor>()
-        val heldExtras = mutableListOf<android.os.ParcelFileDescriptor>()
-        val heldOwners = mutableListOf<PhoneAuthorization>()
-        val heldSessions = mutableListOf<AccessorySession>()
+        // Each armed iteration owns its session, its owner, its frames and its descriptors, and takes
+        // its own reader off the endpoint. The first version threaded all of that through the loop and
+        // a five-parameter helper, which is the shape in which an iteration outlives its own cleanup
+        // (independent review, 2026-10-25, ID-002).
+        val armed = mutableListOf<Iteration>()
         try {
             // One blocked reader only: that is the state the shipping app is in, and the state
             // in which the host can write (measured, after the cable was re-seated: 24 bytes
@@ -109,103 +110,65 @@ class UsbFrameOwnerMeasurement(
             // iteration that ends by deadline is itself the control (nothing arrives on an idle
             // endpoint), and the frame shows up in whichever iteration it lands in.
             val deadline = System.currentTimeMillis() + waitForHostMs
-            var iteration = 0
+            var attempt = 0
             var answered: String? = null
-            val framesRead = Collections.synchronizedList(mutableListOf<String>())
             var deadlineEnded = 0
             var skipped = 0
             var otherEnded = 0
             while (System.currentTimeMillis() < deadline && answered == null) {
-                iteration++
+                attempt++
                 val pfd = manager.openAccessory(accessory)
                 if (pfd == null) {
                     report.append("FAIL usb-frame-owner: openAccessory returned null on iteration ")
-                        .append(iteration).append('\n')
+                        .append(attempt).append('\n')
                     break
                 }
-                val owner = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = {})
-                val errors = Collections.synchronizedList(mutableListOf<String>())
-                // The seam: every host frame this session reads is reported, so the verdict can
-                // name the frame instead of a reason string shared by several failures.
-                val framesThisIteration = Collections.synchronizedList(mutableListOf<String>())
-                val session = AccessorySession(
-                    pfd, {}, { reason -> errors.add(reason) }, owner, {}, {},
-                    onFrameRead = { header ->
-                        framesThisIteration.add(describeFrame(header))
-                        framesRead.add("iteration " + iteration + " " + describeFrame(header))
-                    },
-                )
-                held.add(pfd); heldOwners.add(owner); heldSessions.add(session)
-                session.start()
+                val iteration = Iteration(manager, accessory, pfd, extraDescriptors, secondSession, ::line)
+                armed.add(iteration)
+                iteration.session.start()
                 Thread.sleep(200)
-                val alive = session.readerAlive()
+                val alive = iteration.alive
                 val reader = threadNamed()
-                report.append("iteration ").append(iteration)
+                report.append("iteration ").append(attempt)
                     .append(": readerAlive=").append(alive)
                     .append(" stack=").append(topFrames(reader)).append('\n')
-                line("A-ARMED", "iteration=" + iteration + " alive=" + alive)
+                line("A-ARMED", "iteration=" + attempt + " alive=" + alive)
                 if (!alive) {
                     report.append("  the reader was not blocked, so this iteration says nothing\n")
                     skipped++
-                    closeIteration(session, owner, heldExtras, heldSessions, heldOwners)
+                    iteration.close()
                     continue
                 }
-                var openedExtras = 0
-                repeat(extraDescriptors) { index ->
-                    val extra = manager.openAccessory(accessory)
-                    if (extra == null) {
-                        report.append("  extra descriptor ").append(index + 1)
-                            .append(" could not be opened\n")
-                    } else {
-                        heldExtras.add(extra)
-                        openedExtras++
-                    }
-                }
-                if (extraDescriptors > 0) {
-                    report.append("  holding ").append(openedExtras).append(" extra descriptor(s)")
-                        .append(" alongside the blocked reader\n")
-                    line("EXTRAS", "held=" + openedExtras)
-                }
-                if (secondSession && heldExtras.isNotEmpty()) {
-                    val extraOwner = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = {})
-                    val extraErrors = Collections.synchronizedList(mutableListOf<String>())
-                    val extraSession = AccessorySession(
-                        heldExtras.last(), {}, { reason -> extraErrors.add(reason) }, extraOwner, {}, {},
-                    )
-                    extraSession.start()
-                    heldOwners.add(extraOwner)
-                    heldSessions.add(extraSession)
-                    Thread.sleep(400)
-                    report.append("  second session on the extra descriptor, its errors=")
-                        .append(snapshot(extraErrors)).append('\n')
-                    line("SECOND-SESSION", "errors=" + snapshot(extraErrors))
-                }
-                line("READY-FOR-HOST-FRAME", "iteration=" + iteration)
-                report.append("READY-FOR-HOST-FRAME (iteration ").append(iteration).append(")\n")
+                report.append(iteration.armExtras())
+                line("READY-FOR-HOST-FRAME", "iteration=" + attempt)
+                report.append("READY-FOR-HOST-FRAME (iteration ").append(attempt).append(")\n")
                 val iterationDeadline = System.currentTimeMillis() + 4_500
                 while (System.currentTimeMillis() < iterationDeadline) {
                     // The session's own answer, not a thread found by name: the name is shared by
                     // every reader this instrument arms, so the previous iteration's reader could
                     // have been the one inspected (independent review, 2026-10-25, ID-002).
-                    if (!session.readerAlive() || snapshot(errors).isNotEmpty()) {
-                        answered = snapshot(errors).joinToString("; ")
+                    if (!iteration.alive || snapshot(iteration.errors).isNotEmpty()) {
+                        answered = snapshot(iteration.errors).joinToString("; ")
                         break
                     }
                     Thread.sleep(50)
                 }
                 val reason = if (answered != null) answered else "still blocked after 4.5 s"
-                report.append("  iteration ").append(iteration).append(" ended: ").append(reason)
+                report.append("  iteration ").append(attempt).append(" ended: ").append(reason)
                     .append("\n")
-                line("ITERATION", "iteration=" + iteration + " ended=" + reason)
-                report.append("  frames this iteration read: ").append(snapshot(framesThisIteration))
-                    .append('\n')
+                line("ITERATION", "iteration=" + attempt + " ended=" + reason)
+                val readNow = snapshot(iteration.frames)
+                report.append("  frames this iteration read: ")
+                    .append(readNow.map { describeFrame(it) }).append('\n')
                 // Only a reason the *session* produces for a frame counts as consumption. A
                 // deadline is the idle-endpoint control, and EIO is the driver refusing this
                 // reader outright - counting either as "consumed" made the first version of this
                 // instrument report a false positive.
                 // Both halves are required now: the session refused a frame *and* the frame it
                 // read is the one the host wrote.
-                val fromHost = snapshot(framesThisIteration).any { it == describeFrameOf(hostFrameSequence) }
+                // Compared as fields, not as the text a formatter produces: the verdict is about the
+                // frame, and a message-shaped comparison would rot silently if the format changed.
+                val fromHost = readNow.any { it.type == Wire.TYPE_HOST_HELLO && it.sequence == hostFrameSequence }
                 if (!fromHost) {
                     report.append("  no frame matching the host's (type=0x0e sequence=")
                         .append(hostFrameSequence).append(") was read in this iteration\n")
@@ -220,42 +183,50 @@ class UsbFrameOwnerMeasurement(
                 // A clean reader for the next iteration: leaving this one armed is what could
                 // manufacture the two-reader state this instrument is supposed to control.
                 if (answered == null) {
-                    closeIteration(session, owner, heldExtras, heldSessions, heldOwners)
+                    iteration.close()
                 }
             }
             if (answered != null) {
                 report.append("outcome: the blocked reader consumed the host's frame — ").append(answered)
-                    .append(" (after ").append(iteration).append(" iteration(s))\n")
-                line("OUTCOME", "consumed=true reason=" + answered + " iterations=" + iteration)
+                    .append(" (after ").append(attempt).append(" iteration(s))\n")
+                line("OUTCOME", "consumed=true reason=" + answered + " iterations=" + attempt)
             } else {
                 report.append("FALSIFIED: no host frame reached the blocked reader in ")
-                    .append(iteration).append(" iteration(s)")
+                    .append(attempt).append(" iteration(s)")
                     .append(" (ended by deadline: ").append(deadlineEnded)
                     .append(", skipped: ").append(skipped)
                     .append(", ended for another reason: ").append(otherEnded).append(")")
-                    .append("; frames read: ").append(snapshot(framesRead)).append('\n')
-                line("OUTCOME", "consumed=false iterations=" + iteration
+                    .append("; frames read: ").append(
+                        armed.flatMapIndexed { index, one ->
+                            snapshot(one.frames).map { "iteration " + (index + 1) + " " + describeFrame(it) }
+                        },
+                    ).append('\n')
+                line("OUTCOME", "consumed=false iterations=" + attempt
                     + " deadline=" + deadlineEnded + " skipped=" + skipped + " other=" + otherEnded)
             }
         } finally {
-            heldOwners.forEach { runCatching { it.close() } }
-            heldSessions.forEach { runCatching { it.close() } }
-            held.forEach { runCatching { it.close() } }
-            heldExtras.forEach { runCatching { it.close() } }
+            armed.forEach { runCatching { it.close() } }
         }
         return done(report)
     }
 
-    /** The host half does the AOA switch, so the accessory may not exist yet. */
+    /**
+     * The host half does the AOA switch, so the accessory may not exist yet.
+     *
+     * One loop, not two: the first version returned into a second waiting function after its first log
+     * line, a split with no second responsibility in it.
+     */
     private fun awaitAccessory(manager: UsbManager, report: StringBuilder): UsbAccessory? {
         val started = System.currentTimeMillis()
+        var lastLog = started
         while (System.currentTimeMillis() - started < waitForAccessoryMs) {
             manager.accessoryList?.firstOrNull()?.let { return it }
-            if (System.currentTimeMillis() - started > 5_000) {
+            val waited = System.currentTimeMillis() - started
+            if (waited > 5_000 && System.currentTimeMillis() - lastLog > 10_000) {
+                lastLog = System.currentTimeMillis()
                 report.append("waiting for the accessory (the host switches the phone): ")
-                    .append(System.currentTimeMillis() - started).append(" ms\n")
-                line("WAITING-FOR-ACCESSORY", "ms=" + (System.currentTimeMillis() - started))
-                return waitForAccessory(manager, started, report)
+                    .append(waited).append(" ms\n")
+                line("WAITING-FOR-ACCESSORY", "ms=" + waited)
             }
             Thread.sleep(500)
         }
@@ -264,52 +235,91 @@ class UsbFrameOwnerMeasurement(
         return null
     }
 
-    private fun waitForAccessory(manager: UsbManager, started: Long, report: StringBuilder): UsbAccessory? {
-        var lastLog = System.currentTimeMillis()
-        while (System.currentTimeMillis() - started < waitForAccessoryMs) {
-            manager.accessoryList?.firstOrNull()?.let { return it }
-            if (System.currentTimeMillis() - lastLog > 10_000) {
-                lastLog = System.currentTimeMillis()
-                line("WAITING-FOR-ACCESSORY", "ms=" + (System.currentTimeMillis() - started))
-            }
-            Thread.sleep(500)
+    /**
+     * What one armed iteration owns: its session, that session's owner, the frames it read, and the
+     * descriptors it holds - plus the ability to take its own reader off the endpoint.
+     *
+     * The loop used to thread all of that through the caller and a five-parameter helper, and that
+     * shape is what let an iteration outlive its own cleanup (independent review, 2026-10-25, ID-002).
+     */
+    private class Iteration(
+        private val manager: UsbManager,
+        private val accessory: UsbAccessory,
+        private val pfd: android.os.ParcelFileDescriptor,
+        private val extraDescriptors: Int,
+        private val secondSession: Boolean,
+        private val log: (String, String) -> Unit,
+    ) {
+        val errors = Collections.synchronizedList(mutableListOf<String>())
+        val frames = Collections.synchronizedList(mutableListOf<Wire.Header>())
+        private val descriptors = mutableListOf(pfd)
+        private val owners = mutableListOf<PhoneAuthorization>()
+        private val sessions = mutableListOf<AccessorySession>()
+
+        /** The seam: every host frame this session reads is reported, so the verdict can name it. */
+        val session = AccessorySession(
+            pfd, {}, { reason -> errors.add(reason) },
+            PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = {}).also { owners.add(it) },
+            {}, {},
+            onFrameRead = { header -> frames.add(header) },
+        )
+
+        init {
+            sessions.add(session)
         }
-        report.append("FAIL usb-frame-owner: no accessory appeared within ")
-            .append(waitForAccessoryMs).append(" ms\n")
-        return null
+
+        val alive: Boolean get() = session.readerAlive()
+
+        /** Open the extra descriptors, and optionally a second session on one; returns the report lines. */
+        fun armExtras(): String {
+            val text = StringBuilder()
+            var opened = 0
+            repeat(extraDescriptors) { index ->
+                val extra = manager.openAccessory(accessory)
+                if (extra == null) {
+                    text.append("  extra descriptor ").append(index + 1).append(" could not be opened\n")
+                } else {
+                    descriptors.add(extra)
+                    opened++
+                }
+            }
+            if (extraDescriptors > 0) {
+                text.append("  holding ").append(opened).append(" extra descriptor(s)")
+                    .append(" alongside the blocked reader\n")
+                log("EXTRAS", "held=" + opened)
+            }
+            if (secondSession && descriptors.size > 1) {
+                val extraOwner = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = {})
+                val extraErrors = Collections.synchronizedList(mutableListOf<String>())
+                val extraSession = AccessorySession(
+                    descriptors.last(), {}, { reason -> extraErrors.add(reason) }, extraOwner, {}, {},
+                )
+                extraSession.start()
+                owners.add(extraOwner)
+                sessions.add(extraSession)
+                Thread.sleep(400)
+                val reported = synchronized(extraErrors) { extraErrors.toList() }
+                text.append("  second session on the extra descriptor, its errors=")
+                    .append(reported).append('\n')
+                log("SECOND-SESSION", "errors=" + reported)
+            }
+            return text.toString()
+        }
+
+        fun close() {
+            sessions.forEach { runCatching { it.close() } }
+            owners.forEach { runCatching { it.close() } }
+            descriptors.forEach { runCatching { it.close() } }
+            descriptors.clear()
+        }
     }
 
     private fun describeFrame(header: Wire.Header): String =
         "type=0x%02x sequence=%d len=%d".format(header.type, header.sequence, header.payloadLength)
 
-    private fun describeFrameOf(sequence: Int): String =
-        "type=0x%02x sequence=%d len=0".format(Wire.TYPE_HOST_HELLO, sequence)
-
-    /**
-     * Take one iteration's reader off the endpoint before the next one arms.
-     *
-     * The first version left each session armed until the outer `finally`, so an iteration could
-     * open while the previous reader still lived - manufacturing exactly the two-reader state this
-     * instrument is meant to control for (independent review, 2026-10-25, ID-002).
-     */
-    private fun closeIteration(
-        session: AccessorySession,
-        owner: PhoneAuthorization,
-        heldExtras: MutableList<android.os.ParcelFileDescriptor>,
-        heldSessions: MutableList<AccessorySession>,
-        heldOwners: MutableList<PhoneAuthorization>,
-    ) {
-        runCatching { session.close() }
-        heldSessions.remove(session)
-        heldOwners.remove(owner)
-        runCatching { owner.close() }
-        heldExtras.forEach { runCatching { it.close() } }
-        heldExtras.clear()
-    }
-
     private fun report(text: String) = StringBuilder(text)
 
-    private fun snapshot(list: MutableList<String>): List<String> = synchronized(list) { list.toList() }
+    private fun <T> snapshot(list: MutableList<T>): List<T> = synchronized(list) { list.toList() }
 
     private fun done(report: StringBuilder): String {
         logReport(report)
