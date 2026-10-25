@@ -62,7 +62,11 @@
   attempt could not attribute - a host write that timed out in a state with two descriptors open -
   is attributed now: the write completes with an extra descriptor held, and again with a second
   session on that descriptor whose reader the driver refuses with `EIO`, so the shape of the
-  device-side session is not the cause and the port state the cable re-seat changed is. Two of this
+  device-side session is not the cause and the port state the cable re-seat changed is. And the consequence that row claimed rather than showed is shown: against the
+  two-session state the repository's own host answers a real proof, a blocked reader consumes it
+  (`type=0x0b len=134` in the device report), and the host is then either left waiting for an approval
+  it did not choose or told `the phone rejected this PC's signature` - the documented `BAD_SIGNATURE`
+  on the wire, including the leftover-challenge path that produces it. Two of this
   attempt's own steps are kept in the record rather than tidied away — a first diagnosis that
   blamed the environment for holding the accessory interface (wrong: subclass `0x42` with protocol
   `1` is adb's interface, not the accessory's) and an over-broad `pkill` that cost the phone its adb

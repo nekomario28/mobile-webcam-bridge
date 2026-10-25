@@ -153,6 +153,14 @@ active each pushed at 3.2 MB/s - reproduced, 12x slower - and which part of the 
 **not attributed**. Recorded in `docs/evidence/2026-10-25-g0-adb-coexistence.md`, because the next
 person to measure adb throughput under an instrumentation would otherwise blame the thing under test.
 
-**D2 stays unresolved**, and needs a host that answers a proof rather than one writing a single control
-frame. The reviewer's four unbroken hypotheses - B1, B2, C2, D1 - are recorded here as results, not as
-gaps.
+**D2 - ANSWERED by showing it.** The coverage row claimed the consequence of two readers sharing an
+endpoint; with the repository's own host answering a real proof against the two-session state, the
+consequence appears: a blocked reader consumes the host's `CLIENT_AUTH` (`type=0x0b len=134` in the
+device report) and the host is either left waiting for an approval it did not choose or told `the phone
+rejected this PC's signature` - the documented `BAD_SIGNATURE`, shown rather than claimed, including the
+leftover-challenge path that produces it. Table and quotes:
+`docs/evidence/2026-10-25-usb-frame-owner.md`, "D2, shown".
+
+Every question this review left is now answered, except the one that needs the app's USB grant cleared
+first - an instrument path, not a claim. The reviewer's four unbroken hypotheses - B1, B2, C2, D1 - are
+recorded here as results, not as gaps.
