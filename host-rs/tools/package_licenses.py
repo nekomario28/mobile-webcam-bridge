@@ -12,7 +12,15 @@ import urllib.request
 
 
 def upstream_texts(package, source, cache):
-    vcs = json.loads((source / ".cargo_vcs_info.json").read_text())
+    # A crate directory we cannot identify is a warning, not a dead release: this collector's job is to
+    # ship the texts it can find, and every failure here is one missing file, not a broken product.
+    # Measured 2026-10-25: on the Windows runner `cargo metadata` reported a manifest path that resolved
+    # to the workspace root, which has no .cargo_vcs_info.json, and that ended the release job.
+    vcs_file = source / ".cargo_vcs_info.json"
+    if not vcs_file.is_file():
+        print(f"warning: {package['name']} {package['version']}: no .cargo_vcs_info.json in {source}")
+        return []
+    vcs = json.loads(vcs_file.read_text())
     sha = vcs["git"]["sha1"]
     match = re.match(r"https://github.com/([^/]+/[^/]+)", package["repository"] or "")
     if not match or not re.fullmatch(r"[0-9a-f]{40}", sha):
@@ -81,6 +89,9 @@ def main():
             if not manifest.is_absolute():
                 manifest = pathlib.Path(metadata["workspace_root"]) / manifest
             source = manifest.parent
+            if not source.is_dir():
+                print(f"warning: {package['name']} {package['version']}: no source directory at {source}")
+                continue
             texts = [f for f in source.iterdir() if f.is_file() and f.name.lower().startswith(("license", "licence", "copying", "notice"))]
             if package.get("license_file"):
                 texts.append(source / package["license_file"])
