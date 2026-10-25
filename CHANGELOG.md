@@ -54,7 +54,11 @@
   that reader's session ended with `PC authorization proof rejected` — the frame reached the reader
   holding the endpoint and was refused at that session's proof gate, which is the ID-001 path
   measured on the wire. The control is in the same instrument: with the endpoint idle, iterations
-  end only by their own absolute 5 s proof deadline and never with that reason. Two of this
+  end only by their own absolute 5 s proof deadline and never with that reason. The one thing that
+  attempt could not attribute - a host write that timed out in a state with two descriptors open -
+  is attributed now: the write completes with an extra descriptor held, and again with a second
+  session on that descriptor whose reader the driver refuses with `EIO`, so the shape of the
+  device-side session is not the cause and the port state the cable re-seat changed is. Two of this
   attempt's own steps are kept in the record rather than tidied away — a first diagnosis that
   blamed the environment for holding the accessory interface (wrong: subclass `0x42` with protocol
   `1` is adb's interface, not the accessory's) and an over-broad `pkill` that cost the phone its adb

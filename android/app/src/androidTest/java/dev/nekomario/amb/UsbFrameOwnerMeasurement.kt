@@ -44,23 +44,26 @@ import java.util.Collections
  */
 class UsbFrameOwnerMeasurement(
     private val instrumentation: Instrumentation,
-    /** Extra descriptors to hold open once the measured reader is blocked; see [extraDescriptors]. */
-    private val extraDescriptors: Int = 0,
-) {
     /**
-     * Extra descriptors the caller asked for, held open once the measured reader is blocked.
+     * Extra descriptors to hold open once the measured reader is blocked.
      *
-     * **Not yet run in this mode.** It exists to separate two things the earlier attempt could not:
-     * the host's write completes with one blocked reader (measured) and timed out in a state that
-     * also had a second descriptor open - but that observation predates the cable being re-seated,
-     * so the descriptor count and the port state were changed together. Nothing here is a measured
-     * claim until a run says which one it was.
-     *
-     * The point is to move one variable at a time. With the reader alone the host's write completes
-     * (measured), and this exists to answer whether a second open descriptor is what stops it -
-     * the state the single-reader guard prevents, where the earlier attempt saw the host's write
-     * time out but could not separate that from the cable having been re-seated in between.
+     * The point is to move one variable at a time. Measured 2026-10-25: with one extra descriptor
+     * held - no reader on it - the host's write **completes** and the measured reader consumes the
+     * frame. So the descriptor count is not what stopped the earlier attempt, which had timed out in
+     * a state that also had a second descriptor open; and with [secondSession] the write completes
+     * too, so a second *reader* is not it either. The earlier timeout belongs to the port state (the
+     * cable was re-seated between the observations). Evidence:
+     * `docs/evidence/2026-10-25-usb-frame-owner.md`.
      */
+    private val extraDescriptors: Int = 0,
+    /**
+     * Start a second **session** on an extra descriptor: the state the guard prevents, and the one
+     * the earlier attempt timed out in. Its reader is the one the driver refuses with EIO, so this
+     * is the difference between "a second descriptor" and "a second reader" - and measured, the
+     * host's write completes in this state as well.
+     */
+    private val secondSession: Boolean = false,
+) {
     private val controlMs = 3_000L
     private val waitForHostMs = 25_000L
     private val waitForAccessoryMs = 120_000L
@@ -136,6 +139,20 @@ class UsbFrameOwnerMeasurement(
                     report.append("  holding ").append(openedExtras).append(" extra descriptor(s)")
                         .append(" alongside the blocked reader\n")
                     line("EXTRAS", "held=" + openedExtras)
+                }
+                if (secondSession && heldExtras.isNotEmpty()) {
+                    val extraOwner = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = {})
+                    val extraErrors = Collections.synchronizedList(mutableListOf<String>())
+                    val extraSession = AccessorySession(
+                        heldExtras.last(), {}, { reason -> extraErrors.add(reason) }, extraOwner, {}, {},
+                    )
+                    extraSession.start()
+                    heldOwners.add(extraOwner)
+                    heldSessions.add(extraSession)
+                    Thread.sleep(400)
+                    report.append("  second session on the extra descriptor, its errors=")
+                        .append(snapshot(extraErrors)).append('\n')
+                    line("SECOND-SESSION", "errors=" + snapshot(extraErrors))
                 }
                 line("READY-FOR-HOST-FRAME", "iteration=" + iteration)
                 report.append("READY-FOR-HOST-FRAME (iteration ").append(iteration).append(")\n")
