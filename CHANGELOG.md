@@ -124,6 +124,13 @@
   because the check sat before the settle sleep in one path - and reads 10/10 with the stack proof once
   the order is right; both numbers are kept in the evidence.
 
+- Make the single-reader guard's failure path reachable, and exercise it. A healthy endpoint always
+  releases its reader, so the branch that refuses to arm a second iteration beside a survivor had no
+  coverage at all. `AccessorySession` takes an injectable liveness probe (default: the real thread, so
+  production behaviour is unchanged) and the frame-owner instrument an option that reports a survivor;
+  measured on the XQ-GE44, the run now stops with `VOID: this iteration's reader survived its close ...
+  the run cannot speak about a single reader` instead of continuing beside it.
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment

@@ -30,6 +30,21 @@ The control is in the same instrument rather than assumed: with the endpoint idl
 with `PC authorization deadline expired` - the reader's own absolute 5 s proof deadline - and never
 with `PC authorization proof rejected`. So the string is attributable to the host's frame.
 
+## The guard against a survivor, exercised (second review, R2-002)
+
+An iteration whose reader survives its close must stop the run: arming the next one beside a live reader
+is the two-reader state the instrument exists to rule out. A healthy endpoint always releases, so that
+guard was a line nobody had entered. `AccessorySession` now takes an injectable liveness probe (default:
+the real thread) and the instrument an option that reports a survivor; measured with it, the run stops
+where it should:
+
+```
+VOID reader survived close
+REPORT VOID: this iteration's reader survived its close, so a later one would share the endpoint with
+it; the run cannot speak about a single reader
+```
+
+
 ## Attribution, tightened the same day (second review, R2-001)
 
 The run above matched a frame by **type and sequence**, and both are constant across runs - so an earlier

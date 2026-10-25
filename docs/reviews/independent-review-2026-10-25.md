@@ -243,11 +243,25 @@ the verdict names the exact frame, with a discriminator that cannot collide with
 Without `-e hostPts` the report says the match is by type and sequence only, which it previously claimed
 silently.
 
-**R2-002 (Medium) - FIXED.** `Iteration.close()` called `session.close()`, which discards
-`closeAndAwait`'s answer, so an iteration whose reader survived could arm beside it - the very two-reader
-state this instrument exists to rule out. It now calls `closeAndAwait` itself, and the loop declares the
-run **void** instead of continuing. The branch it guards needs a device that makes a read survive, so it
-is fixed-but-unguarded-in-practice here, recorded that way rather than as verified.
+**R2-002 (Medium) - FIXED, and the branch is now exercised.** `Iteration.close()` called
+`session.close()`, which discards `closeAndAwait`'s answer, so an iteration whose reader survived could
+arm beside it - the very two-reader state this instrument exists to rule out. It now calls
+`closeAndAwait` itself, and the loop declares the run **void** instead of continuing. A healthy endpoint
+never produces a surviving read, so the guard had no coverage; `AccessorySession` gained an injectable
+liveness probe (default: the real thread, so production behaviour is unchanged) and the instrument an
+option that makes it report a survivor. Measured on the XQ-GE44 with that option:
+
+```
+VOID reader survived close
+REPORT iteration 1: readerAlive=true stack=libcore.io.Linux.readBytes <- libcore.io.Linux.read
+REPORT   iteration 1 ended: still blocked after 4.5 s
+REPORT VOID: this iteration's reader survived its close, so a later one would share the endpoint with
+it; the run cannot speak about a single reader
+```
+
+So the branch fires when the condition it names holds, rather than being a line nobody has entered. The
+probe is a seam in the same shape as the frame seam: a defaulted parameter whose default is the
+production behaviour.
 
 **R2-003 (Low) - FIXED, and fixing it corrected a published number.** The latch counted down *before* the
 read, so a thread descheduled in between counted as blocked. The reader must now also be *inside* the
