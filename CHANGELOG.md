@@ -114,6 +114,16 @@
   dialog the system opens and closes within about a second, with no grant. Both facts are in the release
   evidence and the runbook, because finding them cost a session.
 
+- Answer the second pass of the third review, which was asked to re-run its own counterexample against
+  the fixed code and did: the PING false positive is gone, and three defects of the same species
+  remained. The frame-owner verdict now requires a `ptsUs` fresh for the run (`-e hostPts`), so it names
+  the exact frame instead of a type and sequence that are constant across runs; the iteration's cleanup
+  asks `closeAndAwait` whether the reader really stopped and voids the run rather than arming beside a
+  survivor; and the raw release measurement's reader must now be *inside* the read, not merely scheduled
+  into it. That last check corrected a published number on its first run - 6/10 reuses rather than 10/10,
+  because the check sat before the settle sleep in one path - and reads 10/10 with the stack proof once
+  the order is right; both numbers are kept in the evidence.
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment

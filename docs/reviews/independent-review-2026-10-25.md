@@ -164,3 +164,106 @@ leftover-challenge path that produces it. Table and quotes:
 Every question this review left is now answered, except the one that needs the app's USB grant cleared
 first - an instrument path, not a claim. The reviewer's four unbroken hypotheses - B1, B2, C2, D1 - are
 recorded here as results, not as gaps.
+
+## Second pass (same reviewer, later the same day)
+
+Reviewed HEAD `97034a11dded08659157f92acea3d149a8eaf480`. Three findings remain. Working tree unchanged.
+
+**Findings, highest severity first**
+
+**R2-001 — Medium — A different frame still satisfies the ownership verdict.**
+
+Location: `android/app/src/androidTest/java/dev/nekomario/amb/UsbFrameOwnerMeasurement.kt:171`, `host-rs/tools/send-hello.py:149`.
+
+Sequence: feed a fresh session a zero-payload `HOST_HELLO`, sequence `4660`, **ptsUs=999**. The host script writes **ptsUs=0**. The instrument compares only type and sequence, so the different frame qualifies.
+
+I ran the prebuilt `AuthorizedMediaSession.readMedia` through a JShell subclass, using the real wire encoder, decoder, authorization gate and frame callback. Applying the instrument’s predicate to those actual callbacks produced:
+
+```text
+frames=[Header(type=14, flags=0, sequence=4660, payloadLength=0, ptsUs=999)]
+errors=[PC authorization proof rejected] verdict=true
+```
+
+No invocation of the host script supplied that frame. Moreover, its sequence is constant across runs: even comparing every header field would not distinguish an earlier identical write from the current experiment.
+
+**Evidence boundary:** ran the real JVM frame/session path and a transcription of the verdict predicate; did not execute the Android instrument. Delivery of an earlier queued frame on USB **needs a device**. This disproves unique attribution, not the implementer’s recorded delivery.
+
+**R2-002 — Medium — Iteration cleanup still permits a surviving reader to overlap its successor.**
+
+Location: `android/app/src/androidTest/java/dev/nekomario/amb/UsbFrameOwnerMeasurement.kt:309`, `android/app/src/main/java/dev/nekomario/amb/AccessorySession.kt:53`.
+
+Sequence: an iteration reaches its observation limit; `iteration.close()` calls `session.close()`; the reader survives the 500 ms join; the loop opens the next descriptor.
+
+Observed in source: `close()` discards `closeAndAwait(500)`’s Boolean. `Iteration.close()` neither checks the surviving reader nor prevents the next iteration. The session implementation explicitly preserves its reader handle when termination fails, but this caller never consults it after closing.
+
+**Inference:** on that failure path, the instrument can recreate the two-reader condition its cleanup claims to exclude. Moving cleanup into an iteration object did not establish successful termination.
+
+**Evidence boundary:** **read only**; delayed/nonterminating accessory reads **need a device**. The reported immediate releases do not exercise this branch.
+
+**R2-003 — Low — The raw-reader latch still acknowledges before entry into `read`.**
+
+Location: `android/app/src/androidTest/java/dev/nekomario/amb/UsbReaderReleaseMeasurement.kt:262`, consumed at `android/app/src/androidTest/java/dev/nekomario/amb/UsbReaderReleaseMeasurement.kt:91`.
+
+Sequence: schedule the reader through `entered.countDown()`, then deschedule it before `stream.read(buffer)`. The measuring thread observes the latch and the initial `"blocked"` outcome, closes the descriptor, and resumes the reader. Its first read then throws; `finished` is signalled and the iteration counts as successfully releasing a blocked read.
+
+Observed: latch notification precedes the read, and `"blocked"` remains the initial value. **Inference:** the fix narrows the scheduling window but does not eliminate the previous counterexample.
+
+**Evidence boundary:** **read only**; this scheduling interleaving was not reproduced on Android. It does not establish that the recorded 10/10 results were false.
+
+**Disposition checks for the previous four findings**
+
+- **ID-001: partially closed.** Re-ran PING through the real prebuilt reader: `errors=[PC authorization proof rejected] verdict=false`. The PING false positive is fixed; unique frame attribution fails R2-001.
+- **ID-002: partially closed.** Read the refactored loop: session-specific liveness and qualified negative tallies replace the old logic; unsuccessful cleanup remains unchecked, R2-002.
+- **ID-003: not fully closed.** Re-read the latch producer and consumer: notification still precedes read entry, R2-003.
+- **ID-004: closed as a documentation finding.** Re-read the revised Q1 disposition: it explicitly admits correctly shaped nested frames can be misparsed. Parser hardening is not claimed.
+
+**Hypotheses I could not break**
+
+- PING alone no longer satisfies the ownership verdict, despite retaining the same authorization rejection text.
+- No bypass emerged from inspecting the capability/pairing gates and stop-token delegation. Existing compiled `ReaderHandoverTest` and `StopActionTest` passed: **`OK (10 tests)`**.
+- Alignment-result handling remains diagnostic in the inspected connection path; the rate-limit implementation retains anchored-window semantics. These were **static checks**.
+- Device release/reuse, D2’s wire outcomes and adb throughput were **not independently reproduced**.
+
+Both requested fresh suites were attempted: Gradle failed creating its `.zip.lck`; Cargo failed opening `.cargo-build-lock`, both with **`Read-only file system`**. Existing-bytecode results are not fresh-build validation.
+
+### Disposition of the second pass (implementer, 2026-10-25)
+
+**All three accepted; the first was measured, not argued.** The reviewer was asked to re-run against the
+fixed code the counterexample it had built, and it did - the PING false positive is gone - then found
+three more defects of the same species it has now named twice: a verdict that does not prove what it
+claims.
+
+**R2-001 (Medium) - FIXED, and the counterexample fails for a second reason now.** The verdict compared
+type and sequence, both constant across runs: a frame differing only in `ptsUs` satisfied it, and so would
+an earlier identical write. The host script now stamps a `ptsUs` fresh for the run, prints it, and takes
+one as an argument so the operator can hand the same value to both sides; the instrument requires it with
+`-e hostPts <value>`. Measured on the XQ-GE44 with a value chosen at the keyboard:
+`frames this iteration read: [type=0x0e sequence=4660 len=0 pts=1792932206989]` and `consumed=true` - so
+the verdict names the exact frame, with a discriminator that cannot collide with an earlier write.
+Without `-e hostPts` the report says the match is by type and sequence only, which it previously claimed
+silently.
+
+**R2-002 (Medium) - FIXED.** `Iteration.close()` called `session.close()`, which discards
+`closeAndAwait`'s answer, so an iteration whose reader survived could arm beside it - the very two-reader
+state this instrument exists to rule out. It now calls `closeAndAwait` itself, and the loop declares the
+run **void** instead of continuing. The branch it guards needs a device that makes a read survive, so it
+is fixed-but-unguarded-in-practice here, recorded that way rather than as verified.
+
+**R2-003 (Low) - FIXED, and fixing it corrected a published number.** The latch counted down *before* the
+read, so a thread descheduled in between counted as blocked. The reader must now also be *inside* the
+read, by the same stack check the session path uses. The first run with that check read **6/10** reuses
+rather than the published 10/10, because in that one path the check sat before the settle sleep; with the
+order corrected it is **10/10 again, now with the stack proof**. Both numbers and the cause are in the
+release evidence, because the difference between them is the point of the check.
+
+**One documentation defect was found while writing this up, and it is the implementer's:** the "A2,
+answered" section these findings refer to had been believed written into the release evidence and was
+not - the patch that added it failed its first assertion and wrote nothing, while the report of the time
+said it had landed. The dangling section name is what caught it, and the section now exists with both
+reuse numbers. A patch that fails writes nothing, and a report that says otherwise is a claim with no
+artifact behind it.
+
+**Its checks of the first pass:** ID-001 partially closed (PING fixed, attribution not) - both closed now;
+ID-002 partially - closed above; ID-003 not fully - closed above; ID-004 closed as a documentation
+finding. It could not break the gate or stop-token hypotheses, and its fresh Gradle and Cargo runs were
+refused by the read-only sandbox, which it states as its boundary rather than omitting.

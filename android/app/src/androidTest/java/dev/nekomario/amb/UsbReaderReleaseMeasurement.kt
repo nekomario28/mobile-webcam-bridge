@@ -88,7 +88,7 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
             reader.start()
             Thread.sleep(settleMs)
             // Both halves: the read was entered, and it had not returned when the descriptor closed.
-            val blocked = reader.awaitEntered(1_000) && reader.outcome == "blocked"
+            val blocked = reader.awaitEntered(1_000) && reader.insideRead() && reader.outcome == "blocked"
             val started = System.nanoTime()
             runCatching { pfd.close() }
             val returned = reader.await(waitMs)
@@ -113,9 +113,12 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
             } else {
                 val probe = BlockingReader(fresh)
                 probe.start()
+                // Same order as the primary path: let the reader reach the read, then ask whether it
+                // is inside it. Checking the stack before the settle made four of ten probes
+                // inconclusive in the run that first used it (measured 2026-10-25).
                 val enteredAgain = probe.awaitEntered(1_000)
                 Thread.sleep(200)
-                if (enteredAgain && probe.outcome == "blocked") reusable++
+                if (enteredAgain && probe.insideRead() && probe.outcome == "blocked") reusable++
                 report.append("    reuse after the close: ").append(if (enteredAgain) probe.outcome else "never entered")
                     .append('\n')
                 runCatching { fresh.close() }
@@ -256,7 +259,7 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
         @Volatile
         var outcome: String = if (stream != null) "blocked" else "no stream"
 
-        private val thread = Thread({
+        private val worker = Thread({
             val buffer = ByteArray(64)
             try {
                 entered.countDown()
@@ -270,7 +273,23 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
         }, "raw-accessory-reader")
 
         fun start() {
-            if (stream != null) thread.start()
+            if (stream != null) worker.start()
+        }
+
+        /**
+         * Inside the read, not merely scheduled into it.
+         *
+         * The entered latch narrows the window but cannot close it: a thread can be descheduled between
+         * counting down and calling `read`, and the outcome still says "blocked" because that is its
+         * initial value (independent review, 2026-10-25, second pass, R2-003). The stack is the same
+         * proof the session path uses - at the moment of the check, the reader is executing the read.
+         */
+        fun insideRead(): Boolean {
+            val frames = worker.stackTrace
+            if (frames.isEmpty()) return false
+            return frames.take(2).any {
+                it.className.contains("Linux") || it.className.contains("FileInputStream")
+            }
         }
 
         fun await(timeoutMs: Long): Boolean = finished.await(timeoutMs, TimeUnit.MILLISECONDS)
