@@ -16,6 +16,15 @@ class AccessorySession(
     onQuality: (MediaSession, Wire.HostCommand) -> Unit = { _, _ -> },
     /** Forwarded to the session's frame seam; see [AuthorizedMediaSession]'s `onFrameRead`. */
     onFrameRead: (Wire.Header) -> Unit = {},
+    /**
+     * Whether the reader is still alive, as [closeAndAwait] asks it - injectable so a test can drive
+     * the "the reader survived" branch without a device that produces a non-terminating read.
+     *
+     * The single-reader guard's failure path otherwise has no coverage: a healthy endpoint always
+     * releases, so the branch that refuses to arm beside a survivor is only reachable when a read
+     * really does outlive its close (independent review, 2026-10-25, second pass, R2-002).
+     */
+    private val readerAliveProbe: (Thread) -> Boolean = { it.isAlive },
 ) : AuthorizedMediaSession(FileOutputStream(pfd.fileDescriptor), authorization, Wire.AUTH_USB, ByteArray(Wire.PHONE_BINDING_BYTES),
     capabilities, onQuality, onAuthorization, onCaptureCancelled, "mwb-usb-writer", onFrameRead) {
     private val running = AtomicBoolean(false)
@@ -81,10 +90,11 @@ class AccessorySession(
         // Keep the handle when the reader survived: clearing it made a second call report
         // success unconditionally, which is how the single-reader guard was defeated
         // (independent review, ID-002).
-        if (!reader.isAlive) {
+        val alive = readerAliveProbe(reader)
+        if (!alive) {
             readerThread = null
         }
-        return !reader.isAlive
+        return !alive
     }
 
     /** Whether this session's reader is still running. */

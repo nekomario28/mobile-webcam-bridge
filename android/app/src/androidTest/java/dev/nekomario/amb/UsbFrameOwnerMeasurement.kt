@@ -73,6 +73,14 @@ class UsbFrameOwnerMeasurement(
      * and the verdict requires it. Without it the verdict is weaker, and the report says so.
      */
     private val expectedPts: Long = -1L,
+    /**
+     * Pretend a reader survived its close, so the void branch can be exercised on a healthy endpoint.
+     *
+     * The branch exists because arming a second iteration beside a live reader is the defect the guard
+     * prevents; a device whose reads always terminate never reaches it (independent review,
+     * 2026-10-25, second pass, R2-002).
+     */
+    private val pretendReaderSurvives: Boolean = false,
 ) {
     private val controlMs = 3_000L
     private val waitForHostMs = 25_000L
@@ -133,7 +141,9 @@ class UsbFrameOwnerMeasurement(
                         .append(attempt).append('\n')
                     break
                 }
-                val iteration = Iteration(manager, accessory, pfd, extraDescriptors, secondSession, ::line)
+                val iteration = Iteration(
+                    manager, accessory, pfd, extraDescriptors, secondSession, pretendReaderSurvives, ::line,
+                )
                 armed.add(iteration)
                 iteration.session.start()
                 Thread.sleep(200)
@@ -274,6 +284,7 @@ class UsbFrameOwnerMeasurement(
         private val pfd: android.os.ParcelFileDescriptor,
         private val extraDescriptors: Int,
         private val secondSession: Boolean,
+        private val pretendReaderSurvives: Boolean,
         private val log: (String, String) -> Unit,
     ) {
         val errors = Collections.synchronizedList(mutableListOf<String>())
@@ -288,6 +299,7 @@ class UsbFrameOwnerMeasurement(
             PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = {}).also { owners.add(it) },
             {}, {},
             onFrameRead = { header -> frames.add(header) },
+            readerAliveProbe = { thread -> if (pretendReaderSurvives) true else thread.isAlive },
         )
 
         init {

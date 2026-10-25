@@ -198,9 +198,13 @@ class SessionServiceWiringTest {
         )
         val session = read("AccessorySession.kt")
         assertTrue(
-            "the session must be able to answer that question",
+            "the session must report whether the reader survived",
             session.contains("fun closeAndAwait(timeoutMs: Long): Boolean") &&
-                session.contains("return !reader.isAlive"),
+                session.contains("return !alive"),
+        )
+        assertTrue(
+            "and answer it through the injectable probe, so the failing branch is reachable in a test",
+            session.contains("readerAliveProbe(reader)") && session.contains("fun readerAlive()"),
         )
     }
 

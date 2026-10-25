@@ -35,6 +35,9 @@ class UsbPermissionInstrumentation : Instrumentation() {
     /** The host frame's fresh `ptsUs`, so the frame-owner verdict can require the exact frame. */
     private var hostPts = -1L
 
+    /** Make a frame-owner iteration believe its reader survived, to exercise the void branch. */
+    private var pretendReaderSurvives = false
+
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         disposableUi = arguments?.getString("disposableUi") == "true"
@@ -45,6 +48,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
         extraDescriptors = arguments?.getString("extraDescriptors")?.toIntOrNull() ?: 0
         secondSession = arguments?.getString("secondSession") == "true"
         hostPts = arguments?.getString("hostPts")?.toLongOrNull() ?: -1L
+        pretendReaderSurvives = arguments?.getString("pretendReaderSurvives") == "true"
         start()
     }
 
@@ -372,7 +376,9 @@ class UsbPermissionInstrumentation : Instrumentation() {
                 // than the app, and uses an in-memory repository. Measured 2026-10-25: the host's
                 // frame completed and the blocked reader consumed it — docs/evidence/
                 // 2026-10-25-usb-frame-owner.md.
-                val marker = UsbFrameOwnerMeasurement(this, extraDescriptors, secondSession, hostPts).run()
+                val marker = UsbFrameOwnerMeasurement(
+                    this, extraDescriptors, secondSession, hostPts, pretendReaderSurvives,
+                ).run()
                 finish(Activity.RESULT_OK, Bundle().apply { putString("stream", marker) })
                 return
             }

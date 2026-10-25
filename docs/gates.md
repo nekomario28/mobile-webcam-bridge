@@ -257,6 +257,11 @@ something is not evidence - the release instrument's first version printed `rele
 twenty times without establishing that the read was blocked, and the frame-owner instrument's first
 version reported a consumed frame that was the reader's own proof deadline.
 
+`-e pretendReaderSurvives true` drives the guard's failure path - a reader that outlives its close - on a
+healthy endpoint, so the branch that voids the run is exercised rather than merely present. Re-granting
+after an app APK install needs the Activity in the foreground when the accessory attaches, because the
+system closes the dialog on a requester with no visible Activity.
+
 It needs the accessory attached and the app to hold the USB permission for it, and it installs
 nothing: only the androidTest APK is installed, because reinstalling the app APK clears that
 grant. **The grant belongs to the uid, not the package name**, so reinstalling cannot provoke the
