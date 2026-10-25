@@ -58,6 +58,30 @@ drain before it wrote. Nothing had been written *towards* the phone, the verdict
 host's single `0x0e`, which is what makes the verdict attributable here - but a host arriving later
 finds a stream of other sessions' challenges, and that is the case A1 asks a reviewer to attack.
 
+## D2, shown: what the two-reader state does to a host that answers a proof
+
+The coverage row claims the consequence of two readers sharing an endpoint; the third review asked for
+it to be *shown* rather than claimed, and that needs a host that answers a challenge with a real proof.
+The repository already ships one: `mobile-webcam --usb-probe` performs the authorization exchange. Run
+against the two-session state (one blocked reader, plus a second session on an extra descriptor whose
+reader the driver refuses with `EIO`), twice:
+
+| Run | Host (`--usb-probe`) | Device |
+|---|---|---|
+| 1 | `waiting for the phone to approve this PC (PC ID 16f8800a…)`, then **`expected authorization outcome before capabilities/media`** | three iterations, one ending `PC authorization proof rejected`, one by its own deadline |
+| 2 | **`the phone rejected this PC's signature`**, after the same retry message | iteration 3 read **`type=0x0b sequence=0 len=134`** - the host's `CLIENT_AUTH` proof - and ended by its own proof deadline |
+
+So the consequence is measurable and it is the documented one: a **blocked reader inside one of the two
+sessions consumes the host's proof**, the host does not get the outcome it expects (it either waits for
+an approval it did not choose, or is told its signature is bad), and its retry lands a control frame in
+a session that refuses it. The two runs differ in *which* of those outcomes appeared, and run 2 also
+shows the older hazard from the request that asked for this review: the endpoint still held challenges
+from the previous run's sessions (AOA reports no disconnect), so the probe signed a challenge whose
+session was gone and the consumer validated it against its own nonce - `BAD_SIGNATURE`, from leftovers.
+
+This is what the guard prevents, on the wire. It is also why the guard's refusal message tells the user
+to replug rather than retry.
+
 ## The wrong diagnosis this corrected
 
 The first version of this attempt blamed the environment for holding the accessory interface. It
