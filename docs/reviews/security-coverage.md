@@ -115,6 +115,12 @@ The request that turns this list into work is
 the implementer read (labelled as pre-work to distrust), and one testable hypothesis
 per area.
 
+For the surface added since the 2026-10-24 review — the two device instruments and the claims they
+now carry, the two rules that replaced the false-green tests, the answer to that review's Q1, and
+the rows this map gained — the ask is [request-2026-10-25.md](request-2026-10-25.md). It is
+deliberately narrow: it covers only what changed, and it names what is already known to be
+unexercised so that a reviewer does not re-derive it.
+
 ## What an independent reviewer should be given
 
 The three review documents, `protocol/wire-secure-lan.md` and
