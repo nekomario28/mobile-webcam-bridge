@@ -41,6 +41,43 @@ gh secret set AMB_RELEASE_KEY_PASSWORD
 
 Keep an offline backup of the keystore and its credentials. Do not add them to Git.
 
+## State of the release pipeline, measured 2026-10-25
+
+Three facts decide how a release gets made right now, and none of them was true in the docs before:
+
+1. **The `publish` job needs a self-hosted runner that is not registered.**
+   `gh api repos/.../actions/runners` reports **0 runners**, while the job is pinned to
+   `runs-on: [self-hosted, Linux, X64, mobile-webcam]`. Every `release` workflow run in the history is
+   `cancelled` for this reason, and the Android APK on the `v0.2.0` release was **signed and uploaded by
+   hand** — which is also why that release carried `Mobile_Webcam-0.1.4-android.apk` and no 0.2.0 build.
+   Tagging a release before a runner exists queues a job that never starts.
+2. **The signing secrets were never in this repository.** `gh api .../actions/secrets` was empty, as were
+   environments and org secrets, so no earlier release was signed by CI.
+3. **A new signing lineage was created on 2026-10-25**, because the keystore that produced the previous
+   one (`CN=Mobile Webcam`, `SHA-256 b907d74e…`) is not on this machine and cannot be recovered. The new
+   key is `CN=Mobile Webcam, O=nekomario28, C=JP`, `SHA-256 BA:2A:15:A5…`, RSA 4096, valid 10 000 days, alias
+   `mobile-webcam`, and its four secrets are set on the repository. **The consequence was measured, not
+   assumed**: installing the 0.2.0 APK over a 0.1.4-lineage install fails with
+   `INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package … signatures do not match`, and the app installs
+   cleanly only after an uninstall. The one install that had to be replaced was a Waydroid emulator, so
+   the cost was a dev loop, not a user.
+
+   The keystore and its password live **outside this repository**, beside the work tree at
+   `../mobile-webcam-release.jks` and `../.mobile-webcam-release.secret` (`0600`). **Back them up off this
+   machine before cutting a release**: if they are lost, the lineage is lost again, and every future
+   APK needs an uninstall to install.
+
+A release by hand, when no runner is registered, is what was done and works:
+
+```
+AMB_RELEASE_STORE_FILE=…/mobile-webcam-release.jks \
+AMB_RELEASE_STORE_PASSWORD=… AMB_RELEASE_KEY_ALIAS=mobile-webcam AMB_RELEASE_KEY_PASSWORD=… \
+  ./gradlew :app:assembleRelease          # produces app-release.apk, signed
+apksigner verify --print-certs app-release.apk
+cp app-release.apk /tmp/Mobile_Webcam-$(cat ../VERSION)-android.apk
+gh release upload v$(cat ../VERSION) /tmp/Mobile_Webcam-$(cat ../VERSION)-android.apk
+```
+
 ## What the four Android signing secrets must be
 
 The release workflow's Android step signs an APK and publishes

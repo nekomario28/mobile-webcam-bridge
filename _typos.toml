@@ -7,6 +7,9 @@ parm = "parm"
 StrCpy = "StrCpy"
 Cpy = "Cpy"
 identiy = "identiy"
+# The release keystore's certificate digest begins BA:..., and typos reads the leading pair as a word.
+# Written in upper case here because that is how keytool and apksigner print a digest.
+BA = "BA"
 
 [files]
 extend-exclude = [
