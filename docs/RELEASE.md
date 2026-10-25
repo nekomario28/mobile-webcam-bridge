@@ -41,6 +41,42 @@ gh secret set AMB_RELEASE_KEY_PASSWORD
 
 Keep an offline backup of the keystore and its credentials. Do not add them to Git.
 
+## What the four Android signing secrets must be
+
+The release workflow's Android step signs an APK and publishes
+`dist/Mobile_Webcam-<version>-android.apk`; with the secrets unset it still finishes, which is how
+`v0.2.0` shipped Linux and Windows artifacts and only `Mobile_Webcam-0.1.4-android.apk`.
+
+| Secret | Value |
+|---|---|
+| `AMB_RELEASE_KEYSTORE_BASE64` | `base64 -w0 <your>.jks` |
+| `AMB_RELEASE_STORE_PASSWORD` | the keystore password |
+| `AMB_RELEASE_KEY_ALIAS` | the alias |
+| `AMB_RELEASE_KEY_PASSWORD` | that alias's password |
+
+**The keystore must be the one that signed the previous release**, or the new APK cannot upgrade an
+installed one. Check before setting anything:
+
+```
+apksigner verify --print-certs Mobile_Webcam-<old>-android.apk | grep 'Signer #1 certificate'
+# the release lineage so far: CN=Mobile Webcam, O=nekomario28, C=JP
+# SHA-256 b907d74e82601ed23738ea6d82c30bad1549525d208d0268d7ba941ab20c69d9
+```
+
+A keystore that produces a different digest starts a different lineage: it installs beside the old app
+rather than over it, and every future release has to use the same new key. Generate a replacement only as
+a deliberate decision, recorded as one.
+
+The plumbing is verified without a real key (measured 2026-10-25): with the four variables exported to a
+throwaway keystore, `./gradlew :app:assembleRelease` produced `app-release.apk` **signed**
+(`Signer #1 certificate DN: CN=Throwaway…`) where the unset case produces `app-release-unsigned.apk`. So
+the workflow's secret→environment mapping and Gradle's signing config agree, and a release that fails on
+signing will fail on the key, not on the wiring.
+
+**A debug build cannot be upgraded by a release APK.** The field phone on 2026-10-25 was running
+`CN=Android Debug` (`7972b85f…`), not the release lineage, so moving it to a release means an uninstall
+first — which clears the app's own data (its approvals and Wi-Fi key), not the PC's.
+
 ## Release checklist
 
 1. Update `VERSION` and `CHANGELOG.md` together.

@@ -131,6 +131,16 @@
   measured on the XQ-GE44, the run now stops with `VOID: this iteration's reader survived its close ...
   the run cannot speak about a single reader` instead of continuing beside it.
 
+- Prove the Android signing path, and write down what the secrets have to be. With the four
+  `AMB_RELEASE_*` variables pointed at a throwaway keystore, `:app:assembleRelease` produced a **signed**
+  `app-release.apk` where the unset case produces `app-release-unsigned.apk` - so the workflow's
+  secret-to-environment mapping and Gradle's signing config agree, and a release that fails on signing
+  fails on the key rather than on the wiring. The same check found the fact that changes the plan: the
+  phone in the field runs a **debug-signed** 0.2.0 build (`CN=Android Debug`), not the release lineage
+  (`CN=Mobile Webcam`, `SHA-256 b907d74e...`), so a signed release cannot upgrade it in place.
+  `docs/RELEASE.md` lists the four secrets, how to verify a keystore is the right lineage before setting
+  them, and why a replacement key is a recorded decision rather than a convenience.
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment
