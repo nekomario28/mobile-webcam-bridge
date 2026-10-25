@@ -34,11 +34,14 @@ the device rows, on a real XQ-GE44 over Wi-Fi.
    finding is either fixed or answered with evidence.
 2. **Version and edition reconciliation.** Diagnosed 2026-10-25, and it is two separate things.
    The numbers are *not* a discrepancy: `0.1.4` and `0.2.0` are the same scheme
-   (`versionCode = major x 1e6 + minor x 1e3 + patch`, so `1004` and `2000`), and the phone's build
-   reports what it is. The real gap is the release: **`v0.2.0` carries Linux and Windows 0.2.0
-   artifacts and only `Mobile_Webcam-0.1.4-android.apk`** — no Android 0.2.0 APK — because the
-   workflow's signing step needs the one-time secrets, and `gh secret list` is empty.
-   [RELEASE.md](RELEASE.md) now names the scheme and the editions.
+   (`versionCode = major x 1e6 + minor x 1e3 + patch`, so `1004` and `2000`). The gaps, both measured:
+   the release carries **only `Mobile_Webcam-0.1.4-android.apk`** for Android (the signing step needs
+   four secrets that are unset, and `gh secret list` is empty), and the phone in the field is now running
+   a **debug-signed 0.2.0 build** (`CN=Android Debug`), not the release lineage (`CN=Mobile Webcam`,
+   `SHA-256 b907d74e…`). So a signed 0.2.0 release cannot upgrade that install in place; the field needs
+   an uninstall first, which clears the app's own approvals and Wi-Fi key.
+   [RELEASE.md](RELEASE.md) names the scheme, the editions, the four secrets, and how to check that a
+   keystore is the right lineage before setting them.
    *Closes when:* the Android signing secrets are set by the owner, a release cut from `main` produces
    a signed `Mobile_Webcam-<version>-android.apk` alongside the others, and the field build then
    reports the same `VERSION`.
