@@ -19,6 +19,13 @@ no human sign-off.
 
 ## Security claims and the thing that proves each
 
+**2026-10-25 review:** an independent agent on this machine (the local Codex CLI, read-only), pointed
+at the sixteen commits merged since 2026-10-24 with `request-2026-10-25.md` as the ask. It found four
+defects and took none of the implementer's claims on trust - three of them in the *instruments* whose
+verdicts had just become evidence, one in the previous review's Q1 disposition. Report and disposition,
+the latter answering all four with measurements:
+[independent-review-2026-10-25.md](independent-review-2026-10-25.md).
+
 **2026-10-24 review:** a second independent session on the same model, pointed at what changed
 since the first (the `HOST_HELLO` frame, the single-reader handover, the rate limit and pacing,
 the new CLI surface, stream alignment). It found three defects, all Low, all in the *fixes* the

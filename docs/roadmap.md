@@ -37,8 +37,8 @@ the device rows, on a real XQ-GE44 over Wi-Fi.
    (`versionCode = major x 1e6 + minor x 1e3 + patch`, so `1004` and `2000`), and the phone's build
    reports what it is. The real gap is the release: **`v0.2.0` carries Linux and Windows 0.2.0
    artifacts and only `Mobile_Webcam-0.1.4-android.apk`** — no Android 0.2.0 APK — because the
-   workflow's signing step needs the one-time secrets, and `gh secret list` is empty. `RELEASE.md`
-   now names the scheme and the editions.
+   workflow's signing step needs the one-time secrets, and `gh secret list` is empty.
+   [RELEASE.md](RELEASE.md) now names the scheme and the editions.
    *Closes when:* the Android signing secrets are set by the owner, a release cut from `main` produces
    a signed `Mobile_Webcam-<version>-android.apk` alongside the others, and the field build then
    reports the same `VERSION`.
