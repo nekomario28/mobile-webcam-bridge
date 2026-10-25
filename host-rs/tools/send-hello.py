@@ -18,6 +18,10 @@ import usb.core, usb.util
 MAGIC = 0x31424D41          # "AMB1" little-endian (Wire.MAGIC)
 VERSION = 1
 HOST_HELLO = 0x0E
+# A copy of `host-rs/src/usb.rs`'s identity strings, which own them (the Android side repeats them
+# again in `res/xml/accessory_filter.xml`). A change there has to be mirrored here. This script exists
+# because the repository's CLI has no switch-only mode, and the other half of the experiment - writing
+# one raw AMB frame from outside the process - is something only pyusb can do.
 AOA_STRINGS = [
     "Android Media Bridge",
     "AMB Host",

@@ -75,9 +75,10 @@ the claim each one would let us make.
 - **Two USB stream questions the 2026-10-24 review left open.** Q1: `align_stream`'s "aligned"
   verdict is a guess after 200 ms of silence, and the shipping path discards the verdict. Q2: the
   shipping hello retry cannot realign the stream it retries on. Both are answered in that review's
-  disposition — Q1 cannot produce a silently wrong frame (`wire.rs` rejects a non-`AMB1` header
-  visibly) and the silence verdict is deliberate, because an app that has not started sending is
-  silent too — and both close with a device: one that pauses mid-payload past the read timeout, and
+  disposition, and the third review corrected the first answer: Q1 cannot produce a *malformed* frame
+  (the magic and length checks reject one visibly), but a correctly shaped one can still be misparsed
+  when alignment was assumed — it constructed such a frame (ID-004) — while the silence verdict is
+  deliberate, because an app that has not started sending is silent too — and both close with a device: one that pauses mid-payload past the read timeout, and
   a shipping run whose hello retry succeeds after a misaligned first attempt.
 - ~~**The device actually shows the newest UX.**~~ Closed 2026-10-24: an APK built from
   `main` is on the XQ-GE44 (versionCode 2000, dex checked for the new symbols) and the device
