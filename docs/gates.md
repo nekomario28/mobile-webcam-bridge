@@ -11,7 +11,10 @@ Preconditions:
   it while adb holds its own. The precondition in this list that *is* real: the app must already
   have the accessory open, because with nothing draining the endpoint a host write times out
   (measured the same day; it is what the first attempt at the frame-owner measurement was
-  actually seeing).
+  actually seeing). **Identify the accessory interface from the code that selects it** -
+  `host-rs/src/usb.rs` prefers `class == 0xff && sub_class == 0xff` - and not from a descriptor that
+  looks plausible: subclass `0x42` with protocol `1` is *adb's* interface, and a host that claims it
+  gets `EBUSY` and can spend an afternoon blaming the environment (measured 2026-10-25).
 - Data-capable USB cable.
 - Mobile Webcam APK already installed by ordinary sideloading.
 
@@ -249,6 +252,13 @@ precondition on every iteration instead of assuming it:
 adb shell am instrument -w -e physicalDevice true -e usbReaderMeasurement true \
   dev.nekomario.amb.test/dev.nekomario.amb.UsbPermissionInstrumentation
 ```
+
+Order the states from the simplest, and check what the order says about the instrument: with the
+endpoint idle a host write times out (measured), with one reader blocked it completes (measured), and
+only then does the two-reader state mean anything. A verdict that does not prove it measured
+something is not evidence - the release instrument's first version printed `released=true in 0 ms`
+twenty times without establishing that the read was blocked, and the frame-owner instrument's first
+version reported a consumed frame that was the reader's own proof deadline.
 
 It needs the accessory attached and the app to hold the USB permission for it, and it installs
 nothing: only the androidTest APK is installed, because reinstalling the app APK clears that
