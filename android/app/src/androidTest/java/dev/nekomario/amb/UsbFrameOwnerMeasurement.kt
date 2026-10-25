@@ -63,6 +63,16 @@ class UsbFrameOwnerMeasurement(
      * host's write completes in this state as well.
      */
     private val secondSession: Boolean = false,
+    /**
+     * The host frame's fresh `ptsUs`; -1 when the caller did not supply one.
+     *
+     * Type and sequence alone are not attribution: they are constant across runs, so an earlier
+     * identical write satisfies the same comparison, and a reviewer showed that a frame with a
+     * different `ptsUs` passed it too (independent review, 2026-10-25, second pass, R2-001). The host
+     * script stamps `ptsUs` with the current time and prints it; `-e hostPts <value>` carries it here
+     * and the verdict requires it. Without it the verdict is weaker, and the report says so.
+     */
+    private val expectedPts: Long = -1L,
 ) {
     private val controlMs = 3_000L
     private val waitForHostMs = 25_000L
@@ -168,10 +178,20 @@ class UsbFrameOwnerMeasurement(
                 // read is the one the host wrote.
                 // Compared as fields, not as the text a formatter produces: the verdict is about the
                 // frame, and a message-shaped comparison would rot silently if the format changed.
-                val fromHost = readNow.any { it.type == Wire.TYPE_HOST_HELLO && it.sequence == hostFrameSequence }
+                val fromHost = readNow.any { header ->
+                    header.type == Wire.TYPE_HOST_HELLO && header.sequence == hostFrameSequence &&
+                        (expectedPts < 0 || header.ptsUs == expectedPts)
+                }
                 if (!fromHost) {
                     report.append("  no frame matching the host's (type=0x0e sequence=")
-                        .append(hostFrameSequence).append(") was read in this iteration\n")
+                        .append(hostFrameSequence)
+                    if (expectedPts >= 0) {
+                        report.append(" ptsUs=").append(expectedPts)
+                    } else {
+                        report.append(" and any pts, because -e hostPts was not supplied: the frame's")
+                            .append(" own pts is printed above for cross-checking with the host's log")
+                    }
+                    report.append(") was read in this iteration\n")
                 }
                 if (answered != null && answered.contains("deadline expired")) {
                     deadlineEnded++
@@ -183,7 +203,13 @@ class UsbFrameOwnerMeasurement(
                 // A clean reader for the next iteration: leaving this one armed is what could
                 // manufacture the two-reader state this instrument is supposed to control.
                 if (answered == null) {
-                    iteration.close()
+                    if (!iteration.close()) {
+                        report.append("VOID: this iteration's reader survived its close, so a later one")
+                            .append(" would share the endpoint with it; the run cannot speak about a")
+                            .append(" single reader\n")
+                        line("VOID", "reader survived close")
+                        return done(report)
+                    }
                 }
             }
             if (answered != null) {
@@ -306,16 +332,27 @@ class UsbFrameOwnerMeasurement(
             return text.toString()
         }
 
-        fun close() {
-            sessions.forEach { runCatching { it.close() } }
+        /**
+         * Take this iteration's reader off the endpoint, and say whether it really is off.
+         *
+         * `AccessorySession.close()` discards `closeAndAwait`'s answer, and `closeAndAwait` keeps the
+         * handle when the reader survived precisely so a caller can ask. Discarding it would let the
+         * next iteration arm beside a live reader - the two-reader state this instrument exists to rule
+         * out (independent review, 2026-10-25, second pass, R2-002).
+         */
+        fun close(): Boolean {
+            val stopped = runCatching { session.closeAndAwait(500) }.getOrDefault(false)
             owners.forEach { runCatching { it.close() } }
             descriptors.forEach { runCatching { it.close() } }
             descriptors.clear()
+            return stopped
         }
     }
 
     private fun describeFrame(header: Wire.Header): String =
-        "type=0x%02x sequence=%d len=%d".format(header.type, header.sequence, header.payloadLength)
+        "type=0x%02x sequence=%d len=%d pts=%d".format(
+            header.type, header.sequence, header.payloadLength, header.ptsUs,
+        )
 
     private fun report(text: String) = StringBuilder(text)
 

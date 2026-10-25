@@ -30,6 +30,23 @@ The control is in the same instrument rather than assumed: with the endpoint idl
 with `PC authorization deadline expired` - the reader's own absolute 5 s proof deadline - and never
 with `PC authorization proof rejected`. So the string is attributable to the host's frame.
 
+## Attribution, tightened the same day (second review, R2-001)
+
+The run above matched a frame by **type and sequence**, and both are constant across runs - so an earlier
+identical write satisfied the same comparison, and the reviewer showed that a frame differing only in
+`ptsUs` did as well. The host now stamps a `ptsUs` fresh for the run (and takes one as an argument, so the
+operator can give the same value to both sides) and the instrument requires it via `-e hostPts`; measured
+with a value chosen at the keyboard:
+
+```
+REPORT   frames this iteration read: [type=0x0e sequence=4660 len=0 pts=1792932206989]
+REPORT outcome: the blocked reader consumed the host's frame - PC authorization proof rejected
+```
+
+The verdict therefore names the exact frame, with a discriminator that cannot collide with an earlier
+write. Without `-e hostPts` the report says the match is by type and sequence only. **The runs quoted
+above predate that check and should be read as type-and-sequence matches.**
+
 ## What each device state does to the host
 
 | State of the phone | Host reads | Host writes |

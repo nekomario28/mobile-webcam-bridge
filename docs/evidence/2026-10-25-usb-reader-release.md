@@ -135,6 +135,31 @@ window it was looking at. It issued no tap — the helper prints a line for ever
 has none — and the measurement did not need one. An instrument that answers a security dialog
 must confirm the focused window is that dialog first.
 
+## A2, answered: the release is the endpoint's, not only the JVM's read
+
+The third review left this open, fairly: the intercepted message (`read interrupted by close() on another
+thread`) is a JVM-level one, so the kernel's URB for that endpoint could still be pending - the state in
+which a second reader is refused. The instrument now asks it instead of leaving it to be inferred: after
+each close it opens a **fresh** descriptor and starts a **fresh** reader, and reports what that reader
+does.
+
+```
+raw release: 10/10 blocked reads returned once the descriptor closed inside 1500 ms
+reuse after close: 10/10 fresh descriptors blocked on the endpoint immediately afterwards
+```
+
+Blocked, not `EIO` - the endpoint accepts a reader again the moment the previous one is closed. The
+contrast sits in the same instrument: while a reader is *live*, a second one is refused with `EIO` (the
+two-descriptor section above). So what refuses a newcomer is a live reader, not a release that failed to
+take effect.
+
+**Tightened the same day (second review, R2-003).** The reuse probe now also requires the fresh reader to
+be *inside* the read, by the same stack check the session path uses, because a latch that counts down
+before the read cannot exclude a thread descheduled in between. The first run with that check read
+**6/10** - in that one path the check had been placed before the settle sleep - and with the order
+corrected it is **10/10 again, now with the stack proof**. Both numbers are kept here: the difference
+between them is the point of the check.
+
 ## Verification boundary
 
 - **Idle endpoint.** No host process was attached, so this is "a read with nothing to read".

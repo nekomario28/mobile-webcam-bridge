@@ -104,6 +104,10 @@ def main():
         print("FAIL: the phone did not re-enumerate as an accessory")
         return 2
     settle_seconds = float(sys.argv[1]) if len(sys.argv) > 1 else 2.0
+    # An optional ptsUs, so the operator can hand the same fresh value to the instrument
+    # (`-e hostPts <value>`) before the write happens, making the ownership verdict attributable
+    # rather than merely plausible (independent review, 2026-10-25, second pass, R2-001).
+    chosen_pts = int(sys.argv[2]) if len(sys.argv) > 2 else None
     device = find(ACCESSORY_IDS)
     if device is None:
         device = find(NORMAL_IDS)
@@ -146,10 +150,16 @@ def main():
         print("read before writing:", len(noise), "bytes ->", frames(noise))
         # A distinctive sequence, because the device instrument now requires the frame it reads to
         # be this one rather than any frame that provokes the same refusal (review 2026-10-25, ID-001).
-        header = struct.pack("<iBBhiiq", MAGIC, VERSION, HOST_HELLO, 0, 0x1234, 0, 0)
+        # ptsUs carries a value fresh for this run, and it is printed: type and sequence are constant
+        # across runs, so without a fresh discriminator an earlier identical write satisfies the same
+        # comparison (independent review, 2026-10-25, second pass, R2-001).
+        pts = chosen_pts if chosen_pts is not None else int(time.time() * 1000)
+        header = struct.pack("<iBBhiiq", MAGIC, VERSION, HOST_HELLO, 0, 0x1234, 0, pts)
         assert len(header) == 24
         try:
             print("writing one HOST_HELLO frame:", device.write(out, header, timeout=4000), "bytes")
+            print("host frame: type=0x0e sequence=%d ptsUs=%d  <- pass -e hostPts %d to the instrument"
+                  % (0x1234, pts, pts))
         except usb.core.USBTimeoutError as error:
             print("write timed out (%s); clearing the halt and retrying once" % error)
             try:
