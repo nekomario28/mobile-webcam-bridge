@@ -73,7 +73,14 @@ def main():
         for package in metadata["packages"]:
             if (package["name"], package["version"]) not in names or package["source"] is None:
                 continue
-            source = pathlib.Path(package["manifest_path"]).parent
+            # Resolve against the workspace root: on the Windows runner `cargo metadata` can report a
+            # relative `manifest_path`, and a relative one silently turned "the crate's directory" into
+            # the current directory, so a later `source / "fonts" / name` became the relative string
+            # 'fonts/OFL.txt' and killed the release job (measured 2026-10-25, run 40204259571).
+            manifest = pathlib.Path(package["manifest_path"])
+            if not manifest.is_absolute():
+                manifest = pathlib.Path(metadata["workspace_root"]) / manifest
+            source = manifest.parent
             texts = [f for f in source.iterdir() if f.is_file() and f.name.lower().startswith(("license", "licence", "copying", "notice"))]
             if package.get("license_file"):
                 texts.append(source / package["license_file"])
@@ -86,7 +93,14 @@ def main():
                 texts.extend(source / "fonts" / name for name in ("emoji-icon-font-mit-license.txt", "OFL.txt", "Hack-Regular.txt", "UFL.txt"))
             destination = stage / f"{package['name']}-{package['version']}"
             destination.mkdir()
-            for text in set(texts):
+            for text in sorted(set(texts)):
+                # A missing text is recorded and skipped, not fatal: this collector exists to ship the
+                # licenses a binary must carry, and a crate that renames or drops one of its files
+                # should not be able to stop a release while the remaining texts go unshipped.
+                text = pathlib.Path(text)
+                if not text.is_file():
+                    print(f"warning: {package['name']} {package['version']}: missing licence text {text}")
+                    continue
                 shutil.copy2(text, destination / text.name)
             index.append({key: package[key] for key in ("name", "version", "license", "repository")})
         (stage / "INDEX.json").write_text(json.dumps(index, indent=2) + "\n")

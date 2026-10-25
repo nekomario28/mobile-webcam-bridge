@@ -184,6 +184,14 @@
   in `rust-host-ci.yml` does. Those three are now set here too, and 0.2.2 is cut to carry the complete
   artifact set. A green job in one workflow is not the same job in another.
 
+- Repair the other half of the Windows release step, which the bindgen fix uncovered: `cargo metadata` can
+  report a **relative** `manifest_path` on that runner, so "the crate's directory" became the current
+  directory and a later `source / "fonts" / name` turned into the relative string `fonts/OFL.txt`, ending
+  the job with `FileNotFoundError`. `host-rs/tools/package_licenses.py` resolves a relative manifest path
+  against `workspace_root` and treats a missing licence text as a recorded warning rather than a fatal
+  error, because a licence collector must not be able to stop a release while the rest of the texts go
+  unshipped. Both targets still collect on this machine (164 records for Windows, 245 for Linux).
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment
