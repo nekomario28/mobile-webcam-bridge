@@ -76,6 +76,15 @@ release itself. Every line of the published `SHA256SUMS` verifies against the do
 Android signing secrets, the secret-to-environment mapping, the FFmpeg build, linuxdeploy through
 `APPIMAGE_EXTRACT_AND_RUN`, and the publish step are all proven on the hosted runner.
 
+The `windows` job has needed two repairs, both older defects rather than consequences of the runner move.
+The first is described below. The second surfaced behind it, in the same step: `cargo metadata` can report a
+**relative** `manifest_path` on that runner, which turned "the crate's directory" into the current directory
+so a later `source / "fonts" / name` became the relative string `fonts/OFL.txt` and killed the job
+(`FileNotFoundError: fonts/OFL.txt`). `host-rs/tools/package_licenses.py` now resolves a relative manifest
+path against the metadata's `workspace_root`, and a missing licence text is **recorded and skipped with a
+warning** instead of ending the release - a collector for license texts must not be able to stop a release
+while the remaining texts go unshipped.
+
 The `windows` job failed on the same tag, and the reason was an **older defect that had nothing to do
 with the runner move**: `ffmpeg-sys-next`'s bindgen panicked with `Unable to generate bindings:
 ClangDiagnostic(… stdlib.h: error: expected ';' …)` because the job never pointed codegen at the mingw64
