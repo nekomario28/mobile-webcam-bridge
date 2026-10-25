@@ -42,7 +42,25 @@ import java.util.Collections
  *
  * No app state is touched: the authorization owner is an in-memory repository.
  */
-class UsbFrameOwnerMeasurement(private val instrumentation: Instrumentation) {
+class UsbFrameOwnerMeasurement(
+    private val instrumentation: Instrumentation,
+    /** Extra descriptors to hold open once the measured reader is blocked; see [extraDescriptors]. */
+    private val extraDescriptors: Int = 0,
+) {
+    /**
+     * Extra descriptors the caller asked for, held open once the measured reader is blocked.
+     *
+     * **Not yet run in this mode.** It exists to separate two things the earlier attempt could not:
+     * the host's write completes with one blocked reader (measured) and timed out in a state that
+     * also had a second descriptor open - but that observation predates the cable being re-seated,
+     * so the descriptor count and the port state were changed together. Nothing here is a measured
+     * claim until a run says which one it was.
+     *
+     * The point is to move one variable at a time. With the reader alone the host's write completes
+     * (measured), and this exists to answer whether a second open descriptor is what stops it -
+     * the state the single-reader guard prevents, where the earlier attempt saw the host's write
+     * time out but could not separate that from the cable having been re-seated in between.
+     */
     private val controlMs = 3_000L
     private val waitForHostMs = 25_000L
     private val waitForAccessoryMs = 120_000L
@@ -65,6 +83,7 @@ class UsbFrameOwnerMeasurement(private val instrumentation: Instrumentation) {
         }
 
         val held = mutableListOf<android.os.ParcelFileDescriptor>()
+        val heldExtras = mutableListOf<android.os.ParcelFileDescriptor>()
         val heldOwners = mutableListOf<PhoneAuthorization>()
         val heldSessions = mutableListOf<AccessorySession>()
         try {
@@ -102,6 +121,22 @@ class UsbFrameOwnerMeasurement(private val instrumentation: Instrumentation) {
                     report.append("  the reader was not blocked, so this iteration says nothing\n")
                     continue
                 }
+                var openedExtras = 0
+                repeat(extraDescriptors) { index ->
+                    val extra = manager.openAccessory(accessory)
+                    if (extra == null) {
+                        report.append("  extra descriptor ").append(index + 1)
+                            .append(" could not be opened\n")
+                    } else {
+                        heldExtras.add(extra)
+                        openedExtras++
+                    }
+                }
+                if (extraDescriptors > 0) {
+                    report.append("  holding ").append(openedExtras).append(" extra descriptor(s)")
+                        .append(" alongside the blocked reader\n")
+                    line("EXTRAS", "held=" + openedExtras)
+                }
                 line("READY-FOR-HOST-FRAME", "iteration=" + iteration)
                 report.append("READY-FOR-HOST-FRAME (iteration ").append(iteration).append(")\n")
                 val iterationDeadline = System.currentTimeMillis() + 4_500
@@ -136,6 +171,7 @@ class UsbFrameOwnerMeasurement(private val instrumentation: Instrumentation) {
             heldOwners.forEach { runCatching { it.close() } }
             heldSessions.forEach { runCatching { it.close() } }
             held.forEach { runCatching { it.close() } }
+            heldExtras.forEach { runCatching { it.close() } }
         }
         return done(report)
     }
