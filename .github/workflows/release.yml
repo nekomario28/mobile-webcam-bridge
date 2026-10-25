@@ -25,7 +25,16 @@ jobs:
   publish:
     permissions:
       contents: write
-    runs-on: [self-hosted, Linux, X64, mobile-webcam]
+    # GitHub-hosted, not self-hosted (measured 2026-10-25): the previous
+    # `[self-hosted, Linux, X64, mobile-webcam]` label matched **zero** registered runners, so every
+    # release run in the history was cancelled and the Android APK on v0.2.0 had to be signed and
+    # uploaded by hand. This repository is public, where hosted minutes are free and standard runners
+    # are the safer carrier anyway - a self-hosted Linux runner on a public repository would let a
+    # fork's pull request execute on that machine, and this workflow publishes with contents: write.
+    # Everything it needs is installable here: android-actions/setup-android, the pinned FFmpeg build,
+    # and linuxdeploy run through APPIMAGE_EXTRACT_AND_RUN=1 (hosted runners have no FUSE), which
+    # host-rs/tools/package_linux.sh already sets.
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -49,6 +58,17 @@ jobs:
               exit 2
               ;;
           esac
+
+      - name: Native dependencies and pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev \
+            libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+          cargo --version
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
