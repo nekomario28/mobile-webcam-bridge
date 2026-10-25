@@ -144,8 +144,15 @@ XQ-GE44, **10/10 fresh descriptors blocked on the endpoint immediately afterward
 live reader is what refuses the newcomer; it is not that one release failed to take effect. See
 `docs/evidence/2026-10-25-usb-reader-release.md`, "A2, answered".
 
-The reviewer's remaining two items stay unresolved, and the instrument fixes do not close them: **D2**
-(the on-wire consequence of the two-reader state, which needs a host answering a proof rather than one
-writing a single control frame) and **E1** (whether "USB debugging does not have to be off" holds under
-active adb traffic). Both need a device and were not run. Its four unbroken hypotheses - B1, B2, C2, D1
-- are recorded here as results, not as gaps.
+**E1 - ANSWERED, with a caveat that matters.** With USB debugging on, the phone re-attaches to adb
+within 2-4 s of the accessory switch, and a 20 MiB `adb push` ran **byte-exact** while an accessory
+session held a blocked reader and the host wrote to it. Four arms with the product path (including one
+where the app received and handled `USB_ACCESSORY_ATTACHED`) ran at ~40 MB/s, so no throughput cost is
+demonstrated for the claim as written. **But** the three runs with the frame-owner *instrumentation*
+active each pushed at 3.2 MB/s - reproduced, 12x slower - and which part of the instrument causes it is
+**not attributed**. Recorded in `docs/evidence/2026-10-25-g0-adb-coexistence.md`, because the next
+person to measure adb throughput under an instrumentation would otherwise blame the thing under test.
+
+**D2 stays unresolved**, and needs a host that answers a proof rather than one writing a single control
+frame. The reviewer's four unbroken hypotheses - B1, B2, C2, D1 - are recorded here as results, not as
+gaps.

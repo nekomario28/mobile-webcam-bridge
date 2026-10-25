@@ -11,7 +11,11 @@ Preconditions:
   it while adb holds its own. The precondition in this list that *is* real: the app must already
   have the accessory open, because with nothing draining the endpoint a host write times out
   (measured the same day; it is what the first attempt at the frame-owner measurement was
-  actually seeing). **Identify the accessory interface from the code that selects it** -
+  actually seeing). Measured under load the same day: with debugging on, adb re-attaches within 2-4 s of the
+  switch and carries a 20 MiB `adb push` **byte-exact** while an accessory session runs, at ~40 MB/s in
+  every product-path arm — including one where the app received and handled `USB_ACCESSORY_ATTACHED`
+  ([evidence](evidence/2026-10-25-g0-adb-coexistence.md)). The one caveat is in that document: the same
+  push ran 12x slower in three runs where an *instrumentation* was active, cause unattributed. **Identify the accessory interface from the code that selects it** -
   `host-rs/src/usb.rs` prefers `class == 0xff && sub_class == 0xff` - and not from a descriptor that
   looks plausible: subclass `0x42` with protocol `1` is *adb's* interface, and a host that claims it
   gets `EBUSY` and can spend an afternoon blaming the environment (measured 2026-10-25).

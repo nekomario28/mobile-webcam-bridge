@@ -85,6 +85,15 @@
   rejected as such, and the next one names `type=0x0e sequence=4660` and is the one counted. Report and
   disposition: [docs/reviews/independent-review-2026-10-25.md](docs/reviews/independent-review-2026-10-25.md).
 
+- Measure G0's "USB debugging does not have to be off" under load, which the third review left open.
+  With debugging on, adb re-attaches within 2-4 s of the accessory switch and carries a 20 MiB
+  `adb push` **byte-exact** while an accessory session holds a blocked reader and the host writes to
+  it — ~40 MB/s in every arm that exercised the product path, including one where the app received and
+  handled `USB_ACCESSORY_ATTACHED`. The caveat is recorded rather than smoothed: the same push ran
+  12x slower (3.2 MB/s) in three runs where the frame-owner *instrumentation* was active, reproduced
+  each time, with the cause unattributed. Evidence:
+  [docs/evidence/2026-10-25-g0-adb-coexistence.md](docs/evidence/2026-10-25-g0-adb-coexistence.md).
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment

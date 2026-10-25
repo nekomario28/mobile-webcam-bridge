@@ -80,6 +80,25 @@ def frames(buffer):
 
 
 def main():
+    # `--switch-only` performs the AOA switch and exits, for experiments that need the phone in
+    # accessory mode while adb stays attached (G0's claim that USB debugging need not be off).
+    if "--switch-only" in sys.argv:
+        device = find(ACCESSORY_IDS) or find(NORMAL_IDS)
+        if device is None:
+            print("FAIL: no device")
+            return 2
+        if find(ACCESSORY_IDS) is not None:
+            print("already an accessory")
+            return 0
+        switch_to_accessory(device)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            time.sleep(0.3)
+            if find(ACCESSORY_IDS) is not None:
+                print("accessory mode entered")
+                return 0
+        print("FAIL: the phone did not re-enumerate as an accessory")
+        return 2
     settle_seconds = float(sys.argv[1]) if len(sys.argv) > 1 else 2.0
     device = find(ACCESSORY_IDS)
     if device is None:
