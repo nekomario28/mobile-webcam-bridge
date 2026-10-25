@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "mobile-webcam"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bindgen",
  "eframe",

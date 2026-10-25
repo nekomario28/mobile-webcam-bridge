@@ -223,6 +223,16 @@ jobs:
           export PKG_CONFIG_ALLOW_CROSS=1
           export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=gcc
           export CARGO_BUILD_JOBS=1
+          # The three variables the Windows CI job already sets, and the reason it works while this
+          # one stopped (measured 2026-10-25, run 40201546411): without them bindgen finds msys2's
+          # `clang` and its own mingw headers, and `ffmpeg-sys-next` panics with
+          # "Unable to generate bindings: ClangDiagnostic(… stdlib.h: error: expected ';' …)" - the
+          # newer libclang cannot parse the headers it was pointed at. Pointing it at the mingw64
+          # toolchain and target is what rust-host-ci.yml does.
+          export LIBCLANG_PATH="$(cygpath -am /mingw64/bin)"
+          export CLANG_PATH="$(cygpath -am /mingw64/bin/clang.exe)"
+          export BINDGEN_EXTRA_CLANG_ARGS='--target=x86_64-w64-windows-gnu'
+          clang --version
           cargo build --manifest-path host-rs/Cargo.toml --target x86_64-pc-windows-gnu --release --bin mobile-webcam --locked
           licenses="$PWD/host-rs/target/release-licenses-windows"
           rm -rf "$licenses"

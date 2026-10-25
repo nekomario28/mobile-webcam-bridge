@@ -174,6 +174,16 @@
   gate nothing triggers. Seven days per ecosystem, the audit's own floor, so a compromised release cannot
   be pulled in during the hour it is published.
 
+- Prove the release pipeline end to end. Tagging `v0.2.1` ran `publish` on the hosted runner and it
+  succeeded first time, producing `Mobile_Webcam-0.2.1-android.apk` (`versionCode 2001`, signed with the
+  release key), `Mobile_Webcam-0.2.1-x86_64.AppImage`, `SHA256SUMS` and the FFmpeg source offer, and
+  creating the release itself - every line of the published `SHA256SUMS` verifies against the downloaded
+  bytes. The `windows` job failed on that tag for a reason unrelated to the runner move:
+  `ffmpeg-sys-next`'s bindgen could not parse msys2's newer headers because the job never set
+  `LIBCLANG_PATH`/`CLANG_PATH`/`BINDGEN_EXTRA_CLANG_ARGS`, which is exactly what the *green* Windows job
+  in `rust-host-ci.yml` does. Those three are now set here too, and 0.2.2 is cut to carry the complete
+  artifact set. A green job in one workflow is not the same job in another.
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment
