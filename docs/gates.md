@@ -123,9 +123,10 @@ checking before concluding the build is broken. Each one was measured here:
    (`sdkmanager --licenses` fixes that). `ANDROID_HOME` must point at that SDK.
 
 With those three in place this machine runs, from the repository wrapper alone:
-`./gradlew :app:testDebugUnitTest` → **12 suites, 106 tests, 0 failures** (actual
-Gradle XML, not a compile-only probe), and `./gradlew :app:assembleDebugAndroidTest`
-→ the instrumentation APK builds. Run this before trusting any local
+`./gradlew :app:testDebugUnitTest` → every suite green and **0 failures** (actual Gradle XML, not a
+compile-only probe), and `./gradlew :app:assembleDebugAndroidTest` → the instrumentation APK builds.
+The test count is deliberately not written down: this section recorded 106, and it measured **152**
+on 2026-10-25, so a number here reads as a failure the moment it rots. Run this before trusting any local
 compile-only probe; the emulator conformance job remains the only place the real
 Android runtime and camera are exercised.
 
@@ -186,8 +187,10 @@ cargo clippy --manifest-path host-rs/Cargo.toml --all-targets --locked -- -D war
 cargo fmt --manifest-path host-rs/Cargo.toml --check
 ```
 
-Measured 2026-10-25 on this machine: **152 passed, 0 failed, 5 ignored**; then 5 and 2 passed;
-clippy clean with warnings denied; fmt clean. `--all-targets` matters for the clippy leg - a warning
+Measured 2026-10-25 on this machine: every leg green - the library reported **160 passed / 0
+failed** / 5 ignored, `secure_lan` 5 and `parsers` 2, clippy clean with warnings denied, fmt clean.
+The counts carry their date rather than standing as a target: they move (the library was 152 before
+`main` gained eight tests), and only the **0 failed** is what a run should check. `--all-targets` matters for the clippy leg - a warning
 in a test module is what `-D warnings` turns into a CI failure, and `--lib` alone does not compile
 them.
 
@@ -197,6 +200,17 @@ for that target (`Set FFMPEG_DIR …`, `Install FFmpeg via vcpkg`, `Install FFmp
 pkg-config can find it`) and the windows job builds its own. So "the host builds for Windows" stays
 a claim the workflow makes and this machine cannot, which is worth knowing before concluding a local
 failure is a defect.
+
+## What a local run cannot check
+
+- **Every commit in a pull request needs a `Signed-off-by:` trailer matching that commit's own
+  author identity.** [CONTRIBUTING.md](../CONTRIBUTING.md) owns the rule and
+  `.github/workflows/dco.yml` enforces it, so this note does not restate either - it records the two
+  things neither says. First, no local gate fails it, which makes it the one thing a green local run
+  does not tell you: measured 2026-10-25, a branch passed the text, host and Android legs and was
+  rejected on this alone. Second, `git rebase --signoff <base>` fixes a whole branch at once and
+  leaves the **tree hash identical** (measured on that branch), so a verification already made
+  against the tree still stands afterwards.
 
 ## Running the conformance on a physical phone
 
