@@ -67,6 +67,24 @@ Three facts decide how a release gets made right now, and none of them was true 
    machine before cutting a release**: if they are lost, the lineage is lost again, and every future
    APK needs an uninstall to install.
 
+### The pipeline has now run end to end (2026-10-25)
+
+Tagging `v0.2.1` ran `publish` on `ubuntu-24.04` and it **succeeded on the first attempt**: it produced
+`Mobile_Webcam-0.2.1-android.apk` (`versionCode 2001`, signed with the release key) and
+`Mobile_Webcam-0.2.1-x86_64.AppImage`, plus `SHA256SUMS` and the FFmpeg source offer, and created the
+release itself. Every line of the published `SHA256SUMS` verifies against the downloaded bytes. So the
+Android signing secrets, the secret-to-environment mapping, the FFmpeg build, linuxdeploy through
+`APPIMAGE_EXTRACT_AND_RUN`, and the publish step are all proven on the hosted runner.
+
+The `windows` job failed on the same tag, and the reason was an **older defect that had nothing to do
+with the runner move**: `ffmpeg-sys-next`'s bindgen panicked with `Unable to generate bindings:
+ClangDiagnostic(… stdlib.h: error: expected ';' …)` because the job never pointed codegen at the mingw64
+toolchain, and msys2's `clang` has since moved to a version that will not parse the headers it was
+implicitly given. The Windows CI job in `rust-host-ci.yml` sets `LIBCLANG_PATH`, `CLANG_PATH` and
+`BINDGEN_EXTRA_CLANG_ARGS='--target=x86_64-w64-windows-gnu'` and is green; `release.yml` now sets the
+same three before its `cargo build`. **A green job in one workflow is not the same job in another** -
+the two had drifted apart in exactly the place neither was reviewed.
+
 ### The hosted runner carries the release now, and why that is also the safer choice
 
 `publish` runs on `ubuntu-24.04` rather than a self-hosted label, because this repository is public:
