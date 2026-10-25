@@ -295,6 +295,106 @@ where the reviewer measured it.
 
 The original note follows, unedited, because it says what the pass did not reach.
 
+### Coverage added after the disposition (2026-10-24, later pass)
+
+The disposition above says, for each fix, what it does **not** cover. Three of those gaps are now
+closed, and the change that closes them is the one the review named as the pattern to watch for:
+a test that drives the wire instead of a method.
+
+- **ID-001's routing is tested on the wire.**
+  `HostHelloAndPairingGateWireTest.a_host_hello_on_the_wire_ends_the_session_instead_of_being_answered`
+  writes `0x0e` into a real socket and lets the session's own reader thread call `readMedia`,
+  then asserts that the session ends naming the *refused proof* (not an expired deadline) and
+  that no challenge is re-sent. **Proven able to fail:** restoring the naive repair this report
+  warns about — route the hello to the control handler, re-send the challenge in `PROOF`, renew
+  the deadline — reddens exactly this test and leaves the other two in the file green.
+- **ID-003's send is tested as a refusal, and so is its button.**
+  `the_pairing_handoff_writes_nothing_until_the_pc_is_approved` drives the same real session:
+  the hand-off is silent while the PC is unauthorized and delivers the identical payload once
+  `approve()` has run — so the gate, not a missing sink, is what suppressed it.
+  `SecondarySurfaceWiringTest.the_pairing_handoff_is_offered_only_for_an_authorized_pc` pins
+  the button's rule, which had no test at all.
+- **Issue #78, item 1** (no control frame before the authorization result) is pinned by
+  `no_capabilities_reach_the_wire_before_the_authorization_result`: the advertisement is queued
+  while unauthorized and arrives only behind the result.
+
+Removing either authorization gate (`sendPairingInfo`, `updateCapabilities`) fails all three
+tests in a mutation run, so none of them is a test that passes for the wrong reason.
+
+**WR2 and WR3 are behavioural now, without an Activity harness.** Robolectric would have been a
+new test dependency and a change to a deliberate design choice — this suite has one test
+dependency and pins the Activity by reading it, which `SecondarySurfaceWiringTest` explains — so
+the two rules were given an owner instead and driven there:
+
+- `ReaderHandover` owns the single-reader record. `ReaderHandoverTest` drives what the substring
+  test could not see: that `stopped` leaves nothing armed (including the `?: true` default for a
+  session that is not an accessory), that the refusal is **durable** rather than one iteration
+  deep, and that it asks about the reader **now** rather than snapshotting it at record time. What
+  `SessionServiceWiringTest` still asserts is only that the Activity uses that rule, refuses
+  before it opens anything, and hands over `accessory::readerAlive`.
+- `StopAction` owns the credential: the token is generated once per process and never written
+  down, and `accepts` requires the action **and** the token. `StopActionTest` drives the action
+  alone, an empty extra, a token from another generation, a near miss and a case-folded copy —
+  plus that two generations differ, and that the process token is stable, since a token that
+  changed per call would leave Stop dead.
+- **Proven able to fail, separately:** a snapshot instead of a late-bound question reddens only
+  `the_refusal_asks_about_the_reader_now_instead_of_a_snapshot`; ignoring the token reddens the
+  two refusal tests; reverting `MainActivity` to a literal comparison reddens only the wiring
+  test. 144 of 148 tests stayed green under those three mutations.
+
+**WR5's rows were added** to `security-coverage.md` — `HOST_HELLO`, the single-reader handover,
+the PING/IDR/hello limits, and the probe's own pacing — each labelled with what was read versus
+measured. What remains read rather than driven is named in the two test comments rather than
+implied: `AccessorySession.closeAndAwait`'s answer needs a `ParcelFileDescriptor` (so a device or
+an emulator), and no in-process test can observe that a second process cannot guess a token.
+
+### Questions (Q1-Q4) — disposition
+
+The three findings above were dispositioned when they were fixed. The four questions were not, and
+Q1 is a claim about code that can be answered without a device, so they are answered here instead of
+staying inside the report.
+
+**Q1 — answered, with one diagnostics residue.** The guess is real: `read_raw` maps a bulk timeout
+to `Ok(0)` and `align_stream` returns `Ok(true)` on `Ok(0)`, so one silent 200 ms read declares the
+stream aligned. It cannot produce a *silently wrong* frame, which is the standard the question set:
+`wire.rs` rejects a header that does not begin `AMB1` with `invalid AMB1 header`, and
+`reset_stream`'s own doc records that measured symptom (that error, then `does not support required
+per-PC authorization v2`) - the visible failure the question asked for. Discarding the boolean in
+the shipping path therefore hides no behavioural defect: both verdicts yield the same transport, and
+the discriminator is the reader's own header check. The probe's difference is diagnostics only - it
+prints `warning: the stream did not show a frame boundary after the reset` and proceeds anyway.
+
+The silence verdict is also not an oversight, which the question implies it might be: an accessory
+whose app has not started sending yet is *silent* (measured again on 2026-10-25: with nothing open
+on the phone, the host reads nothing), so requiring a header before answering would turn
+a normal quiet start into 64 x 200 ms of waiting and then a false failure. One probe of the endpoint
+cannot have both behaviours. What stays open is small and diagnostic: the shipping path prints
+nothing when the verdict was a guess, so the confusing case - silence mid-frame rather than before
+the first frame - arrives as `invalid AMB1 header` with no note that alignment was assumed. Closing
+its diagnostics half is closed in this pass: `Usb::connect` still does not act on the verdict -
+nothing behavioural depends on it - but it now prints the verdict under the existing `AMB_USB_TRACE`,
+so a later `invalid AMB1 header` can be read together with whether alignment was assumed. The
+empirical half stays open, and wants a device that pauses mid-payload past the read timeout so that
+the guess can be wrong inside a run.
+
+**Q2 — answered in part; the empirical half needs a device.** The gap is real and already recorded
+in the code with its repair: `video.rs` cannot call `reset_stream` because the transport is by then
+a trait object with no downcast, and the comment names the fix - keep the USB branch concrete until
+after the retry. The probe does reset between attempts and prints whether a boundary appeared. What
+cannot be answered from here is whether the shipping retry has ever *completed* on hardware after a
+misaligned first attempt, or whether the half-read stream was the reason it did not.
+
+**Q3 — still open, and it is a Windows-host question.** Nothing here can exercise it: the objects
+live in a Windows session and the observation needs a second process in that session. It stays
+inside the documented "same-user access is not an adversary" line, and the closing condition is
+unchanged - a Windows host plus a co-session process, or a decision that co-session processes are
+outside the model, which would make the namespace prefix and the producer guard a requirement.
+
+**Q4 — one half is exercised now, the other still is not.** The refusal text is no longer read-only:
+the 2026-10-23 review's second item was closed by an AccessKit test that renders every reason code
+to a title, and this review's own note agreed that it drives real code. The PipeWire node remains
+read and not exercised; starting a consumer is what would close it, and nothing in this pass did.
+
 ### Original disposition note
 
 All three findings are accepted. They are **not fixed in this commit**: each one is a change to

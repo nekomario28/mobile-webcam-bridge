@@ -4,8 +4,14 @@
 
 Preconditions:
 
-- USB debugging OFF.
-- No ADB dependency in the host path.
+- No ADB dependency in the host path. **USB debugging does not have to be off** (measured
+  2026-10-25): with it on, the phone enumerates as `0x2d01` and exposes two interfaces — adb's
+  (`class 0xff`, subclass `0x42`, protocol `1`) and the accessory's (`class 0xff`, subclass
+  `0xff`) — and the host claims the accessory one, reads the phone's frames and writes frames to
+  it while adb holds its own. The precondition in this list that *is* real: the app must already
+  have the accessory open, because with nothing draining the endpoint a host write times out
+  (measured the same day; it is what the first attempt at the frame-owner measurement was
+  actually seeing).
 - Data-capable USB cable.
 - Mobile Webcam APK already installed by ordinary sideloading.
 
@@ -17,7 +23,9 @@ PASS requires:
    strings using request 52.
 3. Host sends request 53.
 4. Phone disconnects/re-enumerates as Google VID `0x18d1` with an accessory PID.
-5. With USB debugging OFF, target PID is normally `0x2d00`.
+5. The target PID is `0x2d00` with USB debugging off and `0x2d01` (accessory + adb) with it on;
+   both are accessory modes and the gate accepts either. The probe prints the post-transition
+   identity itself, so the transition is read off the device rather than assumed.
 6. Android obtains accessory permission and `UsbManager.openAccessory()` succeeds.
 
 Capture exact stdout and `lsusb` before/after as evidence. Prefer selecting the
@@ -104,16 +112,21 @@ checking before concluding the build is broken. Each one was measured here:
    and name it in the *user* Gradle properties —
    `org.gradle.java.installations.paths=/path/to/jdk-17` in
    `~/.gradle/gradle.properties`. A `-Dorg.gradle.java.installations.paths=…` on
-   the command line is **not** enough (measured: it still fails).
+   the command line is **not** enough (measured: it still fails). On this machine that file
+   names `/home/yuu/.gradle/jdks/eclipse_adoptium-17-amd64-linux/jdk-17.0.19+10`, so
+   `./gradlew -q javaToolchains` lists *Eclipse Temurin JDK 17.0.19+10* beside the Arch JDKs
+   and the tests compile under **17** even though Gradle itself runs on 21. The distinction
+   matters when a local run is compared with CI, which runs Gradle on 17 as well.
 3. **The SDK.** The project needs `build-tools;34.0.0` and `platforms;android-35`
    with the licences accepted, or Gradle stops with `Failed to install the
    following Android SDK packages as some licences have not been accepted`
    (`sdkmanager --licenses` fixes that). `ANDROID_HOME` must point at that SDK.
 
 With those three in place this machine runs, from the repository wrapper alone:
-`./gradlew :app:testDebugUnitTest` → **12 suites, 106 tests, 0 failures** (actual
-Gradle XML, not a compile-only probe), and `./gradlew :app:assembleDebugAndroidTest`
-→ the instrumentation APK builds. Run this before trusting any local
+`./gradlew :app:testDebugUnitTest` → every suite green and **0 failures** (actual Gradle XML, not a
+compile-only probe), and `./gradlew :app:assembleDebugAndroidTest` → the instrumentation APK builds.
+The test count is deliberately not written down: this section recorded 106, and it measured **152**
+on 2026-10-25, so a number here reads as a failure the moment it rots. Run this before trusting any local
 compile-only probe; the emulator conformance job remains the only place the real
 Android runtime and camera are exercised.
 
@@ -123,6 +136,81 @@ shipped in this repository, the three fixes above make the wrapper usable, and
 the wrapper is the only route that can be trusted for `android.*` behaviour. The
 measurement above — `Size.getWidth()` fine in the probe, unmocked under Gradle —
 is the reason to keep using the wrapper rather than the probe.
+
+## Local text gate (typos and offline links, without CI)
+
+`lint-text` has two legs and each is one command on a machine that has the tool:
+
+- **`typos`** — the repository's `_typos.toml` is discovered from the working directory, so
+  the command is literally `typos` at the repository root. CI pins `crate-ci/typos` `v1.51.1`
+  and the local tool was installed at the same version.
+- **`lychee --offline --no-progress '*.md' 'docs/**/*.md' 'specs/**/*.md'`** — the exact
+  argument string from `.github/workflows/lint-text.yml`. Offline is deliberate: relative
+  links are the ones this repository owns, and an external URL is somebody else's uptime.
+
+Both build from source here in about two minutes
+(`cargo install typos-cli --locked` → `typos-cli 1.51.1` in 46 s;
+`cargo install lychee --locked` → `lychee 0.24.2` in 1 m 55 s).
+
+Installing them is not the point; **being able to fail is**. Measured 2026-10-25 on this
+machine, so neither leg is a green light that proves nothing:
+
+| Injected into a tracked `.md` file | Result |
+|---|---|
+| a misspelled word | `typos` exits **2**, and names the word, the file and the line |
+| a relative markdown link to `docs/does-not-exist-xyz.md` | `lychee` exits **2**, `File not found`, with the file and the line |
+
+With nothing injected, `typos` exits 0 over the whole tree and `lychee` reports 0
+errors, so the two exit codes above are what a *finding* looks like rather than what
+green looks like.
+
+Both injections are *described* rather than quoted, and that is a measured lesson rather
+than style: the first version of this table reproduced them, so documenting the gate
+turned the gate red — `typos` flagged the misspelling inside a code span, and `lychee`
+resolved the example link and reported the file missing. Reproduce either in a scratch
+file when the raw output is wanted.
+
+The link leg has a cheaper stand-in that needs no tool: a relative-link existence check over
+the targets of `]()` (skipping `http(s)` and `mailto`). It was used while `lychee` was not
+installed here and agrees with it on this tree, but it is not the same target set —
+reference-style links, images and `file://` URLs are outside it — so prefer the real tool and
+read the stand-in's silence as "no broken relative link", nothing wider.
+
+## Local host gate (the Rust host's tests, clippy and fmt, without CI)
+
+The host legs run from the repository root with the crate's own manifest:
+
+```
+cargo test --manifest-path host-rs/Cargo.toml --lib
+cargo test --manifest-path host-rs/Cargo.toml --test secure_lan --test parsers
+cargo clippy --manifest-path host-rs/Cargo.toml --all-targets --locked -- -D warnings
+cargo fmt --manifest-path host-rs/Cargo.toml --check
+```
+
+Measured 2026-10-25 on this machine: every leg green - the library reported **160 passed / 0
+failed** / 5 ignored, `secure_lan` 5 and `parsers` 2, clippy clean with warnings denied, fmt clean.
+The counts carry their date rather than standing as a target: they move (the library was 152 before
+`main` gained eight tests), and only the **0 failed** is what a run should check. `--all-targets` matters for the clippy leg - a warning
+in a test module is what `-D warnings` turns into a CI failure, and `--lib` alone does not compile
+them.
+
+**The Windows target is a CI-only check here.** `cargo check --target x86_64-pc-windows-gnu` stops
+on this machine before it reaches any of this repository's code, because the crate wants an FFmpeg
+for that target (`Set FFMPEG_DIR …`, `Install FFmpeg via vcpkg`, `Install FFmpeg and ensure
+pkg-config can find it`) and the windows job builds its own. So "the host builds for Windows" stays
+a claim the workflow makes and this machine cannot, which is worth knowing before concluding a local
+failure is a defect.
+
+## What a local run cannot check
+
+- **Every commit in a pull request needs a `Signed-off-by:` trailer matching that commit's own
+  author identity.** [CONTRIBUTING.md](../CONTRIBUTING.md) owns the rule and
+  `.github/workflows/dco.yml` enforces it, so this note does not restate either - it records the two
+  things neither says. First, no local gate fails it, which makes it the one thing a green local run
+  does not tell you: measured 2026-10-25, a branch passed the text, host and Android legs and was
+  rejected on this alone. Second, `git rebase --signoff <base>` fixes a whole branch at once and
+  leaves the **tree hash identical** (measured on that branch), so a verification already made
+  against the tree still stands afterwards.
 
 ## Running the conformance on a physical phone
 
@@ -149,3 +237,20 @@ the wrapper's trap, and hence running that mode through the wrapper rather than
 by hand. The trap was then verified by sending it `SIGTERM` mid-run: it printed
 `interrupted; restoring` and the device came back at its physical size with the
 font scale, screen timeout and adb forwards clean.
+
+### The single-reader release, on a physical phone
+
+`AccessorySession.closeAndAwait` depends on the platform unblocking a read when the descriptor
+closes, and the guard that refusal justifies is only as good as that. The instrument is part of
+the instrumentation APK (the emulator has no accessory, so CI cannot run it) and it asserts the
+precondition on every iteration instead of assuming it:
+
+```
+adb shell am instrument -w -e physicalDevice true -e usbReaderMeasurement true \
+  dev.nekomario.amb.test/dev.nekomario.amb.UsbPermissionInstrumentation
+```
+
+It needs the accessory attached and the app to hold the USB permission for it, and it installs
+nothing: only the androidTest APK is installed, because reinstalling the app APK clears that
+grant. Measured result and its boundary:
+[evidence/2026-10-25-usb-reader-release.md](evidence/2026-10-25-usb-reader-release.md).

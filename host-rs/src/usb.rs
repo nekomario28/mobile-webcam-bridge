@@ -308,7 +308,15 @@ impl Usb {
                 "usb trace: input ep=0x{input:02x} output ep=0x{output:02x} transfer_scratch={TRANSFER_SCRATCH}"
             );
         }
-        let _ = opened.align_stream();
+        // The verdict is a guess after silence (see `align_stream`), so it is not a condition
+        // here: both verdicts yield the same transport and the reader's own header check is the
+        // discriminator (`wire.rs` reports `invalid AMB1 header`). It is still worth saying out
+        // loud when it was a guess, because that is the case whose later failure - a bad header
+        // with nothing to explain it - is the one that costs a debugging session.
+        let aligned = opened.align_stream();
+        if std::env::var_os("AMB_USB_TRACE").is_some() {
+            eprintln!("usb trace: align_stream verdict={aligned:?}");
+        }
         Ok(opened)
     }
 }

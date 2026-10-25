@@ -12,6 +12,55 @@
   gated on `permitted()` like every other sender, with the action offered only for an authorized
   session, because that is what the hand-off is for.
 
+- Pin the two halves the second review found guarded only at the method level, and the
+  ordering that issue #78 measured. A real socket now carries `0x0e` through the session's own
+  reader, so ID-001's *routing* is pinned rather than read; the pairing hand-off is asserted as a
+  refusal (silence while the PC is unauthorized, the identical bytes on the wire after approval)
+  and the button's rule has the test it never had; and no control frame may precede the
+  authorization result. All three are proven able to fail: restoring the review's naive repair
+  reddens exactly the hello test, and removing either authorization gate reddens the other two.
+
+- Make the two false-green tests the review named behavioural, without pulling in an Activity
+  harness. The single-reader handover and the notification's Stop credential each got an owner —
+  `ReaderHandover` and `StopAction` — so the assertions can drive the properties the source-text
+  versions could not see: that `stopped` leaves nothing armed (including the `?: true` default
+  for a session that is not an accessory), that the refusal is durable instead of one iteration
+  deep, and that it asks about the reader now rather than snapshotting it; and, for Stop, that the
+  action alone, an empty extra, a foreign token, a near miss and a case-folded copy are all
+  refused while two independently generated tokens differ. Each guard was proven able to fail on
+  its own defect: a snapshot reddens one test, ignoring the token reddens two, and reverting
+  `MainActivity` to a literal comparison reddens one, with the other 144 green. 148 Android tests.
+
+- Measure the one sentence the second review left as a reading: that closing the accessory
+  descriptor is what unblocks a blocked read. `UsbReaderReleaseMeasurement` drives a real
+  endpoint on the XQ-GE44 through the instrumentation the repository already has, and it asserts
+  the precondition on every iteration, because a read that was not blocked when the descriptor
+  closed proves nothing about unblocking one. The first version of it did not, and printed
+  `released=true in 0 ms` twenty times — the shape of a measurement that has not established
+  that it measured anything. Measured, twice: 10 of 10 raw blocked reads returned in 0 ms after
+  the close and 10 of 10 real sessions did too, with the reader thread's own stack showing
+  `libcore.io.Linux.readBytes` when the close ran. Two `openAccessory` calls both succeed, so
+  the platform does not prevent two readers — the app-level guard is the only thing that does —
+  and the observed mechanism is refusal (`EIO` on the second reader) rather than frame theft.
+  Re-measured against the shipping build itself: the app APK was reinstalled and the numbers
+  were identical, and the USB grant survived the update at the same `versionCode`, so the
+  dialog the run had prepared for never appeared — which narrows, without contradicting, the
+  note that reinstalling clears the grant.
+  Evidence and its boundary:
+  [docs/evidence/2026-10-25-usb-reader-release.md](docs/evidence/2026-10-25-usb-reader-release.md).
+
+- Measure the last mode of the single-reader handover: who consumes a host frame while a blocked
+  reader holds the endpoint. With one reader blocked, the host's 24-byte `HOST_HELLO` completed and
+  that reader's session ended with `PC authorization proof rejected` — the frame reached the reader
+  holding the endpoint and was refused at that session's proof gate, which is the ID-001 path
+  measured on the wire. The control is in the same instrument: with the endpoint idle, iterations
+  end only by their own absolute 5 s proof deadline and never with that reason. Two of this
+  attempt's own steps are kept in the record rather than tidied away — a first diagnosis that
+  blamed the environment for holding the accessory interface (wrong: subclass `0x42` with protocol
+  `1` is adb's interface, not the accessory's) and an over-broad `pkill` that cost the phone its adb
+  link until a host-side re-enumeration restored it. Evidence:
+  [docs/evidence/2026-10-25-usb-frame-owner.md](docs/evidence/2026-10-25-usb-frame-owner.md).
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment
