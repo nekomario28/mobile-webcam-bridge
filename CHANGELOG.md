@@ -141,6 +141,22 @@
   `docs/RELEASE.md` lists the four secrets, how to verify a keystore is the right lineage before setting
   them, and why a replacement key is a recorded decision rather than a convenience.
 
+- Set the Android signing secrets and publish a signed 0.2.0 APK, which closes the release half of the
+  version/edition item. Doing it established three things worth more than the artifact. The signing
+  secrets had **never** been set - no repo, environment or org secrets existed, so the 0.1.4 APK on the
+  `v0.2.0` release had been signed and uploaded by hand. The `publish` job needs a self-hosted runner
+  (`runs-on: [self-hosted, Linux, X64, mobile-webcam]`) and **none is registered**, which is why every
+  `release` run in the history is `cancelled`; tagging before a runner exists queues a job that never
+  starts. And the keystore behind the old lineage is unrecoverable, so a new one was created deliberately
+  with the same distinguished name (`CN=Mobile Webcam`, `SHA-256 BA:2A:15:A5…`, RSA 4096, 10 000 days) and
+  its four secrets set on the repository. The compatibility cost was measured rather than assumed: the
+  new APK fails to install over a 0.1.4-lineage install with
+  `INSTALL_FAILED_UPDATE_INCOMPATIBLE … signatures do not match`, and installs cleanly after an
+  uninstall. Published `Mobile_Webcam-0.2.0-android.apk` (`versionCode 2000`, `versionName 0.2.0`) to the
+  existing release and regenerated `SHA256SUMS` with every line re-verified against the published bytes;
+  the keystore and its password sit outside the repository, `0600`, and must be backed up.
+  [RELEASE.md](docs/RELEASE.md) carries the procedure and the runner gap.
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment

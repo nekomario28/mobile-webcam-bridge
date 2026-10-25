@@ -32,19 +32,19 @@ the device rows, on a real XQ-GE44 over Wi-Fi.
    adversary rather than a test.
    *Closes when:* a fresh reviewer's report exists under `docs/reviews/` and each
    finding is either fixed or answered with evidence.
-2. **Version and edition reconciliation.** Diagnosed 2026-10-25, and it is two separate things.
-   The numbers are *not* a discrepancy: `0.1.4` and `0.2.0` are the same scheme
-   (`versionCode = major x 1e6 + minor x 1e3 + patch`, so `1004` and `2000`). The gaps, both measured:
-   the release carries **only `Mobile_Webcam-0.1.4-android.apk`** for Android (the signing step needs
-   four secrets that are unset, and `gh secret list` is empty), and the phone in the field is now running
-   a **debug-signed 0.2.0 build** (`CN=Android Debug`), not the release lineage (`CN=Mobile Webcam`,
-   `SHA-256 b907d74e…`). So a signed 0.2.0 release cannot upgrade that install in place; the field needs
-   an uninstall first, which clears the app's own approvals and Wi-Fi key.
-   [RELEASE.md](RELEASE.md) names the scheme, the editions, the four secrets, and how to check that a
-   keystore is the right lineage before setting them.
-   *Closes when:* the Android signing secrets are set by the owner, a release cut from `main` produces
-   a signed `Mobile_Webcam-<version>-android.apk` alongside the others, and the field build then
-   reports the same `VERSION`.
+2. **Version and edition reconciliation.** Diagnosed and partly closed 2026-10-25. The numbers were
+   never a discrepancy: `0.1.4` and `0.2.0` are the same scheme (`versionCode = major x 1e6 + minor x 1e3
+   + patch`, so `1004` and `2000`). Closed: the `v0.2.0` release now carries a **signed
+   `Mobile_Webcam-0.2.0-android.apk`** (`versionCode 2000`, `versionName 0.2.0`, `CN=Mobile Webcam`,
+   `SHA-256 BA:2A:15:A5…`) with `SHA256SUMS` regenerated and every line re-verified against the published
+   bytes. Two facts came out of doing it, and both are recorded in [RELEASE.md](RELEASE.md): the signing
+   secrets had never been set (the 0.1.4 APK was signed by hand), and the `publish` job needs a
+   self-hosted runner that is **not registered** (`0 runners`), which is why every `release` run in the
+   history is `cancelled`.
+   *Closes when:* a self-hosted runner with the `mobile-webcam` label is registered (or the workflow is
+   repointed to a hosted runner), a tag triggers the workflow end to end, and the field phone — which
+   currently runs a **debug-signed** 0.2.0 build, and so needs an uninstall either way — reports the
+   released `VERSION`.
 3. ~~**Three known lows from the 2026-10-23 review**~~ Closed: the world-readable
    fallback now supplies defaults instead of denying startup, the settings temp name is
    unpredictable, and the largest accepted frame is measured (113 MiB transient on Linux,
