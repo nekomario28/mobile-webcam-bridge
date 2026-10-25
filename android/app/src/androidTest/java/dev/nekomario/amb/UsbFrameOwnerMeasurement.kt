@@ -64,9 +64,6 @@ class UsbFrameOwnerMeasurement(private val instrumentation: Instrumentation) {
             return done(report)
         }
 
-        val newErrors = Collections.synchronizedList(mutableListOf<String>())
-        var newPfd: android.os.ParcelFileDescriptor? = null
-        var newOwner: PhoneAuthorization? = null
         val held = mutableListOf<android.os.ParcelFileDescriptor>()
         val heldOwners = mutableListOf<PhoneAuthorization>()
         val heldSessions = mutableListOf<AccessorySession>()
@@ -135,13 +132,10 @@ class UsbFrameOwnerMeasurement(private val instrumentation: Instrumentation) {
                     .append(" deadline, which is the control\n")
                 line("OUTCOME", "consumed=false iterations=" + iteration)
             }
-            report.append("  new session errors at the end: ").append(snapshot(newErrors)).append('\n')
         } finally {
             heldOwners.forEach { runCatching { it.close() } }
             heldSessions.forEach { runCatching { it.close() } }
             held.forEach { runCatching { it.close() } }
-            runCatching { newOwner?.close() }
-            runCatching { newPfd?.close() }
         }
         return done(report)
     }

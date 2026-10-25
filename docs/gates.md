@@ -4,8 +4,14 @@
 
 Preconditions:
 
-- USB debugging OFF.
-- No ADB dependency in the host path.
+- No ADB dependency in the host path. **USB debugging does not have to be off** (measured
+  2026-10-25): with it on, the phone enumerates as `0x2d01` and exposes two interfaces — adb's
+  (`class 0xff`, subclass `0x42`, protocol `1`) and the accessory's (`class 0xff`, subclass
+  `0xff`) — and the host claims the accessory one, reads the phone's frames and writes frames to
+  it while adb holds its own. The precondition in this list that *is* real: the app must already
+  have the accessory open, because with nothing draining the endpoint a host write times out
+  (measured the same day; it is what the first attempt at the frame-owner measurement was
+  actually seeing).
 - Data-capable USB cable.
 - Mobile Webcam APK already installed by ordinary sideloading.
 
@@ -17,7 +23,9 @@ PASS requires:
    strings using request 52.
 3. Host sends request 53.
 4. Phone disconnects/re-enumerates as Google VID `0x18d1` with an accessory PID.
-5. With USB debugging OFF, target PID is normally `0x2d00`.
+5. The target PID is `0x2d00` with USB debugging off and `0x2d01` (accessory + adb) with it on;
+   both are accessory modes and the gate accepts either. The probe prints the post-transition
+   identity itself, so the transition is read off the device rather than assumed.
 6. Android obtains accessory permission and `UsbManager.openAccessory()` succeeds.
 
 Capture exact stdout and `lsusb` before/after as evidence. Prefer selecting the
