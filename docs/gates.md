@@ -262,5 +262,8 @@ version reported a consumed frame that was the reader's own proof deadline.
 
 It needs the accessory attached and the app to hold the USB permission for it, and it installs
 nothing: only the androidTest APK is installed, because reinstalling the app APK clears that
-grant. Measured result and its boundary:
+grant. **Install with `--no-streaming` while the phone is in accessory mode**: the streaming
+install path hung twice on 2026-10-25 (a 300 s timeout with no output at all) while the same APK
+installed immediately with `--no-streaming`. If an install looks hung, force-stop the app and retry
+that way rather than killing the adb server, which a session supervisor restarts anyway. Measured result and its boundary:
 [evidence/2026-10-25-usb-reader-release.md](evidence/2026-10-25-usb-reader-release.md).

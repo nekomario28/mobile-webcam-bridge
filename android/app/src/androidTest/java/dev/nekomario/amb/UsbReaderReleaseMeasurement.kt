@@ -76,6 +76,7 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
     private fun rawRelease(manager: UsbManager, accessory: UsbAccessory, report: StringBuilder) {
         var blockedBeforeClose = 0
         var released = 0
+        var reusable = 0
         var slowest = 0L
         for (iteration in 1..rawIterations) {
             val pfd = manager.openAccessory(accessory)
@@ -102,10 +103,31 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
             report.append("  raw ").append(iteration).append(": blockedBeforeClose=").append(blocked)
                 .append(" afterClose=").append(reader.outcome)
                 .append(" returned=").append(returned).append(" in ").append(elapsed).append(" ms\n")
+
+            // A2, asked explicitly rather than inferred from the loop: is the endpoint usable again
+            // after that close, or was only the JVM's read abandoned while the endpoint stays taken?
+            // A fresh descriptor and a fresh reader answer it: blocking means usable, EIO means taken.
+            val fresh = manager.openAccessory(accessory)
+            if (fresh == null) {
+                report.append("    reuse after the close: openAccessory returned null\n")
+            } else {
+                val probe = BlockingReader(fresh)
+                probe.start()
+                val enteredAgain = probe.awaitEntered(1_000)
+                Thread.sleep(200)
+                if (enteredAgain && probe.outcome == "blocked") reusable++
+                report.append("    reuse after the close: ").append(if (enteredAgain) probe.outcome else "never entered")
+                    .append('\n')
+                runCatching { fresh.close() }
+                probe.await(500)
+            }
         }
         report.append("raw release: ").append(released).append('/').append(blockedBeforeClose)
             .append(" blocked reads returned once the descriptor closed inside ").append(waitMs)
             .append(" ms\n")
+        report.append("reuse after close: ").append(reusable).append('/').append(rawIterations)
+            .append(" fresh descriptors blocked on the endpoint immediately afterwards")
+            .append(" (so the release is the endpoint's, not only the JVM's read)\n")
         if (released > 0) report.append("raw slowest: ").append(slowest).append(" ms\n")
     }
 
