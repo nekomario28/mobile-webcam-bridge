@@ -175,6 +175,29 @@ installed here and agrees with it on this tree, but it is not the same target se
 reference-style links, images and `file://` URLs are outside it — so prefer the real tool and
 read the stand-in's silence as "no broken relative link", nothing wider.
 
+## Local host gate (the Rust host's tests, clippy and fmt, without CI)
+
+The host legs run from the repository root with the crate's own manifest:
+
+```
+cargo test --manifest-path host-rs/Cargo.toml --lib
+cargo test --manifest-path host-rs/Cargo.toml --test secure_lan --test parsers
+cargo clippy --manifest-path host-rs/Cargo.toml --all-targets --locked -- -D warnings
+cargo fmt --manifest-path host-rs/Cargo.toml --check
+```
+
+Measured 2026-10-25 on this machine: **152 passed, 0 failed, 5 ignored**; then 5 and 2 passed;
+clippy clean with warnings denied; fmt clean. `--all-targets` matters for the clippy leg - a warning
+in a test module is what `-D warnings` turns into a CI failure, and `--lib` alone does not compile
+them.
+
+**The Windows target is a CI-only check here.** `cargo check --target x86_64-pc-windows-gnu` stops
+on this machine before it reaches any of this repository's code, because the crate wants an FFmpeg
+for that target (`Set FFMPEG_DIR …`, `Install FFmpeg via vcpkg`, `Install FFmpeg and ensure
+pkg-config can find it`) and the windows job builds its own. So "the host builds for Windows" stays
+a claim the workflow makes and this machine cannot, which is worth knowing before concluding a local
+failure is a defect.
+
 ## Running the conformance on a physical phone
 
 The instrumentation refuses a physical device by default, because it rewrites the
