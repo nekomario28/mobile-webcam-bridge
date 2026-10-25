@@ -168,6 +168,12 @@
   `verify_distribution.py` with `glibc requirement exceeds 2.39: (2, 44)` - the artifact has to be built
   on the oldest glibc the gate names, which `ubuntu-24.04` is.
 
+- Give Dependabot a cooldown, because the workflow lint that refuses the implicit 0-day default had been
+  red since 2026-10-24 and had left three Dependabot pull requests permanently failing. It surfaced here
+  only because touching `.github/workflows/` runs `lint-workflows` at all - the same shape of trap as a
+  gate nothing triggers. Seven days per ecosystem, the audit's own floor, so a compromised release cannot
+  be pulled in during the hour it is published.
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment
