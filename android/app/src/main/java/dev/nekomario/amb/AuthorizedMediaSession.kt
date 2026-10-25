@@ -21,6 +21,16 @@ abstract class AuthorizedMediaSession(
      */
     private val onCaptureCancelled: (MediaSession) -> Unit,
     threadName: String,
+    /**
+     * Every host frame this session read, before it is dispatched or refused.
+     *
+     * A test seam with no effect on behaviour, in the same shape as [onQuality] and
+     * [onCaptureCancelled]. It exists because a verdict that says "the session ended with
+     * `PC authorization proof rejected`" names a *reason* that several failures share, so it cannot
+     * say which frame caused it (independent review, 2026-10-25, ID-001). With this, an instrument
+     * can report the header it read and require the frame it wrote.
+     */
+    private val onFrameRead: (Wire.Header) -> Unit = {},
 ) : MediaSession {
     private val idrRequester = AtomicReference<(() -> Unit)?>(null)
     private val captureCancelled = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -60,6 +70,7 @@ abstract class AuthorizedMediaSession(
 
     protected fun readMedia(input: InputStream) {
         val (header, payload) = Wire.readHostFrame(input)
+        onFrameRead(header)
         if (gate.isAuthorized()) control.dispatch(header, payload)
         else gate.receive(header, payload)
     }

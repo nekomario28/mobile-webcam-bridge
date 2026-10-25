@@ -66,6 +66,16 @@ class UsbFrameOwnerMeasurement(
 ) {
     private val controlMs = 3_000L
     private val waitForHostMs = 25_000L
+
+    /**
+     * The sequence this instrument requires the host's frame to carry.
+     *
+     * The verdict used to be a substring of a reason string that several failures share, so it
+     * proved only that a session refused *some* frame (independent review, 2026-10-25, ID-001),
+     * which a reviewer reproduced by feeding a PING to a fresh session and getting the same
+     * sentence. The frame now has to be the one the host wrote: this type, this sequence.
+     */
+    private val hostFrameSequence = 0x1234
     private val waitForAccessoryMs = 120_000L
     private val tag = "UsbFrameOwner"
 
@@ -101,6 +111,10 @@ class UsbFrameOwnerMeasurement(
             val deadline = System.currentTimeMillis() + waitForHostMs
             var iteration = 0
             var answered: String? = null
+            val framesRead = Collections.synchronizedList(mutableListOf<String>())
+            var deadlineEnded = 0
+            var skipped = 0
+            var otherEnded = 0
             while (System.currentTimeMillis() < deadline && answered == null) {
                 iteration++
                 val pfd = manager.openAccessory(accessory)
@@ -111,17 +125,29 @@ class UsbFrameOwnerMeasurement(
                 }
                 val owner = PhoneAuthorization(ClientRepository({ null }, {}), onStorageFailure = {})
                 val errors = Collections.synchronizedList(mutableListOf<String>())
-                val session = AccessorySession(pfd, {}, { reason -> errors.add(reason) }, owner, {}, {})
+                // The seam: every host frame this session reads is reported, so the verdict can
+                // name the frame instead of a reason string shared by several failures.
+                val framesThisIteration = Collections.synchronizedList(mutableListOf<String>())
+                val session = AccessorySession(
+                    pfd, {}, { reason -> errors.add(reason) }, owner, {}, {},
+                    onFrameRead = { header ->
+                        framesThisIteration.add(describeFrame(header))
+                        framesRead.add("iteration " + iteration + " " + describeFrame(header))
+                    },
+                )
                 held.add(pfd); heldOwners.add(owner); heldSessions.add(session)
                 session.start()
                 Thread.sleep(200)
+                val alive = session.readerAlive()
                 val reader = threadNamed()
                 report.append("iteration ").append(iteration)
-                    .append(": readerAlive=").append(reader?.isAlive == true)
+                    .append(": readerAlive=").append(alive)
                     .append(" stack=").append(topFrames(reader)).append('\n')
-                line("A-ARMED", "iteration=" + iteration + " alive=" + (reader?.isAlive == true))
-                if (reader?.isAlive != true) {
+                line("A-ARMED", "iteration=" + iteration + " alive=" + alive)
+                if (!alive) {
                     report.append("  the reader was not blocked, so this iteration says nothing\n")
+                    skipped++
+                    closeIteration(session, owner, heldExtras, heldSessions, heldOwners)
                     continue
                 }
                 var openedExtras = 0
@@ -158,7 +184,10 @@ class UsbFrameOwnerMeasurement(
                 report.append("READY-FOR-HOST-FRAME (iteration ").append(iteration).append(")\n")
                 val iterationDeadline = System.currentTimeMillis() + 4_500
                 while (System.currentTimeMillis() < iterationDeadline) {
-                    if (reader.isAlive.not() || snapshot(errors).isNotEmpty()) {
+                    // The session's own answer, not a thread found by name: the name is shared by
+                    // every reader this instrument arms, so the previous iteration's reader could
+                    // have been the one inspected (independent review, 2026-10-25, ID-002).
+                    if (!session.readerAlive() || snapshot(errors).isNotEmpty()) {
                         answered = snapshot(errors).joinToString("; ")
                         break
                     }
@@ -168,11 +197,31 @@ class UsbFrameOwnerMeasurement(
                 report.append("  iteration ").append(iteration).append(" ended: ").append(reason)
                     .append("\n")
                 line("ITERATION", "iteration=" + iteration + " ended=" + reason)
+                report.append("  frames this iteration read: ").append(snapshot(framesThisIteration))
+                    .append('\n')
                 // Only a reason the *session* produces for a frame counts as consumption. A
                 // deadline is the idle-endpoint control, and EIO is the driver refusing this
                 // reader outright - counting either as "consumed" made the first version of this
                 // instrument report a false positive.
-                answered = answered?.takeIf { it.contains("proof rejected") }
+                // Both halves are required now: the session refused a frame *and* the frame it
+                // read is the one the host wrote.
+                val fromHost = snapshot(framesThisIteration).any { it == describeFrameOf(hostFrameSequence) }
+                if (!fromHost) {
+                    report.append("  no frame matching the host's (type=0x0e sequence=")
+                        .append(hostFrameSequence).append(") was read in this iteration\n")
+                }
+                if (answered != null && answered.contains("deadline expired")) {
+                    deadlineEnded++
+                    answered = null
+                } else if (answered != null && !fromHost) {
+                    otherEnded++
+                    answered = null
+                }
+                // A clean reader for the next iteration: leaving this one armed is what could
+                // manufacture the two-reader state this instrument is supposed to control.
+                if (answered == null) {
+                    closeIteration(session, owner, heldExtras, heldSessions, heldOwners)
+                }
             }
             if (answered != null) {
                 report.append("outcome: the blocked reader consumed the host's frame — ").append(answered)
@@ -180,9 +229,13 @@ class UsbFrameOwnerMeasurement(
                 line("OUTCOME", "consumed=true reason=" + answered + " iterations=" + iteration)
             } else {
                 report.append("FALSIFIED: no host frame reached the blocked reader in ")
-                    .append(iteration).append(" iteration(s); every one ended by its own proof")
-                    .append(" deadline, which is the control\n")
-                line("OUTCOME", "consumed=false iterations=" + iteration)
+                    .append(iteration).append(" iteration(s)")
+                    .append(" (ended by deadline: ").append(deadlineEnded)
+                    .append(", skipped: ").append(skipped)
+                    .append(", ended for another reason: ").append(otherEnded).append(")")
+                    .append("; frames read: ").append(snapshot(framesRead)).append('\n')
+                line("OUTCOME", "consumed=false iterations=" + iteration
+                    + " deadline=" + deadlineEnded + " skipped=" + skipped + " other=" + otherEnded)
             }
         } finally {
             heldOwners.forEach { runCatching { it.close() } }
@@ -224,6 +277,34 @@ class UsbFrameOwnerMeasurement(
         report.append("FAIL usb-frame-owner: no accessory appeared within ")
             .append(waitForAccessoryMs).append(" ms\n")
         return null
+    }
+
+    private fun describeFrame(header: Wire.Header): String =
+        "type=0x%02x sequence=%d len=%d".format(header.type, header.sequence, header.payloadLength)
+
+    private fun describeFrameOf(sequence: Int): String =
+        "type=0x%02x sequence=%d len=0".format(Wire.TYPE_HOST_HELLO, sequence)
+
+    /**
+     * Take one iteration's reader off the endpoint before the next one arms.
+     *
+     * The first version left each session armed until the outer `finally`, so an iteration could
+     * open while the previous reader still lived - manufacturing exactly the two-reader state this
+     * instrument is meant to control for (independent review, 2026-10-25, ID-002).
+     */
+    private fun closeIteration(
+        session: AccessorySession,
+        owner: PhoneAuthorization,
+        heldExtras: MutableList<android.os.ParcelFileDescriptor>,
+        heldSessions: MutableList<AccessorySession>,
+        heldOwners: MutableList<PhoneAuthorization>,
+    ) {
+        runCatching { session.close() }
+        heldSessions.remove(session)
+        heldOwners.remove(owner)
+        runCatching { owner.close() }
+        heldExtras.forEach { runCatching { it.close() } }
+        heldExtras.clear()
     }
 
     private fun report(text: String) = StringBuilder(text)
