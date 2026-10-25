@@ -67,39 +67,37 @@ Three facts decide how a release gets made right now, and none of them was true 
    machine before cutting a release**: if they are lost, the lineage is lost again, and every future
    APK needs an uninstall to install.
 
-### The pipeline has now run end to end (2026-10-25)
+### What has and has not run end to end (2026-10-25)
 
-Tagging `v0.2.1` ran `publish` on `ubuntu-24.04` and it **succeeded on the first attempt**: it produced
-`Mobile_Webcam-0.2.1-android.apk` (`versionCode 2001`, signed with the release key) and
-`Mobile_Webcam-0.2.1-x86_64.AppImage`, plus `SHA256SUMS` and the FFmpeg source offer, and created the
-release itself. Every line of the published `SHA256SUMS` verifies against the downloaded bytes. So the
-Android signing secrets, the secret-to-environment mapping, the FFmpeg build, linuxdeploy through
-`APPIMAGE_EXTRACT_AND_RUN`, and the publish step are all proven on the hosted runner.
+**The `publish` job runs end to end.** Tagging `v0.2.1` ran it on `ubuntu-24.04` and it succeeded first
+time: `Mobile_Webcam-0.2.1-android.apk` (`versionCode 2001`, signed with the release key),
+`Mobile_Webcam-0.2.1-x86_64.AppImage`, `SHA256SUMS`, the FFmpeg source offer, and the release itself -
+every line of the published `SHA256SUMS` verifies against the downloaded bytes. It has now done that for
+`v0.2.1` through `v0.2.4`. The Android signing secrets, the secret-to-environment mapping, the pinned
+FFmpeg build, linuxdeploy through `APPIMAGE_EXTRACT_AND_RUN`, and the publish step are proven there.
 
-The `windows` job has needed two repairs, both older defects rather than consequences of the runner move.
-The first is described below. The second surfaced behind it, in the same step: `cargo metadata` can report a
-**relative** `manifest_path` on that runner, which turned "the crate's directory" into the current directory
-so a later `source / "fonts" / name` became the relative string `fonts/OFL.txt` and killed the job
-(`FileNotFoundError: fonts/OFL.txt`), then, once that was guarded, a second one in the same command:
-`upstream_texts` read `.cargo_vcs_info.json` from a directory that resolved to the workspace root
-(`FileNotFoundError: …/host-rs/.cargo_vcs_info.json`). Both are the same class - a crate directory the
-collector cannot read - so the fix covers the class rather than the instance: a relative manifest path
-resolves against `workspace_root`, and every crate-file read either warns and continues (missing licence
-text, missing `.cargo_vcs_info.json`, missing source directory) or is not attempted. A licence collector
-that can end a release is a worse failure than a collector that names what it could not find.
-`host-rs/tools/package_licenses.py` now resolves a relative manifest
-path against the metadata's `workspace_root`, and a missing licence text is **recorded and skipped with a
-warning** instead of ending the release - a collector for license texts must not be able to stop a release
-while the remaining texts go unshipped.
+**The `windows` job does not, and never has in CI.** Each of the four tags above exposed the next
+Windows-only failure, and three of them are now fixed:
 
-The `windows` job failed on the same tag, and the reason was an **older defect that had nothing to do
-with the runner move**: `ffmpeg-sys-next`'s bindgen panicked with `Unable to generate bindings:
-ClangDiagnostic(… stdlib.h: error: expected ';' …)` because the job never pointed codegen at the mingw64
-toolchain, and msys2's `clang` has since moved to a version that will not parse the headers it was
-implicitly given. The Windows CI job in `rust-host-ci.yml` sets `LIBCLANG_PATH`, `CLANG_PATH` and
-`BINDGEN_EXTRA_CLANG_ARGS='--target=x86_64-w64-windows-gnu'` and is green; `release.yml` now sets the
-same three before its `cargo build`. **A green job in one workflow is not the same job in another** -
-the two had drifted apart in exactly the place neither was reviewed.
+1. `ffmpeg-sys-next`'s bindgen panicked (`Unable to generate bindings: ClangDiagnostic(… stdlib.h …)`)
+   because the job never told codegen which toolchain to use. The Windows CI job in `rust-host-ci.yml`
+   sets `LIBCLANG_PATH`, `CLANG_PATH` and `BINDGEN_EXTRA_CLANG_ARGS='--target=x86_64-w64-windows-gnu'` and
+   is green; `release.yml` now sets the same three. **A green job in one workflow is not the same job in
+   another** - the two had drifted apart where neither was reviewed.
+2. `package_licenses.py` ended the job on `FileNotFoundError: fonts/OFL.txt`, because `cargo metadata` on
+   that runner can report a path the collector resolved against the current directory.
+3. On the next run the same collector lost every crate's upstream texts behind a warning, because msys2's
+   POSIX python does not consider `D:\…` absolute (`Path("D:\\a\\b").is_absolute()` is `False`), so all
+   ~60 crates looked relative. `_is_absolute` now recognises a drive letter whatever interpreter reads it,
+   and every crate-file read warns and continues instead of ending a release.
+
+The remaining failure at `v0.2.4` is the UnityCapture checksum step:
+`sha256sum: WARNING: 2 listed files could not be read` - the two filter DLLs are not in
+`build/unity-capture` when the check runs, one second after the licence collector finished, which reads as
+the download having produced nothing rather than as a hash mismatch. **That has not been repaired, because
+it cannot be reproduced without a Windows runner and each attempt costs a 25-minute tag cycle.** The next
+person with a Windows shell should start there.
+
 
 ### The hosted runner carries the release now, and why that is also the safer choice
 
