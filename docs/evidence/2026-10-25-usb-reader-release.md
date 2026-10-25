@@ -117,6 +117,18 @@ That narrows the repository's earlier note that the grant is "cleared by reinsta
 updating the app": what was measured here is an update at the *same* `versionCode`, which kept
 it. A version bump was not tried, so the note is not contradicted, only narrowed.
 
+**What the grant actually is, measured 2026-10-25.** It belongs to the **uid**, not the package name, so
+an instrument cannot provoke the dialog by reinstalling: `adb uninstall -k` plus an install reuses the
+uid and keeps the grant, and `cmd usb` has no shell verb that could clear it. The path the instrument
+had never executed **has now run once**, with the app installed under a different `applicationIdSuffix`
+(hence a distinct uid and no grant): the instrument printed `no USB permission for this accessory:
+asking the device now`, and the system **opened** `com.android.systemui/.usb.UsbPermissionActivity`
+(`Displayed … +26ms` in logcat) and **closed it about 0.6 s later**, with no grant. A requester that has
+no visible Activity cannot be granted the accessory interactively, so the path is exercised to the
+request and no further - a platform boundary rather than an instrument defect. (A helper polling for the
+dialog every 2 s also cannot win a 0.6 s window; it was right to refuse to read an unrelated focused
+window instead.)
+
 The attempt to answer a dialog automatically is recorded for what it cost. The helper dumped
 whatever window was focused and read the phone's unrelated UI, because it never checked which
 window it was looking at. It issued no tap — the helper prints a line for every tap and the log

@@ -32,13 +32,16 @@ the device rows, on a real XQ-GE44 over Wi-Fi.
    adversary rather than a test.
    *Closes when:* a fresh reviewer's report exists under `docs/reviews/` and each
    finding is either fixed or answered with evidence.
-2. **Version and edition reconciliation.** The phone in the field reports
-   `versionCode 1004 / versionName 0.1.4`, the repository's release is `0.2.0`, and
-   `VERSION` drives every artifact (`docs/RELEASE.md`). Until these agree, "which
-   build am I talking to" is a guess.
-   *Closes when:* `docs/RELEASE.md` names the edition and the field build reports the
-   same string, and a release cut from `main` produces APK + Linux + Windows artifacts
-   that install over the field build.
+2. **Version and edition reconciliation.** Diagnosed 2026-10-25, and it is two separate things.
+   The numbers are *not* a discrepancy: `0.1.4` and `0.2.0` are the same scheme
+   (`versionCode = major x 1e6 + minor x 1e3 + patch`, so `1004` and `2000`), and the phone's build
+   reports what it is. The real gap is the release: **`v0.2.0` carries Linux and Windows 0.2.0
+   artifacts and only `Mobile_Webcam-0.1.4-android.apk`** — no Android 0.2.0 APK — because the
+   workflow's signing step needs the one-time secrets, and `gh secret list` is empty. `RELEASE.md`
+   now names the scheme and the editions.
+   *Closes when:* the Android signing secrets are set by the owner, a release cut from `main` produces
+   a signed `Mobile_Webcam-<version>-android.apk` alongside the others, and the field build then
+   reports the same `VERSION`.
 3. ~~**Three known lows from the 2026-10-23 review**~~ Closed: the world-readable
    fallback now supplies defaults instead of denying startup, the settings temp name is
    unpredictable, and the largest accepted frame is measured (113 MiB transient on Linux,

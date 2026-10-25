@@ -98,6 +98,22 @@
   each time, with the cause unattributed. Evidence:
   [docs/evidence/2026-10-25-g0-adb-coexistence.md](docs/evidence/2026-10-25-g0-adb-coexistence.md).
 
+- Reconcile the versions and the editions in writing, after measuring where the discrepancy actually
+  is. The numbers agree: `versionName` is `VERSION` verbatim and `versionCode` is
+  `major x 1_000_000 + minor x 1_000 + patch`, so the field's `1004 / 0.1.4` and the repository's
+  `2000 / 0.2.0` are the same scheme and the phone's build reports what it is. The gap is in the
+  release: **`v0.2.0` carries Linux and Windows 0.2.0 artifacts and only
+  `Mobile_Webcam-0.1.4-android.apk`** - no Android 0.2.0 APK - because the workflow's signing step needs
+  one-time secrets that are not set, so a release can be cut with every artifact but a matching Android
+  build. `docs/RELEASE.md` now names both numbers and both editions, and the roadmap's P0-2 records the
+  diagnosis and what closes it.
+
+- The instruments' permission path ran for the first time, and its boundary is a platform one: the USB
+  accessory grant belongs to the **uid** rather than the package name, so `adb uninstall -k` plus an
+  install keeps it and `cmd usb` has no verb to clear it; and a requester with no visible Activity gets a
+  dialog the system opens and closes within about a second, with no grant. Both facts are in the release
+  evidence and the runbook, because finding them cost a session.
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment
