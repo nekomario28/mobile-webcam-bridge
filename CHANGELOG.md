@@ -48,6 +48,10 @@
   note that reinstalling clears the grant.
   Evidence and its boundary:
   [docs/evidence/2026-10-25-usb-reader-release.md](docs/evidence/2026-10-25-usb-reader-release.md).
+  The instrument also answers the third review's open question about it now, rather than leaving it to
+  be inferred: after each close it opens a fresh descriptor and starts a fresh reader, and **10/10 of
+  those blocked on the endpoint immediately** - blocked, not `EIO` - while a reader that is still live
+  refuses a second one. The endpoint is released; a live reader is what refuses the newcomer.
 
 - Measure the last mode of the single-reader handover: who consumes a host frame while a blocked
   reader holds the endpoint. With one reader blocked, the host's 24-byte `HOST_HELLO` completed and

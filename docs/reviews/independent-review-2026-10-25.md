@@ -137,10 +137,15 @@ assumed. Whether the shipping camera emits such a payload is unmeasured, as the 
 
 ### What this pass did not reach
 
-The reviewer's three unresolved items stay unresolved, and the instrument fixes do not close them:
-**A2** (whether the kernel endpoint is released or only the JVM's read is abandoned - one of the raw
-runs does show `InterruptedIOException: read interrupted by close() on another thread`, which is a
-JVM-level message, so the question is fair), **D2** (the on-wire consequence of the two-reader state),
-and **E1** (whether "USB debugging does not have to be off" holds under active adb traffic). All three
-need a device and were not run. Its four unbroken hypotheses - B1, B2, C2, D1 - are recorded here as
-results, not as gaps.
+**A2 - ANSWERED, with a number.** The instrument now asks it directly rather than leaving it to be
+inferred: after each close it opens a fresh descriptor and starts a fresh reader. Measured on the
+XQ-GE44, **10/10 fresh descriptors blocked on the endpoint immediately afterwards** - blocked, not
+`EIO` - while a reader that is *live* still refuses a second one. So the endpoint is released, and a
+live reader is what refuses the newcomer; it is not that one release failed to take effect. See
+`docs/evidence/2026-10-25-usb-reader-release.md`, "A2, answered".
+
+The reviewer's remaining two items stay unresolved, and the instrument fixes do not close them: **D2**
+(the on-wire consequence of the two-reader state, which needs a host answering a proof rather than one
+writing a single control frame) and **E1** (whether "USB debugging does not have to be off" holds under
+active adb traffic). Both need a device and were not run. Its four unbroken hypotheses - B1, B2, C2, D1
+- are recorded here as results, not as gaps.
