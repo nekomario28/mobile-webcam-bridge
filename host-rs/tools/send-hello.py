@@ -121,7 +121,9 @@ def main():
             except usb.core.USBTimeoutError:
                 pass
         print("read before writing:", len(noise), "bytes ->", frames(noise))
-        header = struct.pack("<iBBhiiq", MAGIC, VERSION, HOST_HELLO, 0, 1, 0, 0)
+        # A distinctive sequence, because the device instrument now requires the frame it reads to
+        # be this one rather than any frame that provokes the same refusal (review 2026-10-25, ID-001).
+        header = struct.pack("<iBBhiiq", MAGIC, VERSION, HOST_HELLO, 0, 0x1234, 0, 0)
         assert len(header) == 24
         try:
             print("writing one HOST_HELLO frame:", device.write(out, header, timeout=4000), "bytes")

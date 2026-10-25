@@ -65,6 +65,22 @@
   link until a host-side re-enumeration restored it. Evidence:
   [docs/evidence/2026-10-25-usb-frame-owner.md](docs/evidence/2026-10-25-usb-frame-owner.md).
 
+- A third independent review, of what changed since the second: the local Codex CLI, read-only,
+  given the request in `docs/reviews/request-2026-10-25.md` and exactly the sixteen commits it
+  describes. It found four defects and took none of the implementer's claims on trust - the
+  frame-owner instrument's verdict could be produced by a frame it had not written, and the reviewer
+  reproduced that by feeding a PING to a fresh session and getting the same refusal sentence; its idle
+  iterations could manufacture the two-reader state they existed to control for; the raw release
+  measurement counted a "blocked" read that may never have entered the read; and the previous review's
+  Q1 disposition claimed a misaligned stream cannot be misparsed, which the reviewer disproved by
+  constructing a valid nested header. All four are fixed: the session reports every host frame it reads
+  through a seam shaped like its existing ones, the instrument requires the frame it wrote (type and
+  sequence) before reporting consumption, each iteration takes its reader off the endpoint before the
+  next arms, the raw reader proves it entered the read, and the Q1 claim now says *malformed* rather
+  than *silently wrong*. Re-measured on the XQ-GE44 afterwards: the unattributable iteration is
+  rejected as such, and the next one names `type=0x0e sequence=4660` and is the one counted. Report and
+  disposition: [docs/reviews/independent-review-2026-10-25.md](docs/reviews/independent-review-2026-10-25.md).
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment

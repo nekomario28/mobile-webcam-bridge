@@ -14,8 +14,10 @@ class AccessorySession(
     onCaptureCancelled: (MediaSession) -> Unit,
     capabilities: (() -> Wire.Capabilities?)? = null,
     onQuality: (MediaSession, Wire.HostCommand) -> Unit = { _, _ -> },
+    /** Forwarded to the session's frame seam; see [AuthorizedMediaSession]'s `onFrameRead`. */
+    onFrameRead: (Wire.Header) -> Unit = {},
 ) : AuthorizedMediaSession(FileOutputStream(pfd.fileDescriptor), authorization, Wire.AUTH_USB, ByteArray(Wire.PHONE_BINDING_BYTES),
-    capabilities, onQuality, onAuthorization, onCaptureCancelled, "mwb-usb-writer") {
+    capabilities, onQuality, onAuthorization, onCaptureCancelled, "mwb-usb-writer", onFrameRead) {
     private val running = AtomicBoolean(false)
     private var readerThread: Thread? = null
     private val input = FileInputStream(pfd.fileDescriptor)

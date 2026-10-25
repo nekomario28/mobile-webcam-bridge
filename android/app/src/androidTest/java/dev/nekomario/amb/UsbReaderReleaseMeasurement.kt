@@ -86,7 +86,8 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
             val reader = BlockingReader(pfd)
             reader.start()
             Thread.sleep(settleMs)
-            val blocked = reader.outcome == "blocked"
+            // Both halves: the read was entered, and it had not returned when the descriptor closed.
+            val blocked = reader.awaitEntered(1_000) && reader.outcome == "blocked"
             val started = System.nanoTime()
             runCatching { pfd.close() }
             val returned = reader.await(waitMs)
@@ -172,6 +173,7 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
         val reader2 = BlockingReader(second)
         reader1.start()
         reader2.start()
+        reader1.awaitEntered(1_000)
         Thread.sleep(400)
         report.append("  both open, no host: reader1=").append(reader1.outcome)
             .append(" reader2=").append(reader2.outcome).append('\n')
@@ -221,12 +223,21 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
         private val stream = runCatching { FileInputStream(pfd.fileDescriptor) }.getOrNull()
         private val finished = CountDownLatch(1)
 
+        /**
+         * Set immediately before the read, so "blocked" means "inside the read" rather than
+         * "constructed and probably scheduled by now". The first version of this instrument
+         * initialised the outcome to "blocked" and counted a 300 ms sleep as proof, which is a
+         * verdict that does not prove it measured anything (independent review, 2026-10-25, ID-003).
+         */
+        private val entered = CountDownLatch(1)
+
         @Volatile
         var outcome: String = if (stream != null) "blocked" else "no stream"
 
         private val thread = Thread({
             val buffer = ByteArray(64)
             try {
+                entered.countDown()
                 val read = stream!!.read(buffer)
                 outcome = if (read < 0) "eof" else "read $read bytes"
             } catch (error: Exception) {
@@ -241,5 +252,8 @@ class UsbReaderReleaseMeasurement(private val instrumentation: Instrumentation) 
         }
 
         fun await(timeoutMs: Long): Boolean = finished.await(timeoutMs, TimeUnit.MILLISECONDS)
+
+        /** True once the reader is inside the read: the precondition, checked rather than assumed. */
+        fun awaitEntered(timeoutMs: Long): Boolean = entered.await(timeoutMs, TimeUnit.MILLISECONDS)
     }
 }

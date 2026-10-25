@@ -356,11 +356,14 @@ staying inside the report.
 
 **Q1 — answered, with one diagnostics residue.** The guess is real: `read_raw` maps a bulk timeout
 to `Ok(0)` and `align_stream` returns `Ok(true)` on `Ok(0)`, so one silent 200 ms read declares the
-stream aligned. It cannot produce a *silently wrong* frame, which is the standard the question set:
-`wire.rs` rejects a header that does not begin `AMB1` with `invalid AMB1 header`, and
+stream aligned. It cannot produce a *malformed* frame, which is what the check inspects: `wire.rs` rejects a header
+that does not begin `AMB1` with `invalid AMB1 header`, and
 `reset_stream`'s own doc records that measured symptom (that error, then `does not support required
-per-PC authorization v2`) - the visible failure the question asked for. Discarding the boolean in
-the shipping path therefore hides no behavioural defect: both verdicts yield the same transport, and
+per-PC authorization v2`) - the visible failure the question asked for. **Corrected 2026-10-25:** the check is syntactic, so a *correctly-shaped* frame can still be misparsed
+when the verdict was a guess - the next review constructed one (a valid zero-payload header inside an
+outer `VIDEO_AU` payload) and the claim below is now written as what the code supports, not as the
+stronger thing it used to say (see `independent-review-2026-10-25.md`, ID-004). With that correction,
+discarding the boolean in the shipping path hides no behavioural defect: both verdicts yield the same transport, and
 the discriminator is the reader's own header check. The probe's difference is diagnostics only - it
 prints `warning: the stream did not show a frame boundary after the reset` and proceeds anyway.
 
