@@ -80,7 +80,14 @@ The `windows` job has needed two repairs, both older defects rather than consequ
 The first is described below. The second surfaced behind it, in the same step: `cargo metadata` can report a
 **relative** `manifest_path` on that runner, which turned "the crate's directory" into the current directory
 so a later `source / "fonts" / name` became the relative string `fonts/OFL.txt` and killed the job
-(`FileNotFoundError: fonts/OFL.txt`). `host-rs/tools/package_licenses.py` now resolves a relative manifest
+(`FileNotFoundError: fonts/OFL.txt`), then, once that was guarded, a second one in the same command:
+`upstream_texts` read `.cargo_vcs_info.json` from a directory that resolved to the workspace root
+(`FileNotFoundError: …/host-rs/.cargo_vcs_info.json`). Both are the same class - a crate directory the
+collector cannot read - so the fix covers the class rather than the instance: a relative manifest path
+resolves against `workspace_root`, and every crate-file read either warns and continues (missing licence
+text, missing `.cargo_vcs_info.json`, missing source directory) or is not attempted. A licence collector
+that can end a release is a worse failure than a collector that names what it could not find.
+`host-rs/tools/package_licenses.py` now resolves a relative manifest
 path against the metadata's `workspace_root`, and a missing licence text is **recorded and skipped with a
 warning** instead of ending the release - a collector for license texts must not be able to stop a release
 while the remaining texts go unshipped.

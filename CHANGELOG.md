@@ -192,6 +192,14 @@
   error, because a licence collector must not be able to stop a release while the rest of the texts go
   unshipped. Both targets still collect on this machine (164 records for Windows, 245 for Linux).
 
+- Close the class the Windows licence collector kept failing on, rather than one instance at a time. Two
+  more release cycles each exposed the next unguarded read in the same command: `fonts/OFL.txt` after a
+  relative manifest path, then `.cargo_vcs_info.json` from a directory that resolved to the workspace
+  root. Every crate-file read in `host-rs/tools/package_licenses.py` now either resolves correctly or
+  warns and continues, because a collector that can end a release is a worse failure than one that names
+  what it could not find; a targeted harness shows `upstream_texts` returning `[]` with a warning for a
+  directory with no vcs info, and both targets still collect unchanged (164 records Windows, 245 Linux).
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment
