@@ -348,6 +348,53 @@ measured. What remains read rather than driven is named in the two test comments
 implied: `AccessorySession.closeAndAwait`'s answer needs a `ParcelFileDescriptor` (so a device or
 an emulator), and no in-process test can observe that a second process cannot guess a token.
 
+### Questions (Q1-Q4) — disposition
+
+The three findings above were dispositioned when they were fixed. The four questions were not, and
+Q1 is a claim about code that can be answered without a device, so they are answered here instead of
+staying inside the report.
+
+**Q1 — answered, with one diagnostics residue.** The guess is real: `read_raw` maps a bulk timeout
+to `Ok(0)` and `align_stream` returns `Ok(true)` on `Ok(0)`, so one silent 200 ms read declares the
+stream aligned. It cannot produce a *silently wrong* frame, which is the standard the question set:
+`wire.rs` rejects a header that does not begin `AMB1` with `invalid AMB1 header`, and
+`reset_stream`'s own doc records that measured symptom (that error, then `does not support required
+per-PC authorization v2`) - the visible failure the question asked for. Discarding the boolean in
+the shipping path therefore hides no behavioural defect: both verdicts yield the same transport, and
+the discriminator is the reader's own header check. The probe's difference is diagnostics only - it
+prints `warning: the stream did not show a frame boundary after the reset` and proceeds anyway.
+
+The silence verdict is also not an oversight, which the question implies it might be: an accessory
+whose app has not started sending yet is *silent* (measured again on 2026-10-25: with nothing open
+on the phone, the host reads nothing), so requiring a header before answering would turn
+a normal quiet start into 64 x 200 ms of waiting and then a false failure. One probe of the endpoint
+cannot have both behaviours. What stays open is small and diagnostic: the shipping path prints
+nothing when the verdict was a guess, so the confusing case - silence mid-frame rather than before
+the first frame - arrives as `invalid AMB1 header` with no note that alignment was assumed. Closing
+its diagnostics half is closed in this pass: `Usb::connect` still does not act on the verdict -
+nothing behavioural depends on it - but it now prints the verdict under the existing `AMB_USB_TRACE`,
+so a later `invalid AMB1 header` can be read together with whether alignment was assumed. The
+empirical half stays open, and wants a device that pauses mid-payload past the read timeout so that
+the guess can be wrong inside a run.
+
+**Q2 — answered in part; the empirical half needs a device.** The gap is real and already recorded
+in the code with its repair: `video.rs` cannot call `reset_stream` because the transport is by then
+a trait object with no downcast, and the comment names the fix - keep the USB branch concrete until
+after the retry. The probe does reset between attempts and prints whether a boundary appeared. What
+cannot be answered from here is whether the shipping retry has ever *completed* on hardware after a
+misaligned first attempt, or whether the half-read stream was the reason it did not.
+
+**Q3 — still open, and it is a Windows-host question.** Nothing here can exercise it: the objects
+live in a Windows session and the observation needs a second process in that session. It stays
+inside the documented "same-user access is not an adversary" line, and the closing condition is
+unchanged - a Windows host plus a co-session process, or a decision that co-session processes are
+outside the model, which would make the namespace prefix and the producer guard a requirement.
+
+**Q4 — one half is exercised now, the other still is not.** The refusal text is no longer read-only:
+the 2026-10-23 review's second item was closed by an AccessKit test that renders every reason code
+to a title, and this review's own note agreed that it drives real code. The PipeWire node remains
+read and not exercised; starting a consumer is what would close it, and nothing in this pass did.
+
 ### Original disposition note
 
 All three findings are accepted. They are **not fixed in this commit**: each one is a change to
