@@ -3,6 +3,25 @@
 `VERSION` is the single release version for the Android APK, Linux/Windows GUIs, AppImage, Setup.exe,
 and release filenames. Releases use semantic `major.minor.patch` versions.
 
+### Versions and editions, so "which build am I talking to" has an answer
+
+Two numbers travel with an Android build, and both are derived from `VERSION` by
+`android/app/build.gradle.kts`:
+
+| | Derivation | `VERSION` 0.2.0 | the field's 0.1.4 |
+|---|---|---|---|
+| `versionName` | `VERSION` verbatim | `0.2.0` | `0.1.4` |
+| `versionCode` | `major x 1_000_000 + minor x 1_000 + patch` | `2000` | `1004` |
+
+So the field's `1004` and the repository's `2000` are the same scheme, not a discrepancy: the phone
+was running the older *edition* of the same application. What was a real discrepancy, measured
+2026-10-25, is in the release itself: **the `v0.2.0` release carries Linux and Windows 0.2.0 artifacts
+but no Android 0.2.0 APK** — the only Android asset on it is `Mobile_Webcam-0.1.4-android.apk`. The
+Android APK is produced by the release workflow after signing (`dist/Mobile_Webcam-$version-android.apk`)
+and the signing step needs the one-time secrets below; with those unset, a release can be cut with
+every other artifact and without a matching Android build. That is the whole of it, and it is why the
+field could not be moved to 0.2.0 from the releases page.
+
 ## One-time Android signing setup
 
 Create and securely retain one Android signing keystore. A later APK signed with a
