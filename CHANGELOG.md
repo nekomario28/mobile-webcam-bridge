@@ -198,7 +198,12 @@
   root. Every crate-file read in `host-rs/tools/package_licenses.py` now either resolves correctly or
   warns and continues, because a collector that can end a release is a worse failure than one that names
   what it could not find; a targeted harness shows `upstream_texts` returning `[]` with a warning for a
-  directory with no vcs info, and both targets still collect unchanged (164 records Windows, 245 Linux).
+  directory with no vcs info, and both targets still collect unchanged (164 records Windows, 245 Linux). And a fourth Windows-only defect surfaced behind it, which is **not** fixed: the UnityCapture
+  checksum step reports `sha256sum: WARNING: 2 listed files could not be read`, one second after the
+  licence collector finishes, which reads as the filter DLLs never arriving. Each of these costs a
+  25-minute tag cycle to observe and none can be reproduced without a Windows runner, so the loop stopped
+  there: `publish` is green end to end (`v0.2.1`-`v0.2.4`), `windows` is not, and RELEASE.md says so
+  rather than calling the pipeline done.
 
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader

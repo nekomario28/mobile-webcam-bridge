@@ -11,6 +11,20 @@ import tempfile
 import urllib.request
 
 
+def _is_absolute(path):
+    """Absolute on this platform *and* on Windows.
+
+    The Windows runner runs this under msys2's POSIX python, where `pathlib.Path("D:\\a\\b").is_absolute()`
+    is False - so every crate looked relative, resolved against the workspace root, and lost its upstream
+    licence texts behind a warning (measured 2026-10-25, run 40208940608: 60+ warnings, every one naming
+    `...\\host-rs`). A drive-letter path is absolute whatever interpreter is looking at it.
+    """
+    text = str(path)
+    if text.startswith(("/", "\\\\")):
+        return True
+    return bool(re.match(r"^[A-Za-z]:[\\/]", text))
+
+
 def upstream_texts(package, source, cache):
     # A crate directory we cannot identify is a warning, not a dead release: this collector's job is to
     # ship the texts it can find, and every failure here is one missing file, not a broken product.
@@ -86,7 +100,7 @@ def main():
             # the current directory, so a later `source / "fonts" / name` became the relative string
             # 'fonts/OFL.txt' and killed the release job (measured 2026-10-25, run 40204259571).
             manifest = pathlib.Path(package["manifest_path"])
-            if not manifest.is_absolute():
+            if not _is_absolute(manifest):
                 manifest = pathlib.Path(metadata["workspace_root"]) / manifest
             source = manifest.parent
             if not source.is_dir():
