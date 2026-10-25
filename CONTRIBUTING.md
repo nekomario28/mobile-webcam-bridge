@@ -1,5 +1,20 @@
 # Contributing
 
+## Before you start
+
+Find out what you are building on, and what the rules are, before the first commit:
+
+```
+git fetch && git rev-list --count HEAD..origin/main
+```
+
+A branch cut before a check existed can pass every other leg and be rejected by that one alone.
+Measured 2026-10-25: a branch fifteen commits behind `main` was rejected by `dco`, which had been
+added to `main` hours earlier, and the cost was a rewrite of thirteen commits, a rebase onto `main`,
+a correction to documentation that had described the old tree, and two full CI rounds spent on
+commits that never landed. The same fetch shows this file, `.github/workflows/` and `SECURITY.md` as
+they are now rather than as they were when the branch was cut.
+
 ## License of contributions
 
 By submitting a contribution you agree it is licensed under the same
