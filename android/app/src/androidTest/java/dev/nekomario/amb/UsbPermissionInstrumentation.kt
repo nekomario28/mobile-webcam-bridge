@@ -29,6 +29,9 @@ class UsbPermissionInstrumentation : Instrumentation() {
     /** Descriptors the frame-owner instrument holds open beyond the measured reader. */
     private var extraDescriptors = 0
 
+    /** Whether the frame-owner instrument also starts a second session on that descriptor. */
+    private var secondSession = false
+
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         disposableUi = arguments?.getString("disposableUi") == "true"
@@ -37,6 +40,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
         usbReaderMeasurement = arguments?.getString("usbReaderMeasurement") == "true"
         usbFrameOwner = arguments?.getString("usbFrameOwner") == "true"
         extraDescriptors = arguments?.getString("extraDescriptors")?.toIntOrNull() ?: 0
+        secondSession = arguments?.getString("secondSession") == "true"
         start()
     }
 
@@ -364,7 +368,7 @@ class UsbPermissionInstrumentation : Instrumentation() {
                 // than the app, and uses an in-memory repository. Measured 2026-10-25: the host's
                 // frame completed and the blocked reader consumed it — docs/evidence/
                 // 2026-10-25-usb-frame-owner.md.
-                val marker = UsbFrameOwnerMeasurement(this, extraDescriptors).run()
+                val marker = UsbFrameOwnerMeasurement(this, extraDescriptors, secondSession).run()
                 finish(Activity.RESULT_OK, Bundle().apply { putString("stream", marker) })
                 return
             }
