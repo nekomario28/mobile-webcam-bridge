@@ -1,18 +1,30 @@
 version: 2
+# A cooldown so a compromised package or action cannot be pulled in the hour it is published: zizmor
+# refuses the implicit 0-day default (four medium findings, and they had left three Dependabot pull
+# requests permanently red since 2026-10-24 because no .github change had run the lint since). Seven
+# days is the audit's own recommended floor.
 updates:
   - package-ecosystem: cargo
     directory: /host-rs
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
   - package-ecosystem: cargo
     directory: /host-rs/fuzz
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
   - package-ecosystem: gradle
     directory: /android
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7

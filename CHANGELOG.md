@@ -157,6 +157,23 @@
   the keystore and its password sit outside the repository, `0600`, and must be backed up.
   [RELEASE.md](docs/RELEASE.md) carries the procedure and the runner gap.
 
+- Run the release on a hosted runner, and bump to 0.2.1. `publish` was pinned to
+  `[self-hosted, Linux, X64, mobile-webcam]` and **no runner with that label exists** - 0 registered -
+  which is why every release run in the history is `cancelled`. On a public repository hosted minutes are
+  free and the standard runner is also the safer carrier: everything the job needs installs there, and a
+  self-hosted runner on a public repository would let a fork's pull request execute on that machine while
+  the job publishes with `contents: write`. The version bump also surfaced two guards working as
+  designed: `host-rs/tests/version.rs` refuses `VERSION` and `Cargo.toml` disagreeing (it caught the bump
+  before anything was tagged), and an AppImage built on this rolling-glibc machine is rejected by
+  `verify_distribution.py` with `glibc requirement exceeds 2.39: (2, 44)` - the artifact has to be built
+  on the oldest glibc the gate names, which `ubuntu-24.04` is.
+
+- Give Dependabot a cooldown, because the workflow lint that refuses the implicit 0-day default had been
+  red since 2026-10-24 and had left three Dependabot pull requests permanently failing. It surfaced here
+  only because touching `.github/workflows/` runs `lint-workflows` at all - the same shape of trap as a
+  gate nothing triggers. Seven days per ecosystem, the audit's own floor, so a compromised release cannot
+  be pulled in during the hour it is published.
+
 - A second independent security review. A fresh session (same model, no prior context) was
   pointed at what changed since the first pass — the `HOST_HELLO` frame, the single-reader
   handover, the phone's rate limit and the host's pacing, the new CLI surface, stream alignment

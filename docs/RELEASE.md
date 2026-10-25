@@ -67,7 +67,23 @@ Three facts decide how a release gets made right now, and none of them was true 
    machine before cutting a release**: if they are lost, the lineage is lost again, and every future
    APK needs an uninstall to install.
 
-A release by hand, when no runner is registered, is what was done and works:
+### The hosted runner carries the release now, and why that is also the safer choice
+
+`publish` runs on `ubuntu-24.04` rather than a self-hosted label, because this repository is public:
+hosted minutes are free, everything the job needs installs there (`android-actions/setup-android`, the
+pinned FFmpeg build, and linuxdeploy through `APPIMAGE_EXTRACT_AND_RUN=1` because hosted runners have no
+FUSE, which `host-rs/tools/package_linux.sh` already sets), and a self-hosted Linux runner on a public
+repository would let a fork's pull request execute on that machine while this workflow publishes with
+`contents: write`.
+
+**Build the release on the oldest glibc you support, not on a rolling distribution.** Measured
+2026-10-25: the AppImage pipeline built end to end on this Arch machine and then stopped in
+`host-rs/tools/verify_distribution.py` with `glibc requirement exceeds 2.39: (2, 44)` — the binary had
+linked against this machine's glibc. On `ubuntu-24.04` (glibc 2.39) the same steps pass, which is why the
+hosted runner is not merely convenient here: it is what makes the artifact installable on the systems the
+gate names.
+
+A release by hand, for the period before the runner existed, is what was done and works:
 
 ```
 AMB_RELEASE_STORE_FILE=…/mobile-webcam-release.jks \
