@@ -572,24 +572,155 @@ struct Auxiliary {
     error: Arc<Mutex<String>>,
 }
 #[cfg(target_os = "linux")]
+fn embedded_setup_script() -> crate::Result<String> {
+    const SCRIPT: &str = include_str!("../../linux/install-host-integration.sh");
+    const RULES: &str = include_str!("../linux/70-mobile-webcam.rules");
+    const MODPROBE: &str = include_str!("../../linux/mobile-webcam-v4l2loopback.conf");
+    const MODULES: &str = include_str!("../../linux/mobile-webcam-modules-load.conf");
+    const TERMINATOR: &str = "MOBILE_WEBCAM_ASSET_END";
+    for asset in [RULES, MODPROBE, MODULES] {
+        if asset.lines().any(|line| line == TERMINATOR) || asset.contains("__MOBILE_WEBCAM_") {
+            return Err("host setup asset is not safe to embed".into());
+        }
+    }
+    let script = SCRIPT
+        .replace("__MOBILE_WEBCAM_UDEV_RULES__", RULES.trim_end_matches('\n'))
+        .replace(
+            "__MOBILE_WEBCAM_MODPROBE_CONF__",
+            MODPROBE.trim_end_matches('\n'),
+        )
+        .replace(
+            "__MOBILE_WEBCAM_MODULES_CONF__",
+            MODULES.trim_end_matches('\n'),
+        );
+    for placeholder in [
+        "__MOBILE_WEBCAM_UDEV_RULES__",
+        "__MOBILE_WEBCAM_MODPROBE_CONF__",
+        "__MOBILE_WEBCAM_MODULES_CONF__",
+    ] {
+        if script.contains(placeholder) {
+            return Err("host setup script is missing embedded assets".into());
+        }
+    }
+    Ok(script)
+}
+
+#[cfg(target_os = "linux")]
+fn validated_device_json(device: &DeviceId) -> crate::Result<String> {
+    if device.ports.len() > 32 {
+        return Err("Invalid device identity.".into());
+    }
+    let ports = device
+        .ports
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let json = format!(
+        "{{\"bus\":{},\"address\":{},\"vid\":{},\"pid\":{},\"ports\":[{ports}]}}",
+        device.bus, device.address, device.vid, device.pid
+    );
+    let parsed: DeviceId = serde_json::from_str(&json)?;
+    if parsed != *device {
+        return Err("Invalid device identity.".into());
+    }
+    Ok(json)
+}
+
+/// Absolute path of the packaged USB helper, when this build ships one.
+/// Symbolic links are refused so a path next to the executable cannot redirect
+/// the privileged copy.
+#[cfg(target_os = "linux")]
+fn packaged_usb_helper(executable: &std::path::Path) -> crate::Result<Option<String>> {
+    let Some(parent) = executable.parent() else {
+        return Ok(None);
+    };
+    let path = parent.join("../share/mobile-webcam/linux/mobile-webcam-usb");
+    let meta = match std::fs::symlink_metadata(&path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if !meta.file_type().is_file() {
+        return Err("Invalid USB helper path.".into());
+    }
+    let canonical = path.canonicalize()?;
+    let Some(text) = canonical.to_str() else {
+        return Err("Invalid USB helper path.".into());
+    };
+    let named = canonical.file_name().and_then(|name| name.to_str()) == Some("mobile-webcam-usb");
+    let rooted = text.starts_with('/') && !text.contains('\n') && !text.contains('\0');
+    let plain = !canonical.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir | std::path::Component::CurDir
+        )
+    });
+    if !named || !rooted || !plain {
+        return Err("Invalid USB helper path.".into());
+    }
+    Ok(Some(text.to_string()))
+}
+
+/// `pkexec /bin/sh -s` with the embedded setup script. The on-disk script is
+/// not an argument: AppImage contents live on a user-writable path.
+#[cfg(target_os = "linux")]
+fn host_setup_invocation(
+    executable: &std::path::Path,
+    parent: u32,
+    device: Option<&DeviceId>,
+) -> crate::Result<(std::process::Command, String)> {
+    if parent == 0 {
+        return Err("Invalid parent PID.".into());
+    }
+    let helper = packaged_usb_helper(executable)?;
+    if device.is_some() && helper.is_none() {
+        return Err("USB helper is not included in this build.".into());
+    }
+    let mut command = std::process::Command::new("pkexec");
+    command.args(["--disable-internal-agent", "/bin/sh", "-s", "--"]);
+    if let Some(helper) = helper {
+        command.arg("--helper").arg(helper);
+    }
+    if let Some(device) = device {
+        command
+            .arg("--switch-parent")
+            .arg(parent.to_string())
+            .arg("--device-json")
+            .arg(validated_device_json(device)?);
+    }
+    Ok((command, embedded_setup_script()?))
+}
+
+#[cfg(target_os = "linux")]
 impl Session {
     fn auxiliary(
         &mut self,
         mut command: std::process::Command,
         message: Option<&DeviceId>,
+        script: Option<&str>,
         restart: Option<(Settings, Option<DeviceId>, bool)>,
         ctx: egui::Context,
     ) -> crate::Result<()> {
-        use std::io::Read;
+        use std::io::{Read, Write};
         if self.running() {
             return Err("session is already running".into());
+        }
+        if script.is_some() && message.is_some() {
+            return Err("host setup cannot share standard input".into());
         }
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()?;
-        if let Some(message) = message {
+        if let Some(script) = script {
+            let mut input = child.stdin.take().ok_or("helper input unavailable")?;
+            if let Err(error) = input.write_all(script.as_bytes()) {
+                let _ = child.kill();
+                return Err(error.into());
+            }
+        } else if let Some(message) = message {
             let result = control::write(
                 &mut child.stdin.take().ok_or("helper input unavailable")?,
                 message,
@@ -648,11 +779,14 @@ impl Session {
         self.auxiliary(
             command,
             Some(&device),
+            None,
             Some((settings, Some(device.clone()), true)),
             ctx,
         )
     }
     fn setup_available(&self) -> bool {
+        // Packaging still ships the script next to the executable. Its presence
+        // means this build includes host integration. pkexec does not run it.
         self.setup_script().is_file()
     }
     fn setup_script(&self) -> std::path::PathBuf {
@@ -694,16 +828,15 @@ impl Session {
             Some(id) if !crate::usb::accessory(id.vid, id.pid) => crate::usb::access_denied(id)?,
             _ => false,
         };
-        let mut command = std::process::Command::new("pkexec");
-        command
-            .args(["--disable-internal-agent", "/bin/sh"])
-            .arg(self.setup_script());
-        if switched {
-            command.args(["--switch-parent", &std::process::id().to_string()]);
-        }
+        let (command, script) = host_setup_invocation(
+            &self.executable,
+            std::process::id(),
+            if switched { device.as_ref() } else { None },
+        )?;
         self.auxiliary(
             command,
-            if switched { device.as_ref() } else { None },
+            None,
+            Some(&script),
             Some((settings, device.clone(), switched)),
             ctx,
         )
@@ -1068,6 +1201,7 @@ mod tests {
             .auxiliary(
                 command,
                 None,
+                None,
                 Some((Settings::default(), None, false)),
                 ctx.clone(),
             )
@@ -1104,6 +1238,7 @@ mod tests {
             .auxiliary(
                 std::process::Command::new("true"),
                 None,
+                None,
                 Some((settings.clone(), None, false)),
                 ctx.clone(),
             )
@@ -1138,6 +1273,7 @@ mod tests {
             .auxiliary(
                 std::process::Command::new("false"),
                 None,
+                None,
                 Some((latest, None, false)),
                 ctx.clone(),
             )
@@ -1150,5 +1286,244 @@ mod tests {
         }
         assert!(matches!(session.state, State::Failed(_)));
         assert!(!captured.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    fn shell_output(script: &str, args: &[&str]) -> std::process::Output {
+        use std::io::Write;
+        let mut child = std::process::Command::new("/bin/sh");
+        child
+            .args(["-s", "--"])
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = child.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn assert_shell_failure(output: &std::process::Output, expected: &str) {
+        assert!(
+            !output.status.success(),
+            "setup script succeeded: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "stderr {stderr:?} does not contain {expected:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn setup_feeds_pkexec_an_embedded_script_not_a_sibling_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("My Webcam");
+        let executable_dir = root.join("usr/bin");
+        let share = root.join("usr/share/mobile-webcam/linux");
+        std::fs::create_dir_all(&executable_dir).unwrap();
+        std::fs::create_dir_all(&share).unwrap();
+        let executable = executable_dir.join("mobile-webcam");
+        std::fs::write(&executable, b"not-executed").unwrap();
+        let planted = share.join("install-host-integration.sh");
+        std::fs::write(&planted, b"#!/bin/sh\necho pwned\n").unwrap();
+        std::fs::set_permissions(&planted, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let helper = share.join("mobile-webcam-usb");
+        std::fs::write(&helper, b"#!/bin/sh\necho helper\n").unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let device = crate::usb::DeviceId {
+            bus: 1,
+            address: 4,
+            vid: 0x18d1,
+            pid: 0x4ee2,
+            ports: vec![2, 1],
+        };
+        let json = super::validated_device_json(&device).unwrap();
+        assert_eq!(json, serde_json::to_string(&device).unwrap());
+        assert!(
+            super::validated_device_json(&crate::usb::DeviceId {
+                ports: vec![1; 33],
+                ..device.clone()
+            })
+            .is_err()
+        );
+        assert!(super::host_setup_invocation(&executable, 0, None).is_err());
+
+        let (command, script) =
+            super::host_setup_invocation(&executable, 4242, Some(&device)).unwrap();
+        assert_eq!(command.get_program(), "pkexec");
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_str().unwrap().to_string())
+            .collect();
+        let helper_path = helper.canonicalize().unwrap();
+        let helper_text = helper_path.to_str().unwrap();
+        assert_eq!(
+            args,
+            vec![
+                "--disable-internal-agent",
+                "/bin/sh",
+                "-s",
+                "--",
+                "--helper",
+                helper_text,
+                "--switch-parent",
+                "4242",
+                "--device-json",
+                json.as_str(),
+            ]
+        );
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.contains("install-host-integration"))
+        );
+        assert!(!args.iter().any(|arg| arg.contains("pwned")));
+        assert!(helper_text.contains("My Webcam"));
+        assert!(script.contains("Refusing to replace modified"));
+        assert!(script.contains("Invalid parent PID."));
+        assert!(script.contains("Accessory-mode access is independent"));
+        assert!(script.contains(
+            "options v4l2loopback video_nr=10 card_label=\"Mobile Webcam\" exclusive_caps=1"
+        ));
+        assert!(script.contains("\nv4l2loopback\n"));
+        assert!(!script.contains("__MOBILE_WEBCAM_UDEV_RULES__"));
+        assert!(!script.contains("__MOBILE_WEBCAM_MODPROBE_CONF__"));
+        assert!(!script.contains("__MOBILE_WEBCAM_MODULES_CONF__"));
+        assert!(!script.contains("pwned"));
+
+        let mut syntax = std::process::Command::new("/bin/sh");
+        syntax.arg("-n").stdin(Stdio::piped());
+        let mut syntax = syntax.spawn().unwrap();
+        {
+            use std::io::Write;
+            syntax
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(script.as_bytes())
+                .unwrap();
+        }
+        assert!(syntax.wait().unwrap().success());
+
+        assert_shell_failure(
+            &shell_output(
+                &script,
+                &[
+                    "--helper",
+                    "/anywhere/mobile-webcam-usb",
+                    "--switch-parent",
+                    "0",
+                    "--device-json",
+                    &json,
+                ],
+            ),
+            "Invalid parent PID.",
+        );
+        assert_shell_failure(
+            &shell_output(
+                &script,
+                &[
+                    "--helper",
+                    "/anywhere/mobile-webcam-usb",
+                    "--switch-parent",
+                    "abc",
+                    "--device-json",
+                    &json,
+                ],
+            ),
+            "Invalid parent PID.",
+        );
+        assert_shell_failure(
+            &shell_output(&script, &["--helper", "relative/mobile-webcam-usb"]),
+            "Invalid USB helper path.",
+        );
+        assert_shell_failure(
+            &shell_output(
+                &script,
+                &[
+                    "--helper",
+                    "/tmp/../mobile-webcam-usb",
+                    "--switch-parent",
+                    "9",
+                    "--device-json",
+                    &json,
+                ],
+            ),
+            "Invalid USB helper path.",
+        );
+        assert_shell_failure(
+            &shell_output(
+                &script,
+                &[
+                    "--helper",
+                    helper_text,
+                    "--switch-parent",
+                    "9",
+                    "--device-json",
+                    "{\"bus\":1};touch /tmp/pwned",
+                ],
+            ),
+            "Invalid device identity.",
+        );
+
+        let marker = directory.path().join("helper-ran");
+        let malicious = directory.path().join("mobile-webcam-usb");
+        std::fs::write(
+            &malicious,
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&malicious, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let link_dir = directory.path().join("linked");
+        std::fs::create_dir_all(&link_dir).unwrap();
+        let link = link_dir.join("mobile-webcam-usb");
+        std::os::unix::fs::symlink(&malicious, &link).unwrap();
+        assert_shell_failure(
+            &shell_output(&script, &["--helper", link.to_str().unwrap()]),
+            "USB helper is not included",
+        );
+        let output = shell_output(
+            &script,
+            &[
+                "--helper",
+                helper_text,
+                "--switch-parent",
+                "9",
+                "--device-json",
+                &json,
+            ],
+        );
+        assert_shell_failure(&output, "Run this installer with sudo.");
+        assert!(!marker.exists());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.contains("pwned"));
+        std::fs::remove_file(&helper).unwrap();
+        std::os::unix::fs::symlink(&malicious, &helper).unwrap();
+        assert!(super::packaged_usb_helper(&executable).is_err());
+
+        let on_disk = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../linux/install-host-integration.sh");
+        let file_mode = std::process::Command::new("/bin/sh")
+            .arg(&on_disk)
+            .output()
+            .unwrap();
+        assert_shell_failure(&file_mode, "Run this installer with sudo.");
+        let bad_pid = std::process::Command::new("/bin/sh")
+            .arg(&on_disk)
+            .args(["--switch-parent", "0"])
+            .output()
+            .unwrap();
+        assert_shell_failure(&bad_pid, "Invalid parent PID.");
     }
 }
