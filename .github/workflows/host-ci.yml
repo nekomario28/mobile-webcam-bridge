@@ -23,7 +23,7 @@ jobs:
         run: |
           apt-get update -qq
           apt-get install -y --no-install-recommends ca-certificates git build-essential cmake pkg-config libusb-1.0-0-dev libavcodec-dev libavutil-dev libswscale-dev qt6-base-dev
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           clean: true
