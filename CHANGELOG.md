@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 - 2026-10-26
+
+The release pipeline's windows half now reaches the installer. Four failures in a row were one
+cause plus three things it had been hiding: a CRLF checkout made the UnityCapture checksum read
+its own file names as `....dll\r`; CMake handed msys2 python a path it opened as relative; the
+verifier is now called from the job's shell the way `package_linux.sh` calls it; and every path
+given to CMake is in the `D:/...` form that CMake and the native tools read the same way, which
+is what the NSIS delete manifest needed. The publish job also installs `fonts-noto-cjk`, because
+it runs the GUI test harness and egui 0.37 refuses to draw a character nothing can.
+
 ## 0.3.0 - 2026-10-26
 
 Everything from the 0.2.x line is below; this section is what changed after the `v0.2.4` tag.
