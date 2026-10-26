@@ -64,8 +64,13 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
+          # fonts-noto-cjk: linux/build-rust-appimage.sh runs the test suite, and egui 0.37's
+          # harness panics on a character nothing can draw. The Japanese status lines need a
+          # CJK font on the machine that runs them (measured 2026-10-26, the v0.3.0 publish run
+          # failed here for exactly that reason while rust-host-ci was green).
           sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev \
-            libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev
+            libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev \
+            fonts-noto-cjk
           rustup toolchain install 1.98.1 --profile minimal
           rustup default 1.98.1
           cargo --version
@@ -271,6 +276,13 @@ jobs:
             -DAMB_FFMPEG_ROOT="$FFMPEG_DIR" \
             -DAMB_RUST_LICENSES="$licenses" \
             -P windows/package.cmake
+          # From this shell, the way package_linux.sh does it. CMake handed msys2 python a path
+          # it could not open - "can't open file '/d/a/.../D:/a/.../verify_distribution.py'",
+          # the v0.3.0 release run - because the two tools spell an absolute path differently.
+          # The stage name still comes from package.cmake, which writes it out for us.
+          stage=$(cygpath -u "$(cat dist/.stage-dir)")
+          /usr/bin/python3 host-rs/tools/verify_distribution.py windows "$stage" \
+            --objdump /mingw64/bin/objdump.exe
           ls -la dist
       - name: Upload Windows artifact to the release
         shell: bash
