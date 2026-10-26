@@ -32,9 +32,14 @@ jobs:
       - name: Native dependencies and pinned Rust
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev
+          sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev fonts-noto-cjk
           rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
           rustup default 1.98.1
+      # fonts-noto-cjk: the GUI searches Noto Sans CJK JP / Yu Gothic / Meiryo for Japanese
+      # labels, and egui_kittest panics on a character nothing can draw. Without a CJK font
+      # the harness reported `No glyph for "\u6a5f" (U+6A5F)` on this runner while passing on a
+      # desktop that has one (measured 2026-10-26, #107). The font belongs in the image; the
+      # panic belongs in the harness.
       - name: Formatting, lints and the test suite
         run: |
           python3 host-rs/tools/build_ffmpeg.py linux --prefix "$PWD/host-rs/target/native-linux" --cache "$PWD/host-rs/target/ffmpeg-source"
@@ -57,7 +62,7 @@ jobs:
       - name: Native dependencies and pinned Rust
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev qt6-base-dev
+          sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev fonts-noto-cjk qt6-base-dev
           rustup toolchain install 1.98.1 --profile minimal
           rustup default 1.98.1
       - name: Release builds and the Qt settings round-trip
@@ -88,7 +93,7 @@ jobs:
       - name: Native dependencies and pinned Rust
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev libpipewire-0.3-dev
+          sudo apt-get install -y build-essential pkg-config nasm python3 libclang-dev libva-dev libdrm-dev libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev fonts-noto-cjk libpipewire-0.3-dev
           rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
           rustup default 1.98.1
       - name: Build and test the PipeWire backend
