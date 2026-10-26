@@ -46,7 +46,9 @@ transport-specific code is limited to connect and the optional security layer.
 **If the machine can do it, the user is not asked to.** The PC on a USB cable takes
 the phone's fingerprint and access key itself, so the phone does not present them: the
 reveal control, the key block, key rotation and "erase authorization data" sit behind
-Details, and nothing reveals the key on its own. The manual path stays documented where
+Details, and nothing reveals the key on its own. **Send Wi-Fi pairing to PC** is the
+exception that stays on the main screen once the USB PC is authorized — opening
+Details was an extra tap, and the button does not reveal the key. The manual path stays documented where
 it is needed — a PC that cannot use the cable — as a fallback rather than a step. The
 same reading applies to tests: `updateControls` had been deciding that button's
 visibility on its own and overruling the disclosure, which no test noticed, so the rule
@@ -147,9 +149,10 @@ how-to and "Forget paired phone" inside `Details`, where they are still editable
 First-time pairing does not have to be typed either: on a USB session the phone
 can hand the PC its Wi-Fi details (address, certificate SHA-256 and access key) as
 a `PAIRING_INFO` frame, and the PC stores them exactly as if they had been entered.
-The user presses that button on the phone; the PC shows what it received and
-switches to Wi-Fi on one click, because dropping a working USB stream is a
-decision rather than a step. It is not an authorization — the phone still approves
+The user presses that button on the phone's main screen (it is visible once the
+USB session is authorized); the PC shows what it received and switches to Wi-Fi
+on one click, because dropping a working USB stream is a decision rather than a
+step. The phone then taps Wi-Fi. Nothing is typed. It is not an authorization — the phone still approves
 each PC — and it makes the cable part of the pairing's trust boundary, which is
 the limit USB already has.
 

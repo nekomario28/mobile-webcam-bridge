@@ -15,6 +15,7 @@ pub mod secure;
 pub mod session;
 pub mod settings;
 pub mod transport;
+pub mod ttff;
 pub mod usb;
 pub mod usb_probe;
 #[cfg(feature = "video")]

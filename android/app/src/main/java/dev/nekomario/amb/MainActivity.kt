@@ -19,6 +19,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.ParcelFileDescriptor
 import android.view.Gravity
 import android.view.View
@@ -105,6 +106,14 @@ class MainActivity : Activity() {
     private var usbPermissionRequestId: String? = null
 
     private val handler = Handler(Looper.getMainLooper())
+    /** Monotonic. TTFF durations are not wall-clock timestamps. */
+    private val ttffOriginMs = SystemClock.elapsedRealtime()
+    private val ttffSeen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    private fun ttff(phase: String) {
+        if (!ttffSeen.add(phase)) return
+        android.util.Log.i(Ttff.TAG, Ttff.line(phase, ttffOriginMs, SystemClock.elapsedRealtime()))
+    }
     private val rediscoverRunnable = Runnable {
         if (connectionMode == ConnectionMode.USB && session == null && !isFinishing && !isDestroyed) {
             discoverUsb()
@@ -202,6 +211,7 @@ class MainActivity : Activity() {
                     showConnectionStatus(ui("Camera stopped", "カメラを停止しました"))
                 } else {
                     cameraStartRequested = true
+                    ttff("camera_requested")
                     updateControls()
                     startCamera()
                 }
@@ -284,10 +294,8 @@ class MainActivity : Activity() {
                     )
                 }.onSuccess { payload ->
                     usbSession.sendPairingInfo(payload)
-                    show(ui(
-                        "Wi-Fi pairing sent to the PC. Nothing to type there.",
-                        "Wi-Fi設定をPCへ送りました。PC側の入力は不要です。"
-                    ))
+                    val sent = SetupGuide.pairingSent()
+                    show(ui(sent.english, sent.japanese))
                 }.onFailure {
                     show(ui(
                         "Could not send the pairing details: ${it.message}",
@@ -339,6 +347,8 @@ class MainActivity : Activity() {
                 })
                 addView(approvalUi.root, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(cameraButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(12) })
+                // On the main screen once a USB PC is authorized: the short Wi-Fi path.
+                addView(sendPairingAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(cameras, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 // Everything below appears only while Details is open: the address and
                 // the how-to are instructions, the pairing key is the fallback for a PC
@@ -349,7 +359,6 @@ class MainActivity : Activity() {
                 addView(lanHelp, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(pairAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(pairInfo, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                addView(sendPairingAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(rotateAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(storageAction, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
                 addView(details, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -385,6 +394,7 @@ class MainActivity : Activity() {
             registerReceiver(permissionReceiver, filter)
         }
         receiverRegistered = true
+        ttff("phone_open")
         if (!createAuthorizationOwner()) return
         if (getSharedPreferences("settings", MODE_PRIVATE).getString("connectionMode", "USB") == "LAN") {
             startLanMode()
@@ -522,6 +532,7 @@ class MainActivity : Activity() {
         handler.post {
             if (session !== origin || isFinishing || isDestroyed) return@post
             if (origin.clientAuthorization?.isAuthorized() == true) {
+                ttff("pc_authorized")
                 show(ui("PC authorized\nPress Start camera", "PCを許可しました\n「カメラ開始」を押してください"))
             } else {
                 stopCamera()
@@ -627,6 +638,7 @@ class MainActivity : Activity() {
                         closeSession()
                         session = lanSession
                         bindQualitySession(lanSession)
+                        ttff("wifi_client")
                         show(ui("PC connected\nWaiting for authorization", "PC接続済み\n接続許可を確認しています"))
                     }
                 }
@@ -676,7 +688,8 @@ class MainActivity : Activity() {
         if (accessory == null) {
             clearUsbPermissionRequest()
             usbPermissionDeclined = false
-            show(ui("USB: press Connect on the PC", "USB: PCで「接続」を押してください"))
+            val waiting = SetupGuide.usbWaitingForHost()
+            show(ui(waiting.english, waiting.japanese))
             scheduleRediscover()
             return
         }
@@ -791,6 +804,7 @@ class MainActivity : Activity() {
         session = active
         bindQualitySession(active)
         active.start()
+        ttff("usb_open")
         show(ui("USB attached\nWaiting for PC authorization", "USB接続済み\nPCの接続許可を確認しています"))
     }
 
@@ -897,11 +911,13 @@ class MainActivity : Activity() {
             onStarted = { config ->
                 handler.post {
                     if (cameraBridge === bridge && session === activeSession) {
+                        ttff("phone_camera_started")
                         qualityController?.captureStarted(config.size.width, config.size.height, config.fps)
                         advertisedCapabilities = advertisedCapabilities?.copy(streamEpoch = qualityController?.epoch ?: 0)
                     }
                 }
             },
+            onFirstAccessUnit = { ttff("phone_first_au") },
             onError = { message ->
                 handler.post {
                     if (cameraBridge === bridge) {
@@ -1039,11 +1055,12 @@ class MainActivity : Activity() {
         storageAction.visibility = if (open || storageFailed) View.VISIBLE else View.GONE
         rotateAction.visibility =
             if (open && connectionMode == ConnectionMode.LAN) View.VISIBLE else View.GONE
-        // Sending pairing details needs the cable and a live session to send them on.
-        // Only for an authorized PC: that is what the hand-off is for, and an unauthorized write
-        // is refused by the host's authorization exchange (independent review, ID-003).
+        // Sending pairing details needs the cable and a live authorized session.
+        // It stays on the main screen: opening Details was an extra tap on the
+        // short Wi-Fi path, and the key itself stays behind Details.
+        // An unauthorized write is refused by the host (independent review, ID-003).
         sendPairingAction.visibility =
-            if (open && connectionMode == ConnectionMode.USB &&
+            if (connectionMode == ConnectionMode.USB &&
                 session?.clientAuthorization?.isAuthorized() == true
             ) View.VISIBLE else View.GONE
     }

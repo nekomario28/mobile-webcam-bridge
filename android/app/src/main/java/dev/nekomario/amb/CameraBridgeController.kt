@@ -10,9 +10,12 @@ class CameraBridgeController(
     private val onStatus: (String) -> Unit,
     private val onError: (String) -> Unit,
     private val onStarted: (CameraEncoderSession.ActiveConfig) -> Unit = {},
+    /** Once, when the first access unit is handed to the transport. TTFF only. */
+    private val onFirstAccessUnit: () -> Unit = {},
 ) : AutoCloseable {
     private var cameraSession: CameraEncoderSession? = null
     private val closed = AtomicBoolean(false)
+    private val reportedFirstUnit = AtomicBoolean(false)
     // Serialises start() against close(): a cancellation that lands while the
     // camera session is being constructed must not be missed (REV-003).
     private val lifecycle = Any()
@@ -28,7 +31,10 @@ class CameraBridgeController(
             }
 
             override fun onAccessUnit(unit: H264Encoder.AccessUnit) {
-                if (!closed.get()) session.onAccessUnit(unit, generation)
+                if (!closed.get()) {
+                    session.onAccessUnit(unit, generation)
+                    if (reportedFirstUnit.compareAndSet(false, true)) onFirstAccessUnit()
+                }
             }
 
             override fun onEncoderError(message: String, cause: Throwable?) {

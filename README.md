@@ -16,15 +16,19 @@ unreviewed and is not a release-readiness claim.
 [Download](https://github.com/nekomario28/mobile-webcam-bridge/releases/latest)
 the Android APK and the desktop app for your OS.
 
-1. Open Mobile Webcam on your phone and PC.
-2. Choose USB or Wi-Fi on both. For a TLS-capable development build, tap
-   **Show pairing key** on the phone and enter its certificate SHA-256
-   fingerprint and 128-bit access key in the desktop Wi-Fi fields. Verify the
-   fingerprint directly on the phone before pressing **Connect**.
-3. In authorization-v2 development builds, match the PC ID and approve that PC
-   on the phone first (USB needs no QR). Then press **Start camera** on the phone
-   and allow camera access. Approval alone never starts capture.
-4. Select **Mobile Webcam** in your camera application.
+1. Open Mobile Webcam on your phone and PC. The phone starts on USB.
+2. **USB:** plug in the cable. On the PC, press **Connect** (a single phone is
+   already selected). On the phone, allow USB access and tick **always allow**,
+   allow this PC for 90 days, then press **Start camera** and allow the camera.
+   Approval alone never starts capture.
+3. **Wi-Fi, first time:** finish step 2 until the PC is allowed, then press
+   **Send Wi-Fi pairing to PC** on the phone (nothing to type). On the phone tap
+   **Wi-Fi**. On the PC press **Switch to Wi-Fi**, allow the PC if it asks, then
+   **Start camera**. A PC that cannot use the cable can still open **Details →
+   Show pairing key** and type the address, the certificate SHA-256, and the
+   128-bit key. Verify the fingerprint on the phone before **Connect**.
+4. Select **Mobile Webcam** in your camera application. The PC window previews
+   the picture before that app is opened.
 
 While it streams, the PC window shows a preview of what the camera delivers, so
 you can frame yourself without opening another app. The preview also works when
