@@ -10,12 +10,40 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # bindgen 0.73.2 does not compile in this graph: it still parses `syn::file::File` with
+      # `parse_quote!`, and the syn 3.0.8 that zbus/accesskit pull in dropped that impl -
+      # "the trait bound `syn::file::File: syn::parse_quote::ParseQuote` is not satisfied"
+      # (measured 2026-10-26 on host-rs, #109, and on the fuzz workspace, #103). Remove this
+      # when a bindgen release supports syn 3.
+      - dependency-name: bindgen
+        versions: [">=0.73.0"]
+      # ffmpeg-sys-next 9.0.1 generates bindings that do not compile for
+      # x86_64-pc-windows-gnu: `E0080: attempt to compute 4_usize - 64_usize` inside
+      # `offset_of!(__tile1024i_str, tile)` in the generated bindings, while Linux is fine
+      # (rust-host-ci windows leg, 2026-10-26, #115). Remove this when upstream fixes it.
+      - dependency-name: ffmpeg-sys-next
+        versions: [">=9.0.1"]
   - package-ecosystem: cargo
     directory: /host-rs/fuzz
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # bindgen 0.73.2 does not compile in this graph: it still parses `syn::file::File` with
+      # `parse_quote!`, and the syn 3.0.8 that zbus/accesskit pull in dropped that impl -
+      # "the trait bound `syn::file::File: syn::parse_quote::ParseQuote` is not satisfied"
+      # (measured 2026-10-26 on host-rs, #109, and on the fuzz workspace, #103). Remove this
+      # when a bindgen release supports syn 3.
+      - dependency-name: bindgen
+        versions: [">=0.73.0"]
+      # ffmpeg-sys-next 9.0.1 generates bindings that do not compile for
+      # x86_64-pc-windows-gnu: `E0080: attempt to compute 4_usize - 64_usize` inside
+      # `offset_of!(__tile1024i_str, tile)` in the generated bindings, while Linux is fine
+      # (rust-host-ci windows leg, 2026-10-26, #115). Remove this when upstream fixes it.
+      - dependency-name: ffmpeg-sys-next
+        versions: [">=9.0.1"]
   - package-ecosystem: gradle
     directory: /android
     schedule:
