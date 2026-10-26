@@ -40,19 +40,24 @@ jobs:
           packages: platform-tools
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
-          gradle-version: '8.9'
+          # The wrapper is the single owner of the Gradle version: AGP 9 needs
+          # 9.6+, and pinning a version here meant a wrapper bump changed
+          # nothing in CI (measured 2026-10-26: AGP 9.4.1 refused to apply
+          # with "Minimum supported Gradle version is 9.6.0. Current version
+          # is 8.9" while the wrapper already said 9.8.1).
+          gradle-version: wrapper
       - name: Build Android app and instrumented smoke test
         working-directory: android
         run: |
           set -euo pipefail
-          gradle --no-daemon assembleDebug assembleDebugAndroidTest
+          ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest
           sha256sum app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk > ../build/secure-wifi/apk-sha256.txt
       - name: Verify Android Keystore and TLS 1.3 on API 35 emulator
         id: conformance
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "emulator" "system-images;android-35;google_apis;x86_64"
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "build-tools;36.0.0" "emulator" "system-images;android-35;google_apis;x86_64"
           export ANDROID_AVD_HOME="$RUNNER_TEMP/secure-wifi-avd"
           mkdir -p "$ANDROID_AVD_HOME"
           echo no | avdmanager create avd -n secure-wifi -k "system-images;android-35;google_apis;x86_64" --device pixel

@@ -45,13 +45,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "build-tools;36.0.0"
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
-          gradle-version: '8.9'
+          # The wrapper is the single owner of the Gradle version: AGP 9 needs
+          # 9.6+, and pinning a version here meant a wrapper bump changed
+          # nothing in CI (measured 2026-10-26: AGP 9.4.1 refused to apply
+          # with "Minimum supported Gradle version is 9.6.0. Current version
+          # is 8.9" while the wrapper already said 9.8.1).
+          gradle-version: wrapper
       - name: Assemble and lint debug/release APKs
         working-directory: android
-        run: gradle --no-daemon --stacktrace assembleDebug lintDebug assembleRelease lintRelease assembleDebugAndroidTest testDebugUnitTest
+        run: ./gradlew --no-daemon --stacktrace assembleDebug lintDebug assembleRelease lintRelease assembleDebugAndroidTest testDebugUnitTest
       - name: Verify APK
         shell: bash
         run: |
