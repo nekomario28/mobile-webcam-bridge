@@ -96,7 +96,7 @@ jobs:
           python3 android/tools/capture_ui.py
       - name: Upload Android UI captures
         if: always() && github.event_name == 'workflow_dispatch' && inputs.capture_ui
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mobile-webcam-android-ui
           path: build/android-ui
@@ -104,7 +104,7 @@ jobs:
           retention-days: 7
       - name: Upload APKs, lint and unit-test reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mobile-webcam-debug-apk
           path: |
