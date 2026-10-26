@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2 - 2026-10-26
+
+The windows installer is built from a script that carries its own delete macros. `makensis`
+reported `!include: could not find` for a generated file that CMake's own `EXISTS` called
+present, at the same absolute path, so the packaging script no longer asks NSIS to open a
+second absolute path: `windows/package.cmake` prepends the macros to a copy of
+`windows/installer.nsi` and hands NSIS one script. Version bumps this round are bundled with
+the packaging fix because each tag costs a 35-minute windows build.
+
 ## 0.3.1 - 2026-10-26
 
 The release pipeline's windows half now reaches the installer. Four failures in a row were one
