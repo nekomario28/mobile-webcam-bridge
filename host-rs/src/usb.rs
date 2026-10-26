@@ -442,6 +442,53 @@ impl Transport for Usb {
     }
 }
 
+/// Keep the selected phone across unplug, AOA re-enumeration, and replug.
+///
+/// Address and product id change when Android enters accessory mode and again
+/// when the cable is replugged. The physical port (bus + port path) is what
+/// stays. Once the phone has been lost, a single suggested device is that
+/// phone coming back on a hub that renumbered. Two suggested phones are not
+/// a guess.
+pub fn reconcile_selection(
+    selected: &mut Option<DeviceId>,
+    lost: &mut bool,
+    devices: &[Candidate],
+) {
+    if let Some(current) = selected.clone() {
+        if devices.iter().any(|candidate| candidate.id == current) {
+            *lost = false;
+            return;
+        }
+        if let Some(same_port) = devices.iter().find(|candidate| {
+            candidate.id.bus == current.bus && candidate.id.ports == current.ports
+        }) {
+            *selected = Some(same_port.id.clone());
+            *lost = false;
+            return;
+        }
+        let suggested: Vec<_> = devices
+            .iter()
+            .filter(|candidate| candidate.suggested)
+            .collect();
+        if *lost && suggested.len() == 1 {
+            *selected = Some(suggested[0].id.clone());
+            *lost = false;
+            return;
+        }
+        *lost = true;
+        return;
+    }
+    if !*lost {
+        let suggested: Vec<_> = devices
+            .iter()
+            .filter(|candidate| candidate.suggested)
+            .collect();
+        if suggested.len() == 1 {
+            *selected = Some(suggested[0].id.clone());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,5 +508,75 @@ mod tests {
             assert!(!accessory(0x18d1, pid));
         }
         assert!(!accessory(0x0fce, 0x2d00));
+    }
+
+    fn id(bus: u8, address: u8, vid: u16, pid: u16, ports: &[u8]) -> DeviceId {
+        DeviceId {
+            bus,
+            address,
+            vid,
+            pid,
+            ports: ports.to_vec(),
+        }
+    }
+
+    fn phone(id: DeviceId) -> Candidate {
+        Candidate {
+            id,
+            name: "phone".into(),
+            suggested: true,
+        }
+    }
+
+    #[test]
+    fn the_same_port_survives_accessory_mode_and_a_replug() {
+        let original = id(1, 5, 0x0fce, 0x020d, &[2, 1]);
+        let mut selected = Some(original);
+        let mut lost = false;
+        reconcile_selection(&mut selected, &mut lost, &[]);
+        assert!(lost);
+        assert_eq!(selected.as_ref().map(|device| device.address), Some(5));
+        let accessory = id(1, 9, 0x18d1, 0x2d01, &[2, 1]);
+        reconcile_selection(&mut selected, &mut lost, &[phone(accessory.clone())]);
+        assert!(!lost);
+        assert_eq!(selected.unwrap(), accessory);
+    }
+
+    #[test]
+    fn a_renumbered_bus_adopts_the_only_suggested_phone() {
+        let original = id(1, 5, 0x0fce, 0x020d, &[2, 1]);
+        let mut selected = Some(original);
+        let mut lost = false;
+        reconcile_selection(&mut selected, &mut lost, &[]);
+        assert!(lost);
+        let back = id(3, 2, 0x0fce, 0x020d, &[1]);
+        reconcile_selection(&mut selected, &mut lost, &[phone(back.clone())]);
+        assert!(!lost);
+        assert_eq!(selected.unwrap(), back);
+    }
+
+    #[test]
+    fn two_suggested_phones_are_not_a_guess() {
+        let original = id(1, 5, 0x0fce, 0x020d, &[2]);
+        let mut selected = Some(original);
+        let mut lost = false;
+        reconcile_selection(&mut selected, &mut lost, &[]);
+        let devices = vec![
+            phone(id(2, 1, 0x0fce, 0x020d, &[1])),
+            phone(id(2, 2, 0x18d1, 0x4ee7, &[3])),
+        ];
+        reconcile_selection(&mut selected, &mut lost, &devices);
+        assert!(lost);
+        assert_eq!(selected.as_ref().map(|device| device.bus), Some(1));
+    }
+
+    #[test]
+    fn the_first_list_selects_the_only_suggested_phone() {
+        let mut selected = None;
+        let mut lost = false;
+        let only = phone(id(1, 4, 0x0fce, 0x020d, &[1]));
+        reconcile_selection(&mut selected, &mut lost, std::slice::from_ref(&only));
+        assert_eq!(selected.unwrap().address, only.id.address);
+        assert!(!lost);
     }
 }

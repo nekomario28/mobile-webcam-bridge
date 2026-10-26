@@ -99,9 +99,9 @@ the claim each one would let us make.
   does not prove a DirectShow consumer sees frames.
   *Closes when:* a Windows machine shows the virtual camera in another app and the
   preview renders.
-- ~~**Reconnect backoff made visible.**~~ Closed: the line reads
-  `スマホを待っています (2回目/8・4秒後に再試行)` / `Waiting for the phone (retry 2 of 8 in 4 s)`,
-  with a test pinning the wording including an already-expired deadline.
+- ~~**Reconnect backoff made visible.**~~ Closed: the note reads
+  `2回目/8・4秒後に再試行` / `retry 2 of 8 in 4 s`, under the status `再接続中` /
+  `Reconnecting`, with a test pinning the note including an already-expired deadline.
 - ~~**The preview's own cost.**~~ Closed 2026-10-21:
   [2026-10-21-preview-cost.md](evidence/2026-10-21-preview-cost.md) — 320 µs per frame
   and 5 µs to publish, **0.33 % of one core at 10 Hz** for 1280x720 and 1920x1080

@@ -10,5 +10,6 @@
     <item name="deny_client" type="id" />
     <item name="authorized_clients" type="id" />
     <item name="storage_action" type="id" />
+    <item name="retry_connection" type="id" />
     <item name="lan_help" type="id" />
 </resources>

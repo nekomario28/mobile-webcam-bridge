@@ -104,6 +104,18 @@ class MainActivity : Activity() {
     private var usbPermissionRequest: PendingIntent? = null
     private var usbPermissionDeclined = false
     private var usbPermissionRequestId: String? = null
+    /**
+     * The user had pressed Start camera when the link dropped. Approval on the
+     * next session may start capture again. A refusal, an explicit stop, or a
+     * mode change clears it. A first approval never sets it.
+     */
+    private var resumeCaptureWhenAuthorized = false
+    /** The status should say reconnecting, not a fresh idle wait. */
+    private var linkReconnecting = false
+    private var usbRediscoverAttempt = 0
+    private enum class ConnectionProblem { USB, WIFI }
+    private var connectionProblem: ConnectionProblem? = null
+    private lateinit var retryAction: Button
 
     private val handler = Handler(Looper.getMainLooper())
     /** Monotonic. TTFF durations are not wall-clock timestamps. */
@@ -169,6 +181,13 @@ class MainActivity : Activity() {
             setAllCaps(false)
             setOnClickListener { startLanMode() }
         }
+        retryAction = Button(this).apply {
+            id = R.id.retry_connection
+            text = ui("Retry", "再試行")
+            setAllCaps(false)
+            visibility = View.GONE
+            setOnClickListener { retryConnection() }
+        }
         lanHelp = TextView(this).apply {
             id = R.id.lan_help
             textSize = 12f
@@ -207,6 +226,7 @@ class MainActivity : Activity() {
             setAllCaps(false)
             setOnClickListener {
                 if (cameraStartRequested) {
+                    clearReconnect()
                     stopCamera()
                     showConnectionStatus(ui("Camera stopped", "カメラを停止しました"))
                 } else {
@@ -345,6 +365,7 @@ class MainActivity : Activity() {
                     addView(usbMode, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginEnd = dp(4) })
                     addView(lanMode, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginStart = dp(4) })
                 })
+                addView(retryAction, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(8) })
                 addView(approvalUi.root, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 addView(cameraButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(12) })
                 // On the main screen once a USB PC is authorized: the short Wi-Fi path.
@@ -534,9 +555,46 @@ class MainActivity : Activity() {
             if (origin.clientAuthorization?.isAuthorized() == true) {
                 ttff("pc_authorized")
                 show(ui("PC authorized\nPress Start camera", "PCを許可しました\n「カメラ開始」を押してください"))
+                if (resumeCaptureWhenAuthorized) {
+                    resumeCaptureWhenAuthorized = false
+                    linkReconnecting = false
+                    connectionProblem = null
+                    cameraStartRequested = true
+                    val transport = if (connectionMode == ConnectionMode.USB) "USB" else "Wi-Fi"
+                    show(ui("$transport · Reconnecting camera", "$transport · カメラを再接続しています"))
+                    startCamera()
+                } else {
+                    show(ui("PC authorized\nPress Start camera", "PCを許可しました\n「カメラ開始」を押してください"))
+                }
             } else {
+                // A new session starts unauthorized. Remember a capture that was
+                // already running before this callback stops it. A later refusal
+                // clears the flag from the transport error.
+                if (cameraBridge != null || cameraStartRequested) {
+                    resumeCaptureWhenAuthorized = true
+                    linkReconnecting = true
+                }
                 stopCamera()
-                show(ui("PC authorization required", "PCの接続許可が必要です"))
+                // The session is still this one. "Unplug the cable" belongs to the
+                // error path, after the session is gone. Here the PC is attached
+                // and the next step is its approval — including a reconnect, which
+                // resumes the camera once that approval arrives. A refusal that
+                // already explained itself (connectionProblem) must not be replaced
+                // by the generic line.
+                when {
+                    linkReconnecting && connectionProblem == null && connectionMode == ConnectionMode.USB ->
+                        show(ui(
+                            "USB attached\nWaiting for PC authorization",
+                            "USB接続済み\nPCの接続許可を確認しています",
+                        ))
+                    linkReconnecting && connectionProblem == null ->
+                        show(ui(
+                            "PC connected\nWaiting for authorization",
+                            "PC接続済み\n接続許可を確認しています",
+                        ))
+                    connectionProblem != null -> Unit
+                    else -> show(ui("PC authorization required", "PCの接続許可が必要です"))
+                }
             }
         }
     }
@@ -585,6 +643,7 @@ class MainActivity : Activity() {
     private fun startUsbMode() {
         if (authorizationOwner == null) return
         if (connectionMode == ConnectionMode.USB && (session != null || usbPermissionRequest != null || cameraStartRequested)) return
+        clearReconnect()
         handler.removeCallbacks(rediscoverRunnable)
         stopCamera()
         lanServer?.close()
@@ -598,14 +657,20 @@ class MainActivity : Activity() {
         discoverUsb()
     }
 
-    private fun startLanMode() {
+    private fun startLanMode(keepResume: Boolean = false) {
         val authorization = authorizationOwner ?: return
         if (connectionMode == ConnectionMode.LAN && lanServer != null) return
+        val resume = keepResume && resumeCaptureWhenAuthorized
+        if (!keepResume) clearReconnect()
         handler.removeCallbacks(rediscoverRunnable)
         stopCamera()
         closeSession()
         connectionMode = ConnectionMode.LAN
         clearUsbPermissionRequest()
+        if (resume) {
+            resumeCaptureWhenAuthorized = true
+            linkReconnecting = true
+        }
         saveConnectionMode()
         // Nothing is auto-revealed: the PC takes the pairing itself over the cable,
         // and the key behind Details is the fallback for a PC that cannot.
@@ -629,14 +694,17 @@ class MainActivity : Activity() {
                     if (!connected) {
                         // Only the currently displayed session may clear the UI.
                         if (session === lanSession) {
+                            noteUnexpectedDrop(null)
                             stopCamera()
                             session = null
+                            if (linkReconnecting) connectionProblem = ConnectionProblem.WIFI
                             showLanWaiting()
                         }
                     } else if (lanSession.isActive()) {
                         // Ignore a late connect event after that client disconnected.
                         closeSession()
                         session = lanSession
+                        connectionProblem = null
                         bindQualitySession(lanSession)
                         ttff("wifi_client")
                         show(ui("PC connected\nWaiting for authorization", "PC接続済み\n接続許可を確認しています"))
@@ -647,7 +715,19 @@ class MainActivity : Activity() {
                 handler.post { if (lanServer === server && session == null) showLanWaiting() }
             },
             onError = { error ->
-                handler.post { if (lanServer === server && session == null) showLanWaiting(error) }
+                handler.post {
+                    if (lanServer !== server) return@post
+                    if (!ReconnectPolicy.shouldResume(error)) {
+                        resumeCaptureWhenAuthorized = false
+                        linkReconnecting = false
+                        connectionProblem = ConnectionProblem.WIFI
+                        details.text = error
+                        val copy = ReconnectPolicy.wifiRefused()
+                        show(ui(copy.english, copy.japanese))
+                        return@post
+                    }
+                    if (session == null && !linkReconnecting) showLanWaiting(error)
+                }
             },
             capabilities = { advertisedCapabilities },
             onQuality = ::onQualityCommand,
@@ -677,7 +757,12 @@ class MainActivity : Activity() {
         }
         lanHelp.text = lanHelpText
         applySecondaryVisibility()
-        show(ui("Wi-Fi · waiting for the PC", "Wi-Fi · PCの接続を待っています"))
+        if (linkReconnecting) {
+            val copy = ReconnectPolicy.wifiReconnecting()
+            show(ui(copy.english, copy.japanese))
+        } else {
+            show(ui("Wi-Fi · waiting for the PC", "Wi-Fi · PCの接続を待っています"))
+        }
     }
 
     private fun discoverUsb() {
@@ -688,8 +773,13 @@ class MainActivity : Activity() {
         if (accessory == null) {
             clearUsbPermissionRequest()
             usbPermissionDeclined = false
-            val waiting = SetupGuide.usbWaitingForHost()
-            show(ui(waiting.english, waiting.japanese))
+            // A drop already told the user we are reconnecting. Don't replace
+            // that with the first-run "press Connect" line while the cable is out.
+            if (!linkReconnecting) {
+                connectionProblem = null
+                val waiting = SetupGuide.usbWaitingForHost()
+                show(ui(waiting.english, waiting.japanese))
+            }
             scheduleRediscover()
             return
         }
@@ -722,7 +812,11 @@ class MainActivity : Activity() {
     }
 
     private fun showUsbPermissionDeclined() {
-        show(ui("USB access declined\nTap USB to try again", "USBの利用許可がありません\nUSBを選び直すと再試行します"))
+        connectionProblem = ConnectionProblem.USB
+        show(ui(
+            "USB access declined\nPress Retry, and allow USB access.",
+            "USBの利用許可がありません\n「再試行」を押し、USBの利用を許可してください。",
+        ))
     }
 
     private fun clearUsbPermissionRequest() {
@@ -731,10 +825,22 @@ class MainActivity : Activity() {
         usbPermissionRequestId = null
     }
 
-    private fun scheduleRediscover() {
+    private fun scheduleRediscover(backoff: Boolean = false) {
         handler.removeCallbacks(rediscoverRunnable)
         if (connectionMode == ConnectionMode.USB && !isFinishing && !isDestroyed && session == null) {
-            handler.postDelayed(rediscoverRunnable, REDISCOVER_DELAY_MS)
+            val delay = if (backoff) {
+                val attempt = usbRediscoverAttempt
+                usbRediscoverAttempt = attempt + 1
+                android.util.Log.i(
+                    "MobileWebcamReconnect",
+                    ReconnectPolicy.logLine("usb", attempt, ReconnectPolicy.rediscoverDelayMs(attempt)),
+                )
+                ReconnectPolicy.rediscoverDelayMs(attempt)
+            } else {
+                usbRediscoverAttempt = 0
+                REDISCOVER_DELAY_MS
+            }
+            handler.postDelayed(rediscoverRunnable, delay)
         }
     }
 
@@ -750,26 +856,32 @@ class MainActivity : Activity() {
         // Refuse while a reader from an earlier session is still alive on this endpoint, and
         // refuse on the object itself rather than on a field that was already cleared.
         if (readerHandover.refuseWhileReading()) {
+            connectionProblem = ConnectionProblem.USB
             show(ui(
-                "The previous USB session is still reading. Unplug and replug the cable.",
-                "前のUSBセッションがまだ読み取り中です。ケーブルを挿し直してください。"
+                "The previous USB session is still reading. Unplug and replug the cable, then press Retry.",
+                "前のUSBセッションがまだ読み取り中です。ケーブルを挿し直してから「再試行」を押してください。"
             ))
-            scheduleRediscover()
+            scheduleRediscover(backoff = true)
             return
         }
         readerHandover.clear()
         if (!closeSession()) {
+            connectionProblem = ConnectionProblem.USB
             show(ui(
-                "The previous USB session did not stop. Unplug and replug the cable.",
-                "前のUSBセッションが停止しませんでした。ケーブルを挿し直してください。"
+                "The previous USB session did not stop. Unplug and replug the cable, then press Retry.",
+                "前のUSBセッションが停止しませんでした。ケーブルを挿し直してから「再試行」を押してください。"
             ))
-            scheduleRediscover()
+            scheduleRediscover(backoff = true)
             return
         }
         val pfd = usb.openAccessory(accessory)
         if (pfd == null) {
-            show(ui("Could not open USB accessory. Retrying…", "USB accessoryを開けません。再試行します…"))
-            scheduleRediscover()
+            connectionProblem = ConnectionProblem.USB
+            show(ui(
+                "Could not open USB accessory. Retrying…\nIf this stays here, unplug and replug the cable, then press Retry.",
+                "USB accessoryを開けません。再試行します…\n戻らないときはケーブルを挿し直して「再試行」を押してください。",
+            ))
+            scheduleRediscover(backoff = true)
             return
         }
         accessoryFd = pfd
@@ -793,10 +905,22 @@ class MainActivity : Activity() {
             onError = { error ->
                 handler.post {
                     if (session === active) {
+                        if (!ReconnectPolicy.shouldResume(error)) {
+                            resumeCaptureWhenAuthorized = false
+                            linkReconnecting = false
+                        } else {
+                            noteUnexpectedDrop(error)
+                        }
                         closeSession()
-                        show(ui("USB disconnected: $error\nWaiting to reconnect…",
-                               "USB切断: $error\n再接続を待っています…"))
-                        scheduleRediscover()
+                        connectionProblem = ConnectionProblem.USB
+                        details.text = error
+                        val copy = if (ReconnectPolicy.shouldResume(error)) {
+                            ReconnectPolicy.usbReconnecting()
+                        } else {
+                            ReconnectPolicy.usbRefused()
+                        }
+                        show(ui(copy.english, copy.japanese))
+                        scheduleRediscover(backoff = true)
                     }
                 }
             },
@@ -805,6 +929,8 @@ class MainActivity : Activity() {
         bindQualitySession(active)
         active.start()
         ttff("usb_open")
+        usbRediscoverAttempt = 0
+        connectionProblem = null
         show(ui("USB attached\nWaiting for PC authorization", "USB接続済み\nPCの接続許可を確認しています"))
     }
 
@@ -923,7 +1049,10 @@ class MainActivity : Activity() {
                     if (cameraBridge === bridge) {
                         qualityController?.captureFailed()
                         stopCamera()
-                        showConnectionStatus(ui("Camera error: $message", "カメラエラー: $message"))
+                        showConnectionStatus(ui(
+                            "Camera error: $message\nPress Start camera to try again.",
+                            "カメラエラー: $message\n「カメラ開始」でもう一度試してください。",
+                        ))
                     }
                 }
             },
@@ -940,7 +1069,10 @@ class MainActivity : Activity() {
         }.onFailure {
             qualityController?.captureFailed()
             stopCamera()
-            showConnectionStatus(ui("Camera start failed: ${it.message}", "カメラ開始に失敗しました: ${it.message}"))
+            showConnectionStatus(ui(
+                "Camera start failed: ${it.message}\nPress Start camera to try again.",
+                "カメラ開始に失敗しました: ${it.message}\n「カメラ開始」でもう一度試してください。",
+            ))
         }
     }
 
@@ -980,6 +1112,10 @@ class MainActivity : Activity() {
         if (::approvalUi.isInitialized) approvalUi.refresh()
         cameraButton.backgroundTintList = ColorStateList.valueOf(getColor(if (cameraButton.isEnabled) R.color.app_accent else R.color.app_inactive))
         cameraButton.setTextColor(if (cameraButton.isEnabled) Color.WHITE else getColor(R.color.app_muted))
+        if (::retryAction.isInitialized) {
+            retryAction.visibility = if (connectionProblem != null && cameraBridge == null) View.VISIBLE else View.GONE
+            retryAction.isEnabled = authorizationOwner != null
+        }
         cameraButton.text = when {
             cameraBridge != null -> ui("Stop camera", "カメラ停止")
             cameraStartRequested -> ui("Cancel", "キャンセル")
@@ -1105,8 +1241,12 @@ class MainActivity : Activity() {
             startCamera()
         }
         else {
+            clearReconnect()
             stopCamera()
-            showConnectionStatus(ui("Camera permission denied", "カメラ権限が必要です"))
+            showConnectionStatus(ui(
+                "Camera permission denied\nAllow the camera, then press Start camera.",
+                "カメラ権限が必要です\nカメラを許可してから「カメラ開始」を押してください。",
+            ))
         }
     }
 
@@ -1132,11 +1272,48 @@ class MainActivity : Activity() {
     }
 
     private fun stopConnections() {
+        clearReconnect()
         handler.removeCallbacks(rediscoverRunnable)
         clearUsbPermissionRequest()
         closeSession()
         lanServer?.close()
         lanServer = null
+    }
+
+    private fun clearReconnect() {
+        resumeCaptureWhenAuthorized = false
+        linkReconnecting = false
+        connectionProblem = null
+        usbRediscoverAttempt = 0
+    }
+
+    /** Call while the camera is still up. [stopCamera] clears the start request. */
+    private fun noteUnexpectedDrop(reason: String?) {
+        val capturing = cameraBridge != null || cameraStartRequested
+        if (capturing && ReconnectPolicy.shouldResume(reason)) {
+            resumeCaptureWhenAuthorized = true
+            linkReconnecting = true
+        } else if (!ReconnectPolicy.shouldResume(reason)) {
+            resumeCaptureWhenAuthorized = false
+            linkReconnecting = false
+        }
+    }
+
+    private fun retryConnection() {
+        when (connectionMode) {
+            ConnectionMode.USB -> {
+                usbPermissionDeclined = false
+                clearUsbPermissionRequest()
+                usbRediscoverAttempt = 0
+                connectionProblem = null
+                if (session == null) discoverUsb()
+            }
+            ConnectionMode.LAN -> {
+                lanServer?.close()
+                lanServer = null
+                startLanMode(keepResume = true)
+            }
+        }
     }
 
     private fun show(message: String) {

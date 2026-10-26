@@ -112,6 +112,14 @@ pub struct App {
     connect_at: Option<std::time::Instant>,
     /// The first submitted frame of this connect attempt has already been logged.
     ttff_logged: bool,
+    /// The session had connected. A later failure is a drop, not a cold start.
+    recover_from_drop: bool,
+    /// USB reconnect is waiting for the phone to reappear. Not a counted dial.
+    usb_wait_for_device: bool,
+    /// The wait has seen the phone leave. A replug failure must not dial again
+    /// until then: the accessory is still on the bus, and another attempt finds
+    /// the same stuck session.
+    usb_absent_seen: bool,
     /// Where the unusable key was moved, shown after a replacement.
     recovery_note: Option<String>,
     #[cfg(feature = "capture")]
@@ -171,10 +179,37 @@ impl App {
     /// Uses the same entry point as the Connect button: Linux has `connect`
     /// (USB permission handling lives there), Windows has `start`.
     fn auto_connect(&mut self, ctx: &egui::Context) {
-        if self.settings.transport != "lan"
-            || !self.settings.lan_pairing_complete()
-            || self.session.running()
-        {
+        if self.session.running() {
+            return;
+        }
+        let usb = self.settings.transport == "usb";
+        let lan = self.settings.transport == "lan" && self.settings.lan_pairing_complete();
+        if usb {
+            // A cold start stays a press of Connect: switching the phone into
+            // accessory mode, and the polkit prompt that can go with it, is a
+            // decision. A drop sets the wait flag or the attempt counter.
+            if !self.usb_wait_for_device && self.auto_retries == 0 {
+                return;
+            }
+            let absent = self.selected.is_none() || self.selection_lost;
+            if absent {
+                self.usb_absent_seen = true;
+            }
+            if !usb_may_dial(self.usb_wait_for_device, absent, self.usb_absent_seen) {
+                // Still gone, or still the phone a replug was asked for. Waiting
+                // does not spend a dial.
+                if absent {
+                    self.usb_wait_for_device = true;
+                }
+                if !self.auto_retry_suppressed {
+                    let delay = auto_retry_delay(1);
+                    self.auto_retry = Some(std::time::Instant::now() + delay);
+                }
+                return;
+            }
+            self.usb_wait_for_device = false;
+            self.usb_absent_seen = false;
+        } else if !lan {
             return;
         }
         self.note_connect_attempt();
@@ -189,34 +224,77 @@ impl App {
             .start(self.settings.clone(), self.selected.clone(), ctx.clone());
         match result {
             Ok(()) => {
-                self.auto_retries = 0;
+                // The attempt is already counted. Zeroing here runs on every
+                // spawn — `connect` returns before the phone answers — so a
+                // drop would restart at 1 forever and never reach the cap.
+                // Waiting and Streaming are what clear the budget.
                 self.auto_retry = None;
             }
             Err(error) => {
+                // One schedule, on the next frame: doing it here as well counted
+                // the same failure twice.
                 self.session.state = State::Failed(error.to_string());
-                self.schedule_retry(&error.to_string());
             }
         }
     }
 
-    /// Try again later when the failure is the phone not being there yet.
+    /// Apply [plan_retry] and say so. The log line is tokens and numbers only.
     ///
     /// A phone that has not been opened, or has just been restarted, is the
-    /// ordinary case: the PC is already running and waiting. Retrying with a
-    /// bounded backoff removes the "press Connect again" step, and stops for good
-    /// on failures that no retry can fix (a rejected key or a fingerprint that does
-    /// not match) or after a minute of trying.
-    fn schedule_retry(&mut self, error: &str) {
-        if self.auto_retry_suppressed || !auto_retry_is_useful(error) {
-            self.auto_retry = None;
-            return;
+    /// ordinary case. Retrying with a bounded backoff removes the "press Connect
+    /// again" step, and stops for good on failures that no retry can fix (a
+    /// rejected key, a fingerprint that does not match, a driver the user must
+    /// install) or after eight attempts.
+    fn arm_retry(&mut self, error: &str) {
+        let plan = plan_retry(&RetryInput {
+            suppressed: self.auto_retry_suppressed,
+            pending_or_live: true,
+            retries: self.auto_retries,
+            usb: self.settings.transport == "usb",
+            device_absent: self.selection_lost || self.selected.is_none(),
+            error,
+        });
+        match plan {
+            RetryPlan::Ignore => {}
+            RetryPlan::Stop => {
+                self.auto_retry = None;
+                self.usb_wait_for_device = false;
+                self.usb_absent_seen = false;
+            }
+            RetryPlan::Exhausted => {
+                self.auto_retry = None;
+                self.usb_wait_for_device = false;
+                self.usb_absent_seen = false;
+                self.auto_retries = AUTO_RETRY_LIMIT.saturating_add(1);
+            }
+            RetryPlan::WaitForDevice => {
+                self.usb_wait_for_device = true;
+                if self.selection_lost || self.selected.is_none() {
+                    self.usb_absent_seen = true;
+                }
+                let delay = auto_retry_delay(1);
+                self.auto_retry = Some(std::time::Instant::now() + delay);
+                eprintln!("{}", reconnect_line("usb", 0, delay.as_millis()));
+            }
+            RetryPlan::Dial {
+                attempt,
+                delay_secs,
+            } => {
+                self.usb_wait_for_device = false;
+                self.usb_absent_seen = false;
+                self.auto_retries = attempt;
+                let delay = std::time::Duration::from_secs(delay_secs);
+                self.auto_retry = Some(std::time::Instant::now() + delay);
+                eprintln!(
+                    "{}",
+                    reconnect_line(
+                        transport_label(&self.settings.transport),
+                        attempt,
+                        delay.as_millis(),
+                    )
+                );
+            }
         }
-        self.auto_retries = self.auto_retries.saturating_add(1);
-        if self.auto_retries > AUTO_RETRY_LIMIT {
-            self.auto_retry = None;
-            return;
-        }
-        self.auto_retry = Some(std::time::Instant::now() + auto_retry_delay(self.auto_retries));
     }
 
     /// One connect attempt started. The line is a phase and a duration.
@@ -406,6 +484,9 @@ impl App {
             ttff_origin: Instant::now(),
             connect_at: None,
             ttff_logged: false,
+            recover_from_drop: false,
+            usb_wait_for_device: false,
+            usb_absent_seen: false,
             preview: None,
             preview_texture: None,
             preview_path,
@@ -763,6 +844,92 @@ impl Refusal {
     }
 }
 
+fn transport_label(transport: &str) -> &str {
+    match transport {
+        "usb" | "lan" => transport,
+        _ => "unknown",
+    }
+}
+
+/// `reconnect transport=usb attempt=2 delay_ms=4000`
+fn reconnect_line(transport: &str, attempt: u32, delay_ms: u128) -> String {
+    format!(
+        "reconnect transport={} attempt={attempt} delay_ms={delay_ms}",
+        transport_label(transport)
+    )
+}
+
+fn wants_replug(error: &str) -> bool {
+    let lowered = error.to_lowercase();
+    lowered.contains("unplug")
+        || lowered.contains("selected usb device disconnected")
+        || lowered.contains("physical port")
+}
+
+struct RetryInput<'a> {
+    suppressed: bool,
+    pending_or_live: bool,
+    retries: u32,
+    usb: bool,
+    device_absent: bool,
+    error: &'a str,
+}
+
+enum RetryPlan {
+    Ignore,
+    Stop,
+    /// Eight dials have failed. The status tells the user to press Connect.
+    Exhausted,
+    WaitForDevice,
+    Dial {
+        attempt: u32,
+        delay_secs: u64,
+    },
+}
+
+/// A USB automatic attempt may dial only when a phone is selected.
+/// While waiting out a replug, the phone must have been seen to leave first:
+/// the accessory is still enumerated, and dialing finds the same stuck session.
+fn usb_may_dial(wait_for_device: bool, absent: bool, absent_seen: bool) -> bool {
+    if absent {
+        return false;
+    }
+    if wait_for_device && !absent_seen {
+        return false;
+    }
+    true
+}
+
+/// One decision for a failure. Waiting for a cable does not spend a dial.
+fn plan_retry(input: &RetryInput<'_>) -> RetryPlan {
+    if !input.pending_or_live {
+        return RetryPlan::Ignore;
+    }
+    if input.suppressed || !auto_retry_is_useful(input.error) {
+        return RetryPlan::Stop;
+    }
+    if input.usb && (input.device_absent || wants_replug(input.error)) {
+        return RetryPlan::WaitForDevice;
+    }
+    let attempt = input.retries.saturating_add(1);
+    if attempt > AUTO_RETRY_LIMIT {
+        return RetryPlan::Exhausted;
+    }
+    RetryPlan::Dial {
+        attempt,
+        delay_secs: auto_retry_delay(attempt).as_secs(),
+    }
+}
+
+fn wait_for_device_note(remaining: std::time::Duration, japanese: bool) -> String {
+    let seconds = remaining.as_secs() + u64::from(remaining.subsec_millis() > 0);
+    if japanese {
+        format!("USBのスマホを待っています・{seconds}秒後に確認")
+    } else {
+        format!("waiting for the USB phone, checking in {seconds} s")
+    }
+}
+
 /// Whether another attempt can plausibly succeed.
 ///
 /// A phone that is not listening yet is worth retrying; a rejected access key or a
@@ -770,13 +937,19 @@ impl Refusal {
 /// only hides the real fix behind a spinner.
 fn auto_retry_is_useful(error: &str) -> bool {
     let lowered = error.to_lowercase();
-    const HOPELESS: [&str; 6] = [
+    const HOPELESS: [&str; 12] = [
         "fingerprint",
         "access key",
         "explicit recovery",
         "pairing",
         "not authorized",
         "unauthorized",
+        "v4l2loopback",
+        "host setup is not included",
+        "setup request failed",
+        "access denied",
+        "winusb",
+        "does not support android open accessory",
     ];
     !HOPELESS.iter().any(|needle| lowered.contains(needle))
 }
@@ -802,11 +975,22 @@ impl eframe::App for App {
                 self.auto_attempt_pending = false;
                 self.auto_retries = 0;
                 self.auto_retry = None;
+                self.recover_from_drop = true;
+                self.usb_wait_for_device = false;
+                self.usb_absent_seen = false;
             }
-            State::Failed(error) if self.auto_attempt_pending => {
+            State::Connecting | State::ApprovalPending(_) => {
+                // In flight. A later failure is a drop. Don't zero the budget:
+                // doing that on every Connecting frame would never reach the cap.
+                self.auto_attempt_pending = false;
+                self.recover_from_drop = true;
+                self.auto_retry = None;
+            }
+            State::Failed(error) if self.auto_attempt_pending || self.recover_from_drop => {
                 let error = error.clone();
                 self.auto_attempt_pending = false;
-                self.schedule_retry(&error);
+                self.recover_from_drop = false;
+                self.arm_retry(&error);
             }
             _ => {}
         }
@@ -958,36 +1142,23 @@ impl eframe::App for App {
         while let Ok(result) = self.usb_events.try_recv() {
             match result {
                 Ok(devices) => {
-                    if self
-                        .selected
-                        .as_ref()
-                        .is_some_and(|id| !devices.iter().any(|c| c.id == *id))
-                    {
-                        let old = self.selected.as_ref().unwrap();
-                        let switched = if self.session.running() {
-                            devices.iter().find(|candidate| {
-                                candidate.id.bus == old.bus
-                                    && candidate.id.ports == old.ports
-                                    && usb::accessory(candidate.id.vid, candidate.id.pid)
-                            })
-                        } else {
-                            None
-                        };
-                        if let Some(candidate) = switched {
-                            self.selected = Some(candidate.id.clone());
-                            self.selection_lost = false;
-                        } else {
-                            self.selection_lost = true;
-                        }
-                    }
-                    if self.selected.is_none() && !self.selection_lost {
-                        let suggested: Vec<_> = devices.iter().filter(|c| c.suggested).collect();
-                        if suggested.len() == 1 {
-                            self.selected = Some(suggested[0].id.clone());
-                        }
-                    }
+                    usb::reconcile_selection(
+                        &mut self.selected,
+                        &mut self.selection_lost,
+                        &devices,
+                    );
                     self.devices = devices;
                     self.usb_error = None;
+                    // The phone came back between timer ticks. Connect now instead
+                    // of waiting out a delay that was only there because it was gone.
+                    if self.usb_wait_for_device
+                        && self.selected.is_some()
+                        && !self.selection_lost
+                        && !self.session.running()
+                        && !self.auto_retry_suppressed
+                    {
+                        self.auto_connect(ctx);
+                    }
                 }
                 Err(e) => self.usb_error = Some(e.to_string()),
             }
@@ -1200,12 +1371,20 @@ impl eframe::App for App {
                             if running {
                                 self.auto_retry = None;
                                 self.auto_retry_suppressed = true;
+                                self.recover_from_drop = false;
+                                self.usb_wait_for_device = false;
+                                self.usb_absent_seen = false;
+                                self.auto_attempt_pending = false;
                                 self.session.stop(ui.ctx());
                             } else {
                                 // A deliberate press clears the earlier "stop".
                                 self.auto_retry_suppressed = false;
                                 self.auto_retries = 0;
                                 self.note_connect_attempt();
+                                self.auto_attempt_pending = true;
+                                self.usb_wait_for_device = false;
+                                self.usb_absent_seen = false;
+                                self.recover_from_drop = false;
                                 #[cfg(target_os = "linux")]
                                 let result = if self.settings.transport == "usb"
                                     && self.session.usb_permission.is_some()
@@ -1253,16 +1432,31 @@ impl eframe::App for App {
                             State::Streaming => self.text("Camera connected", "カメラ接続中").to_string(),
                             State::Stopping => self.text("Disconnecting…", "切断中…").to_string(),
                             State::Failed(error) => {
-                                if let Some(at) = self.auto_retry {
-                                    // Retrying by itself: say so instead of leaving the
-                                    // failure looking final, which is what makes people
-                                    // press Connect again — and say how many attempts
-                                    // are left and when the next one is, because "retrying"
-                                    // alone cannot be told apart from "stuck".
-                                    let remaining = at.saturating_duration_since(std::time::Instant::now());
-                                    let note = retry_note(self.auto_retries, AUTO_RETRY_LIMIT, remaining, japanese());
-                                    let title = self.text("Waiting for the phone", "スマホを待っています");
-                                    format!("{title} ({note})")
+                                if self.auto_retry.is_some() || self.usb_wait_for_device {
+                                    // Not a final failure: say reconnecting, and say when.
+                                    let title = self.text("Reconnecting", "再接続中");
+                                    if let Some(at) = self.auto_retry {
+                                        let remaining = at.saturating_duration_since(std::time::Instant::now());
+                                        let note = if self.usb_wait_for_device {
+                                            wait_for_device_note(remaining, self.ja)
+                                        } else {
+                                            retry_note(
+                                                self.auto_retries,
+                                                AUTO_RETRY_LIMIT,
+                                                remaining,
+                                                self.ja,
+                                            )
+                                        };
+                                        format!("{title} ({note})")
+                                    } else {
+                                        title.to_string()
+                                    }
+                                } else if self.auto_retries > AUTO_RETRY_LIMIT {
+                                    self.text(
+                                        "Reconnecting stopped. Press Connect to try again.",
+                                        "再接続を止めました。「接続」でもう一度試してください。",
+                                    )
+                                    .to_string()
                                 } else if error.contains("v4l2loopback") || error.contains("host setup is not included")
                                 {
                                     self.text("Camera driver unavailable", "カメラドライバーを利用できません").to_string()
@@ -1280,7 +1474,11 @@ impl eframe::App for App {
                             }
                         };
                         if !status.is_empty() {
-                            if matches!(self.session.state, State::Failed(_)) {
+                            let retrying = matches!(self.session.state, State::Failed(_))
+                                && (self.auto_retry.is_some() || self.usb_wait_for_device);
+                            if retrying {
+                                ui.colored_label(egui::Color32::YELLOW, egui::RichText::new(status).strong());
+                            } else if matches!(self.session.state, State::Failed(_)) {
                                 ui.colored_label(egui::Color32::LIGHT_RED, egui::RichText::new(status).strong());
                             } else {
                                 ui.label(egui::RichText::new(status).strong());
@@ -1359,6 +1557,7 @@ impl eframe::App for App {
                             ui.add(egui::Label::new(egui::RichText::new(grouped).monospace()).wrap());
                         }
                         if let State::Failed(error) = &self.session.state {
+                            let lowered = error.to_lowercase();
                             let next = if error.contains("v4l2loopback") || error.contains("host setup is not included") {
                                 self.text("Install v4l2loopback for your OS, then reconnect.", "OSにv4l2loopbackを導入して、接続し直してください。")
                             } else if error.contains("fingerprint mismatch") {
@@ -1373,11 +1572,24 @@ impl eframe::App for App {
                                     "The stored PC key cannot be read. It has been left untouched. Replacing it moves that file aside permanently and every phone that approved this PC must approve it again.",
                                     "保存されたPC鍵を読み取れません。ファイルはそのまま残しています。置き換えると元のファイルは別名で保存され、このPCを許可したすべてのスマホで再許可が必要です。",
                                 )
-                            } else if error.contains("peer disconnected") {
-                                self.text(
-                                    "The phone closed the connection. Check the phone's Wi-Fi screen or app.",
-                                    "スマホが接続を閉じました。スマホのWi-Fi画面またはアプリを確認してください。",
-                                )
+                            } else if error.contains("peer disconnected")
+                                || lowered.contains("selected usb device disconnected")
+                                || lowered.contains("unplug")
+                            {
+                                if self.settings.transport == "usb"
+                                    || lowered.contains("usb")
+                                    || lowered.contains("unplug")
+                                {
+                                    self.text(
+                                        "The USB link dropped. Leave the phone app open. This PC reconnects when the phone is back; if it does not, press Connect.",
+                                        "USBが切れました。スマホのアプリは開いたままにしてください。端末が戻ると再接続します。戻らないときは「接続」を押してください。",
+                                    )
+                                } else {
+                                    self.text(
+                                        "The phone closed the connection. Check that it is still on this Wi-Fi, and leave the app open. This PC retries on its own.",
+                                        "スマホが接続を閉じました。同じWi-Fiでアプリを開いたままにしてください。PCが自動で再試行します。",
+                                    )
+                                }
                             } else if error.contains("WinUSB") {
                                 self.text("The selected phone needs a compatible USB driver.", "選択したスマホ用のUSBドライバーが必要です。")
                             } else if self.session.usb_permission.is_some() {
@@ -1788,11 +2000,110 @@ mod tests {
             "The phone rejected the access key",
             "explicit recovery required",
             "pairing is incomplete",
+            "setup request failed",
+            "access denied",
+            "does not support Android Open Accessory",
         ] {
             assert!(
                 !auto_retry_is_useful(hopeless),
                 "{hopeless} must not be retried"
             );
         }
+    }
+
+    #[test]
+    fn a_missing_phone_waits_and_eight_failures_stop() {
+        let waiting = plan_retry(&RetryInput {
+            suppressed: false,
+            pending_or_live: true,
+            retries: 3,
+            usb: true,
+            device_absent: true,
+            error: "peer disconnected",
+        });
+        assert!(matches!(waiting, RetryPlan::WaitForDevice));
+        let replug = plan_retry(&RetryInput {
+            suppressed: false,
+            pending_or_live: true,
+            retries: 0,
+            usb: true,
+            device_absent: false,
+            error: "unplug and replug the cable",
+        });
+        assert!(matches!(replug, RetryPlan::WaitForDevice));
+        let dial = plan_retry(&RetryInput {
+            suppressed: false,
+            pending_or_live: true,
+            retries: 0,
+            usb: false,
+            device_absent: false,
+            error: "connection refused",
+        });
+        assert!(matches!(
+            dial,
+            RetryPlan::Dial {
+                attempt: 1,
+                delay_secs: 2
+            }
+        ));
+        let eighth = plan_retry(&RetryInput {
+            suppressed: false,
+            pending_or_live: true,
+            retries: 8,
+            usb: false,
+            device_absent: false,
+            error: "connection refused",
+        });
+        assert!(matches!(eighth, RetryPlan::Exhausted));
+        let hopeless = plan_retry(&RetryInput {
+            suppressed: false,
+            pending_or_live: true,
+            retries: 1,
+            usb: false,
+            device_absent: false,
+            error: "fingerprint mismatch",
+        });
+        assert!(matches!(hopeless, RetryPlan::Stop));
+        let suppressed = plan_retry(&RetryInput {
+            suppressed: true,
+            pending_or_live: true,
+            retries: 0,
+            usb: false,
+            device_absent: false,
+            error: "connection refused",
+        });
+        assert!(matches!(suppressed, RetryPlan::Stop));
+        let idle = plan_retry(&RetryInput {
+            suppressed: false,
+            pending_or_live: false,
+            retries: 0,
+            usb: true,
+            device_absent: true,
+            error: "connection refused",
+        });
+        assert!(matches!(idle, RetryPlan::Ignore));
+        // Still plugged in after a replug was requested: do not dial.
+        assert!(!usb_may_dial(true, false, false));
+        // Seen to leave, then back: dial.
+        assert!(usb_may_dial(true, false, true));
+        // Gone: never dial, whether or not this is a counted retry.
+        assert!(!usb_may_dial(true, true, true));
+        assert!(!usb_may_dial(false, true, false));
+        assert!(usb_may_dial(false, false, false));
+    }
+
+    #[test]
+    fn the_reconnect_log_line_is_tokens_and_numbers() {
+        assert_eq!(
+            reconnect_line("usb", 2, 4_000),
+            "reconnect transport=usb attempt=2 delay_ms=4000"
+        );
+        let smashed = reconnect_line("192.168.0.5 phone", 1, 2_000);
+        assert_eq!(
+            smashed,
+            "reconnect transport=unknown attempt=1 delay_ms=2000"
+        );
+        assert!(!smashed.contains("192.168"));
+        assert!(!smashed.contains('\n'));
     }
 }
