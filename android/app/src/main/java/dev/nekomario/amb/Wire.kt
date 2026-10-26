@@ -162,12 +162,31 @@ object Wire {
         }
     }
 
+    /**
+     * Unicode scalars a PC label must not contain.
+     *
+     * Controls, format characters (including bidi overrides and supplementary
+     * tags) and line/paragraph separators. Iterating scalars, not UTF-16
+     * halves: a supplementary format character is one code point, and its
+     * surrogate halves are not ISO controls.
+     */
+    internal fun labelScalarsAreSafe(label: String): Boolean =
+        label.codePoints().noneMatch { code ->
+            when (Character.getType(code)) {
+                Character.CONTROL.toInt(),
+                Character.FORMAT.toInt(),
+                Character.LINE_SEPARATOR.toInt(),
+                Character.PARAGRAPH_SEPARATOR.toInt() -> true
+                else -> false
+            }
+        }
+
     private fun strictLabel(bytes: ByteArray): String {
         val label = Charsets.UTF_8.newDecoder()
             .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
             .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
             .decode(ByteBuffer.wrap(bytes)).toString()
-        require(bytes.size <= MAX_CLIENT_LABEL && label.isNotBlank() && label.none { it.isISOControl() }) {
+        require(bytes.size <= MAX_CLIENT_LABEL && label.isNotBlank() && labelScalarsAreSafe(label)) {
             "invalid client label"
         }
         return label

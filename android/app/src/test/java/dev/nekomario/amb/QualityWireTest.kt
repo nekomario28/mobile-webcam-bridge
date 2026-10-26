@@ -141,6 +141,32 @@ class QualityWireTest {
     }
 
     @Test
+    fun auth_labels_reject_format_and_line_separators_at_the_wire_decoder() {
+        val key = ByteArray(Wire.CLIENT_PUBLIC_KEY_BYTES).also { it[0] = 4 }
+        val signature = ByteArray(Wire.SIGNATURE_BYTES)
+        val base = Wire.encodeClientAuth(
+            Wire.ClientAuth(Wire.CLIENT_AUTH_VERSION, key, "pcXXX", signature),
+        )
+        // "pc" plus U+202E RIGHT-TO-LEFT OVERRIDE (UTF-8 e2 80 ae), same length as "pcXXX".
+        val hijack = base.copyOf()
+        val labelAt = 1 + Wire.CLIENT_PUBLIC_KEY_BYTES + 1
+        hijack[labelAt] = 'p'.code.toByte()
+        hijack[labelAt + 1] = 'c'.code.toByte()
+        hijack[labelAt + 2] = 0xe2.toByte()
+        hijack[labelAt + 3] = 0x80.toByte()
+        hijack[labelAt + 4] = 0xae.toByte()
+        assertThrows(IllegalArgumentException::class.java) { Wire.decodeClientAuth(hijack) }
+        for (label in listOf("pc\u202e", "pc\u2028", "pc\u2029", "pc\uDB40\uDC01")) {
+            assertThrows(IllegalArgumentException::class.java) {
+                Wire.encodeClientAuth(Wire.ClientAuth(Wire.CLIENT_AUTH_VERSION, key, label, signature))
+            }
+            assertThrows(IllegalArgumentException::class.java) {
+                Wire.clientAuthMessage(Wire.AUTH_USB, ByteArray(Wire.PHONE_BINDING_BYTES), ByteArray(Wire.NONCE_BYTES), key, label)
+            }
+        }
+    }
+
+    @Test
     fun auth_labels_use_strict_utf8_and_outcomes_reject_invalid_combinations() {
         val good = Wire.encodeClientAuth(Wire.ClientAuth(Wire.CLIENT_AUTH_VERSION,
             ByteArray(65).also { it[0] = 4 }, "ok", ByteArray(64)))
