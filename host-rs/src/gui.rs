@@ -1303,7 +1303,11 @@ impl eframe::App for App {
                                 }
                                 // The device the user must pick in their video app is
                                 // not an advanced detail.
-                                ui.weak(format!("→ {}", self.settings.output.trim()));
+                                // ASCII on purpose: epaint 0.37 panics when nothing can draw a
+                                // character, and the bundled fonts have no U+2192 - the arrow
+                                // only appeared where a system font happened to supply it, so the
+                                // GUI test failed on the CI runner and passed here (2026-10-26).
+                                ui.weak(format!("-> {}", self.settings.output.trim()));
                             });
                             // Only while frames are arriving: a frozen picture beside a
                             // status line that says the camera is waiting would be a
