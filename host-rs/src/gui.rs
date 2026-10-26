@@ -544,7 +544,7 @@ impl App {
         let old_size = (self.quality_draft.0, self.quality_draft.1);
         ui.add_enabled_ui(!busy && !stopping, |ui| {
             ui.label(self.text("Resolution", "解像度"));
-            egui::ComboBox::from_id_salt("quality-size")
+            let combo = egui::ComboBox::from_id_salt("quality-size")
                 .selected_text(if self.quality_draft.0 == 0 {
                     self.text("Auto", "自動").to_owned()
                 } else {
@@ -571,6 +571,11 @@ impl App {
                         }
                     }
                 });
+            name_combo(
+                combo.response,
+                self.text("Resolution", "解像度"),
+                ui.is_enabled(),
+            );
             let mut rates: Vec<_> = modes
                 .iter()
                 .filter(|mode| {
@@ -591,7 +596,7 @@ impl App {
                 self.quality_draft.2 = 0;
             }
             ui.label(self.text("Frame rate", "フレームレート"));
-            egui::ComboBox::from_id_salt("quality-fps")
+            let combo = egui::ComboBox::from_id_salt("quality-fps")
                 .selected_text(if self.quality_draft.2 == 0 {
                     self.text("Auto", "自動").to_owned()
                 } else {
@@ -613,6 +618,11 @@ impl App {
                         }
                     }
                 });
+            name_combo(
+                combo.response,
+                self.text("Frame rate", "フレームレート"),
+                ui.is_enabled(),
+            );
         });
         let draft = crate::quality::Wish::from(self.quality_draft);
         if !running && draft != self.settings.quality_wish() {
@@ -714,6 +724,16 @@ fn auto_retry_delay(attempt: u32) -> std::time::Duration {
 
 /// What the idle USB screen says. One next action, and it changes once a phone is
 /// actually there — the "plug in the cable" line is stale the moment it is.
+/// Give a combo box the name of the label that sits beside it.
+///
+/// egui does not associate a neighbouring `ui.label` with the widget, so the box had no
+/// accessible name and egui_kittest 0.37's accessibility check failed with "1 widget(s) lack
+/// accessible name ... ComboBox" - which the harness only reported on a machine that had a
+/// device to list, so CI stayed green (measured 2026-10-26).
+fn name_combo(response: egui::Response, label: &str, enabled: bool) {
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, label));
+}
+
 fn usb_idle_hint(phone_ready: bool, japanese: bool) -> &'static str {
     if phone_ready {
         if japanese {
@@ -1295,7 +1315,7 @@ impl eframe::App for App {
                                 if available.is_empty() {
                                     ui.weak(self.text("No USB devices detected", "USB機器が見つかりません"));
                                 } else if available.len() != 1 || self.selection_lost || self.selected.is_none() {
-                                    egui::ComboBox::from_id_salt("usb-device")
+                                    let combo = egui::ComboBox::from_id_salt("usb-device")
                                         .selected_text(name)
                                         .width(ui.available_width())
                                         .show_ui(ui, |ui| {
@@ -1313,6 +1333,7 @@ impl eframe::App for App {
                                                 }
                                             }
                                         });
+                                    name_combo(combo.response, self.text("USB device", "USB機器"), ui.is_enabled());
                                 } else {
                                     ui.label(name);
                                 }
@@ -1764,7 +1785,7 @@ impl eframe::App for App {
                                     }
                                 }
                                 ui.label(self.text("Video decode", "デコード方式"));
-                                egui::ComboBox::from_id_salt("decoder")
+                                let combo = egui::ComboBox::from_id_salt("decoder")
                                     .selected_text(self.decode_name(&self.settings.decode))
                                     .show_ui(ui, |ui| {
                                         for mode in [
@@ -1792,6 +1813,7 @@ impl eframe::App for App {
                                             });
                                         }
                                     });
+                                name_combo(combo.response, self.text("Video decode", "デコード方式"), ui.is_enabled());
                                 ui.horizontal(|ui| {
                                     ui.label(if self.ja { "回転" } else { "Rotation" });
                                     for rotation in [0, 90, 180, 270] {

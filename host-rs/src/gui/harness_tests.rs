@@ -155,3 +155,39 @@ fn retries_that_ran_out_say_to_press_connect() {
         "the budget is spent; the next action is a press"
     );
 }
+
+/// The device picker must carry an accessible name, and this must be checked where the
+/// widget exists.
+///
+/// Measured 2026-10-26: the combo box only renders when the window has devices to list, so
+/// on the CI runner (no USB hardware) the accessibility check never saw it, while a machine
+/// that had one device reported "1 widget(s) lack accessible name ... ComboBox" and failed
+/// `a_dropped_usb_link_says_reconnecting_and_what_to_do`. Two injected devices make the
+/// widget's absence from CI impossible to keep.
+#[test]
+fn the_device_picker_has_an_accessible_name() {
+    let settings = "[General]\ntransport=\"usb\"\noutput=\"/dev/video10\"\n";
+    let (mut harness, _dir) = harness(settings);
+    {
+        let app = harness.state_mut();
+        let device = |bus: u8, name: &str| crate::usb::Candidate {
+            id: crate::usb::DeviceId {
+                bus,
+                address: 0x11,
+                vid: 0x0fce,
+                pid: 0x320d,
+                ports: vec![1],
+            },
+            name: name.to_string(),
+            suggested: false,
+        };
+        app.devices = vec![device(1, "Phone A"), device(2, "Phone B")];
+        app.selected = None;
+        app.settings.transport = "usb".into();
+    }
+    harness.run_steps(3);
+    assert!(
+        harness.query_by_label_contains("USB device").is_some(),
+        "the picker must be reachable by its accessible name, not only on hover"
+    );
+}
