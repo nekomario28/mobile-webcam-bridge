@@ -31,7 +31,7 @@ rustls = { version = "=0.23.46", default-features = false, features = ["std", "r
 sha2 = "=0.10.9"
 # Already a GUI transitive dependency; scalar categories keep wire labels single-line.
 unicode-general-category = "=1.1.0"
-eframe = { version = "=0.36.2", default-features = false, features = ["accesskit", "default_fonts", "wgpu_no_default_features", "wayland", "x11"], optional = true }
+eframe = { version = "=0.37.0", default-features = false, features = ["accesskit", "default_fonts", "wgpu_no_default_features", "wayland", "x11"], optional = true }
 fontdb = { version = "=0.24.0", optional = true }
 sys-locale = { version = "=0.3.2", optional = true }
 ffmpeg-sys-next = { version = "=9.0.0", default-features = false, features = ["avcodec", "swscale"], optional = true }
@@ -52,9 +52,9 @@ tempfile = "=3.27.0"
 proptest = "=1.12.0"
 # Same version as eframe: drives the real widget tree through AccessKit, so the host
 # UI can be tested without a display, a window manager or synthetic clicks.
-egui_kittest = { version = "=0.36.2", features = ["eframe"] }
+egui_kittest = { version = "=0.37.0", features = ["eframe"] }
 # The harness takes and returns egui types, so the test crate needs the same egui.
-egui = { version = "=0.36.2", features = ["default_fonts"] }
+egui = { version = "=0.37.0", features = ["default_fonts"] }
 
 [build-dependencies]
 bindgen = { version = "=0.72.1", optional = true }
