@@ -1,7 +1,9 @@
+; The delete macros are prepended by windows/package.cmake, which builds this packaging
+; script from this file. They used to be a fourth !include of a generated absolute path, and
+; makensis reported "could not find" for a file CMake's own EXISTS called present.
 Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
-!include "${AMB_DELETE_MANIFEST}"
 
 Name "Mobile Webcam ${AMB_VERSION} (experimental)"
 OutFile "${AMB_INSTALLER}"

@@ -176,9 +176,18 @@ endif()
 if(NOT DEFINED AMB_MAKENSIS)
     find_program(AMB_MAKENSIS NAMES makensis REQUIRED)
 endif()
+# The macros are prepended, not !include'd. makensis opened this repository's own script by
+# absolute path without complaint but reported `!include: could not find` for the generated
+# manifest at an equally absolute path that CMake's EXISTS called present (measured 2026-10-26,
+# runs 40340930794, 40359269261 and 40370208051). A build that needs two programs to agree about
+# an absolute path on Windows is the thing that keeps breaking, so NSIS is handed one script.
+file(READ "${delete_manifest}" delete_macros)
+file(READ "${repo}/windows/installer.nsi" installer_source)
+set(generated_script "${AMB_OUTPUT_DIR}/${name}-installer.nsi")
+file(WRITE "${generated_script}" "${delete_macros}${installer_source}")
 set(installer "${AMB_OUTPUT_DIR}/${name}-Setup.exe")
 execute_process(COMMAND ${AMB_MAKENSIS} -V2 -WX
     "-DAMB_VERSION=${version}" "-DAMB_STAGE=${stage}" "-DAMB_INSTALLER=${installer}"
-    "-DAMB_DELETE_MANIFEST=${delete_manifest}" -- "${repo}/windows/installer.nsi"
+    -- "${generated_script}"
     COMMAND_ERROR_IS_FATAL ANY)
 message(STATUS "Created ${installer}")
