@@ -8,7 +8,7 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "=0.4.10"
+libfuzzer-sys = "=0.4.13"
 mobile-webcam = { path = ".." }
 
 # A fuzz crate in its own workspace: `cargo test` at the crate root must not try to
