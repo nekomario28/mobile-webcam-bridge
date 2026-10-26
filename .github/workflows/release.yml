@@ -296,11 +296,19 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(dist/*Setup.exe dist/*.zip dist/SHA256SUMS)
+          # Only what this job builds. It used to name dist/SHA256SUMS, which the Linux job
+          # writes: a literal path is not a glob, so nullglob kept it in the array and
+          # `gh release upload` failed with "no matches found for `dist/SHA256SUMS`" after the
+          # installer had already been built (measured 2026-10-26, run 40376477435).
+          files=(dist/*Setup.exe dist/*.zip)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No Windows artifacts produced" >&2
             exit 1
           fi
+          # The Windows assets get their own digest file: the combined SHA256SUMS belongs to the
+          # Linux job and races with this one if both write it.
+          (cd dist && sha256sum "${files[@]##*/}" > SHA256SUMS-windows.txt)
+          files+=(dist/SHA256SUMS-windows.txt)
           # Release may already exist from the Linux job; upload assets onto it.
           # Up to 10 waits. The index is unused; behavior is sleep-until-visible.
           for _ in 1 2 3 4 5 6 7 8 9 10; do
