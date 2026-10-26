@@ -113,10 +113,12 @@ if(DEFINED AMB_RUST_EXECUTABLE)
     else()
         file(WRITE "${stage}/licenses/ffmpeg/SOURCE.txt" "FFmpeg source: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz\nReproduce using host-rs/tools/build_ffmpeg.py and the accompanying build manifest.\n")
     endif()
-    find_program(AMB_PYTHON NAMES python3 python REQUIRED)
-    execute_process(COMMAND "${AMB_PYTHON}" "${repo}/host-rs/tools/verify_distribution.py"
-        windows "${stage}" --objdump "${CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND}"
-        OUTPUT_QUIET COMMAND_ERROR_IS_FATAL ANY)
+    # The caller runs host-rs/tools/verify_distribution.py, from a shell, the way
+    # host-rs/tools/package_linux.sh already does. Running it here handed msys2 python a path
+    # CMake and msys2 spell differently - "can't open file
+    # '/d/a/.../mobile-webcam-bridge/D:/a/.../mobile-webcam-bridge/host-rs/tools/verify_distribution.py'",
+    # measured in the v0.3.0 release run - so the name is published instead of the call made.
+    file(WRITE "${AMB_OUTPUT_DIR}/.stage-dir" "${stage}")
     file(GLOB_RECURSE size_files "${stage}/*")
     set(expanded_size 0)
     foreach(path IN LISTS size_files)
