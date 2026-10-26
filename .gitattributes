@@ -1,0 +1,14 @@
+# The repository is used from Linux, macOS and Windows, and three things on the Windows side
+# read repository files as *data* rather than as source: `windows/unity-capture.sha256` (fed to
+# sha256sum), `VERSION` (read by windows/package.cmake to name the installer) and the NSIS
+# scripts. A CRLF checkout turns the checksum file's names into "UnityCaptureFilter32.dll\r",
+# which sha256sum reports as a missing file, and would put a carriage return in the installer's
+# version string. Keep text to LF everywhere; a .bat file is the one format that wants CRLF.
+* text=auto eol=lf
+*.bat text eol=crlf
+
+*.png binary
+*.ico binary
+*.dll binary
+*.exe binary
+*.jks binary

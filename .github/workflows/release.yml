@@ -253,8 +253,16 @@ jobs:
               "https://raw.githubusercontent.com/schellingb/UnityCapture/$revision/Install/UnityCaptureFilter$bits.dll" \
               -o "build/unity-capture/UnityCaptureFilter$bits.dll"
           done
-          (cd build/unity-capture && sha256sum --check "$PWD/../windows/unity-capture.sha256" 2>/dev/null) \
-            || (cd build/unity-capture && sha256sum --check ../../windows/unity-capture.sha256)
+          # One check, on the real path. This used to try "$PWD/../windows/..." first with
+          # stderr discarded - a path that never existed - so the fallback did the work and the
+          # first line could only hide a failure. The checksum file's names are the reason the
+          # job was red for four releases: a CRLF checkout made them "....dll\r" (see
+          # .gitattributes and the windows probe in rust-host-ci.yml).
+          for bits in 32 64; do
+            test -s "build/unity-capture/UnityCaptureFilter$bits.dll" \
+              || { echo "the UnityCapture$bits download produced nothing"; exit 1; }
+          done
+          (cd build/unity-capture && sha256sum --check ../../windows/unity-capture.sha256)
           cmake -DAMB_BUILD_DIR="$PWD/host-rs/target/x86_64-pc-windows-gnu/release" \
             -DAMB_MINGW_ROOT=/mingw64 \
             -DAMB_FILTER_DIR="$PWD/build/unity-capture" \

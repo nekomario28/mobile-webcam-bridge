@@ -129,6 +129,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      # The release job's windows half reads repository files as *data*: VERSION names the
+      # installer (windows/package.cmake) and windows/unity-capture.sha256 goes to sha256sum.
+      # A CRLF checkout appends a carriage return to each name, and that is exactly what kept
+      # the windows release job red for four releases: `sha256sum: 'UnityCaptureFilter32.dll'
+      # $'\r': No such file or directory` (2026-10-25, run 40208940608). .gitattributes keeps
+      # text at LF, and this probe runs where a CRLF checkout would be produced, so removing
+      # that rule fails here rather than three weeks later inside a release.
+      - name: The release inputs survive a Windows checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in VERSION windows/unity-capture.sha256; do
+            if grep -q $'\r' "$file"; then
+              echo "$file arrived with CRLF; .gitattributes must keep it at LF"
+              exit 1
+            fi
+          done
+          while read -r _hash name; do
+            test -n "$name" || continue
+            echo "checksum entry names $name"
+          done < windows/unity-capture.sha256
+
       - name: Pinned Rust GNU toolchain
         shell: pwsh
         run: |
