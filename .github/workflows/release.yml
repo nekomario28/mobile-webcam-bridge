@@ -79,10 +79,19 @@ jobs:
           packages: platform-tools
       - name: Install Android SDK platform
         shell: bash
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: |
+          # AGP 9 provisions build-tools 36 on first use; install it here so the CI run does not
+          # depend on auto-accepting licences mid-build (measured 2026-10-26: the local
+          # SDK grew build-tools/36.0.0 while an AGP 9.4.1 build ran).
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "build-tools;36.0.0"
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
         with:
-          gradle-version: '8.9'
+          # The wrapper is the single owner of the Gradle version: AGP 9 needs
+          # 9.6+, and pinning a version here meant a wrapper bump changed
+          # nothing in CI (measured 2026-10-26: AGP 9.4.1 refused to apply
+          # with "Minimum supported Gradle version is 9.6.0. Current version
+          # is 8.9" while the wrapper already said 9.8.1).
+          gradle-version: wrapper
           cache-disabled: true
 
       - name: Restore Android release signing key
@@ -109,7 +118,7 @@ jobs:
           test -n "$AMB_RELEASE_KEY_ALIAS"
           test -n "$AMB_RELEASE_KEY_PASSWORD"
           cd android
-          gradle --no-daemon --stacktrace clean assembleRelease lintRelease
+          ./gradlew --no-daemon --stacktrace clean assembleRelease lintRelease
           apk=app/build/outputs/apk/release/app-release.apk
           test -s "$apk"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" \
