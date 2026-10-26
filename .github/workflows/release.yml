@@ -196,6 +196,12 @@ jobs:
 
   # Windows Setup is built on GitHub-hosted runners (self-hosted Linux cannot cross-package NSIS easily).
   windows:
+    # After publish, not beside it. They used to run in parallel and the windows half polled
+    # for the release with ten 30-second waits; the Linux job needs about 25 minutes, so the
+    # window expired and the upload failed with `release not found` after the installer had
+    # already been built (measured 2026-10-26, run 40384896002). An ordering that the pipeline
+    # states is cheaper than a timeout that hopes.
+    needs: publish
     permissions:
       contents: write
     runs-on: windows-2025
@@ -309,12 +315,8 @@ jobs:
           # Linux job and races with this one if both write it.
           (cd dist && sha256sum "${files[@]##*/}" > SHA256SUMS-windows.txt)
           files+=(dist/SHA256SUMS-windows.txt)
-          # Release may already exist from the Linux job; upload assets onto it.
-          # Up to 10 waits. The index is unused; behavior is sleep-until-visible.
-          for _ in 1 2 3 4 5 6 7 8 9 10; do
-            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-              break
-            fi
-            sleep 30
-          done
+          # `needs: publish` means the release is here. Say so loudly if that ever stops being
+          # true, rather than uploading into nothing.
+          gh release view "$GITHUB_REF_NAME" >/dev/null \
+            || { echo "the release for $GITHUB_REF_NAME does not exist; publish should have created it" >&2; exit 1; }
           gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
