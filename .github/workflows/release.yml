@@ -268,13 +268,18 @@ jobs:
               || { echo "the UnityCapture$bits download produced nothing"; exit 1; }
           done
           (cd build/unity-capture && sha256sum --check ../../windows/unity-capture.sha256)
-          cmake -DAMB_BUILD_DIR="$PWD/host-rs/target/x86_64-pc-windows-gnu/release" \
+          # Every path in the form CMake and the native tools both read: msys2's `cygpath -m`
+          # gives "D:/a/..." rather than "/d/a/...". With POSIX paths, package.cmake wrote the
+          # NSIS delete manifest somewhere the installer could not include it and the run died
+          # with `!include: could not find: "...-delete.nsh"` (measured 2026-10-26,
+          # run 40340930794) while every other step in the same script looked healthy.
+          cmake -DAMB_BUILD_DIR="$(cygpath -m "$PWD/host-rs/target/x86_64-pc-windows-gnu/release")" \
             -DAMB_MINGW_ROOT=/mingw64 \
-            -DAMB_FILTER_DIR="$PWD/build/unity-capture" \
-            -DAMB_OUTPUT_DIR="$PWD/dist" \
-            -DAMB_RUST_EXECUTABLE="$PWD/host-rs/target/x86_64-pc-windows-gnu/release/mobile-webcam.exe" \
+            -DAMB_FILTER_DIR="$(cygpath -m "$PWD/build/unity-capture")" \
+            -DAMB_OUTPUT_DIR="$(cygpath -m "$PWD/dist")" \
+            -DAMB_RUST_EXECUTABLE="$(cygpath -m "$PWD/host-rs/target/x86_64-pc-windows-gnu/release/mobile-webcam.exe")" \
             -DAMB_FFMPEG_ROOT="$FFMPEG_DIR" \
-            -DAMB_RUST_LICENSES="$licenses" \
+            -DAMB_RUST_LICENSES="$(cygpath -m "$licenses")" \
             -P windows/package.cmake
           # From this shell, the way package_linux.sh does it. CMake handed msys2 python a path
           # it could not open - "can't open file '/d/a/.../D:/a/.../verify_distribution.py'",

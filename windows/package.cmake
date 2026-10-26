@@ -165,6 +165,14 @@ foreach(relative IN LISTS staged_paths)
     endif()
 endforeach()
 file(APPEND "${delete_manifest}" "!macroend\n")
+if(NOT EXISTS "${delete_manifest}")
+    # The installer !includes this file, so a write that landed somewhere else shows up as
+    # `!include: could not find` with no directory listing to explain it (2026-10-26). Say
+    # where it was supposed to be, and what is actually in that directory.
+    file(GLOB siblings "${AMB_OUTPUT_DIR}/*")
+    message(FATAL_ERROR "the NSIS delete manifest was not written to '${delete_manifest}'; "
+        "AMB_OUTPUT_DIR holds: ${siblings}")
+endif()
 if(NOT DEFINED AMB_MAKENSIS)
     find_program(AMB_MAKENSIS NAMES makensis REQUIRED)
 endif()
