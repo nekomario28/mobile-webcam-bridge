@@ -57,7 +57,7 @@ egui_kittest = { version = "=0.37.0", features = ["eframe"] }
 egui = { version = "=0.37.0", features = ["default_fonts"] }
 
 [build-dependencies]
-bindgen = { version = "=0.72.1", optional = true }
+bindgen = { version = "=0.73.2", optional = true }
 
 [[bin]]
 name = "mobile-webcam"
