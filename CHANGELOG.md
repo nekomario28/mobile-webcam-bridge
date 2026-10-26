@@ -1,6 +1,32 @@
 # Changelog
 
-## Unreleased — per-PC authorization (independent review returned a merge blocker)
+## 0.3.0 - 2026-10-26
+
+Everything from the 0.2.x line is below; this section is what changed after the `v0.2.4` tag.
+
+- First run tells you the next action instead of a paragraph, and time-to-first-frame is
+  recorded without personal data (`U1`). A dropped link reconnects and names what to do
+  (`U2`), including the USB case where the accessory stays on the bus after a replug.
+- The host integration no longer hands `pkexec` a script the user can write: the installed
+  helper runs a fixed, root-owned path and the setup script shipped beside the binary is not
+  executable by a privileged caller.
+- A security self-review for the R4 threat model: the model, the checklist, and the two code
+  paths it named.
+
+- Build and tooling: AGP 9.4.1 with Gradle 9.8.1, which drops the Kotlin Android plugin
+  because AGP carries Kotlin itself; eframe/egui/egui_kittest 0.37 together, and the CI runner
+  now installs `fonts-noto-cjk` because egui 0.37's test harness panics rather than drawing
+  tofu. The four combo boxes gained accessible names, and a test injects two devices so the
+  check runs on a machine with no USB hardware.
+- Releases: the `publish` job runs on `ubuntu-24.04` instead of a self-hosted runner that never
+  existed, so CI cuts the APK, the AppImage and the checksums; and the windows half's four
+  consecutive failures were one CRLF checkout, not four bugs — `.gitattributes` keeps `VERSION`
+  and `windows/unity-capture.sha256` at LF and a windows-side probe fails if that is ever lost.
+- Dependency bumps: libc, serde_json, sha2, libfuzzer-sys, ffmpeg-sys-next (9.0.0 held on
+  windows), and the GitHub actions (`checkout` 7, `upload-artifact` 7, `setup-java` 6,
+  `setup-gradle` 6, `setup-android` 4, `zizmor-action` 0.7).
+
+## 0.2.x — per-PC authorization (independent review returned a merge blocker)
 
 - Fix the three findings of the second security review, in its order. `HOST_HELLO` no longer
   documents a re-send that no code path can reach, and no longer renews a proof deadline this
