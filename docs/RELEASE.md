@@ -62,10 +62,18 @@ Three facts decide how a release gets made right now, and none of them was true 
    cleanly only after an uninstall. The one install that had to be replaced was a Waydroid emulator, so
    the cost was a dev loop, not a user.
 
-   The keystore and its password live **outside this repository**, beside the work tree at
-   `../mobile-webcam-release.jks` and `../.mobile-webcam-release.secret` (`0600`). **Back them up off this
-   machine before cutting a release**: if they are lost, the lineage is lost again, and every future
-   APK needs an uninstall to install.
+   The keystore and its password live **outside this repository**: the working copy beside the work tree
+   at `../mobile-webcam-release.jks` and `../.mobile-webcam-release.secret` (`0600`), and the backed-up
+   copy in `~/.local/share/mobile-webcam-release/` plus
+   `/data/git-survival/bundles/mobile-webcam-release/` (directory `0700`, files `0600`, with a
+   `SHA256SUMS` and a `README.md` that carries the restore steps). That last directory sits in the
+   `git-survival-bundles` Syncthing folder, which is shared with this machine's other devices, so the
+   copy leaves this machine when one of them runs - **verify it landed** (the README says how) rather
+   than assuming it did; measured 2026-10-26, no remote device had connected for the three days
+   Syncthing had been up.
+
+   If the keystore is lost, the lineage is lost again, and every future APK needs an uninstall to
+   install.
 
 ### Both jobs run end to end (2026-10-26)
 
