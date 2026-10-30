@@ -22,6 +22,10 @@ Android スマートフォンを USB または Wi-Fi 経由で PC の Web カメ
 
 現行リリース（`v0.3.x`）では、Wi-Fi で証明書ピン留め付き TLS 1.3 と 128-bit アクセスキーを強制し、USB・Wi-Fi の両方で [PC ごとの承認（per-PC authorization）](docs/per-pc-authorization.md) を要求します。Android アプリと Rust 製デスクトップホストは必ずセットで更新してください。旧ビルド（`v0.2.0` 以前および classic Qt `v0.1.2`）は認証なしの平文 Wi-Fi を使用しており、新しい PC 承認ゲートとも互換性がありません（`v0.3.0` 未満の Wi-Fi ビルドは信頼できないネットワークに晒さないでください）。ペアリング／承認プロトコルの第三者による独立セキュリティレビューおよび Windows 実機での DirectShow コンシューマ検証は未完了です。詳細は [セキュリティ仕様](docs/security.md)、[TLS Wi-Fi への移行](docs/migration-tls-wifi.md)、[ロードマップ](docs/roadmap.md) を参照してください。
 
+## 開発参加と Issue（Contributing）
+
+不具合報告やプルリクエストを歓迎します。すべてのコミットには [Developer Certificate of Origin (DCO)](CONTRIBUTING.md#developer-certificate-of-origin-dco) による署名（`git commit -s`）が必須です。不具合報告の際は機種名・Android バージョン・PC OS・接続方式（USB/Wi-Fi）を記載してください。開発環境や検証ゲートの詳細は [`CONTRIBUTING.md`](CONTRIBUTING.md) を参照してください。
+
 ## ドキュメント・ライセンス
 
 [接続・ヘッドレス CLI・セットアップ詳細](host-rs/README.md) ·

@@ -49,6 +49,10 @@ verification remain open; see [security details](docs/security.md),
 [migrating to secure Wi-Fi](docs/migration-tls-wifi.md), and the
 [roadmap](docs/roadmap.md).
 
+## Contributing and issues
+
+Issues and pull requests are welcome. All contributions require a [Developer Certificate of Origin (DCO)](CONTRIBUTING.md#developer-certificate-of-origin-dco) sign-off (`git commit -s`). For bug reports, mention your phone model, Android version, OS, and transport (USB/Wi-Fi); see [`CONTRIBUTING.md`](CONTRIBUTING.md) for development requirements and hardware gates.
+
 ## Documentation and license
 
 [Connection, headless CLI, and setup](host-rs/README.md) ·
