@@ -1,47 +1,64 @@
 # Mobile Webcam
 
-Use an Android phone as a webcam over USB or Wi-Fi. English/Japanese follows
-the system language. Your PC remembers the phone address and settings.
+**English** | [日本語](README.ja.md)
 
-**Wi-Fi security:** the current source implementation is moving to TLS 1.3,
-with a pinned phone certificate and 128-bit access key. The latest published
-release may still use **unauthenticated plaintext Wi-Fi**; do not expose it to
-untrusted networks. See [security details](docs/security.md) and
-[migrating to secure Wi-Fi](docs/migration-tls-wifi.md) before upgrading.
-Integration development builds also require [per-PC approval](docs/per-pc-authorization.md)
-on both transports. Upgrade Android and the Rust host together; older hosts,
-including classic Qt on USB, do not implement that gate. This auth work remains
-unreviewed and is not a release-readiness claim.
+Use an Android phone as a PC webcam over USB or Wi-Fi. USB uses Android Open
+Accessory (**no USB debugging / ADB required**); Wi-Fi uses TLS 1.3 with a
+pinned phone certificate (Android 10+). English and Japanese follow the system
+language, and the PC window shows a live preview so you can frame yourself
+before opening another camera app.
+
+## Download and platform setup
 
 [Download](https://github.com/nekomario28/mobile-webcam-bridge/releases/latest)
-the Android APK and the desktop app for your OS.
+the Android APK and the desktop app for your OS:
 
-1. Open Mobile Webcam on your phone and PC. The phone starts on USB.
-2. **USB:** plug in the cable. On the PC, press **Connect** (a single phone is
-   already selected). On the phone, allow USB access and tick **always allow**,
-   allow this PC for 90 days, then press **Start camera** and allow the camera.
-   Approval alone never starts capture.
-3. **Wi-Fi, first time:** finish step 2 until the PC is allowed, then press
-   **Send Wi-Fi pairing to PC** on the phone (nothing to type). On the phone tap
-   **Wi-Fi**. On the PC press **Switch to Wi-Fi**, allow the PC if it asks, then
-   **Start camera**. A PC that cannot use the cable can still open **Details →
-   Show pairing key** and type the address, the certificate SHA-256, and the
-   128-bit key. Verify the fingerprint on the phone before **Connect**.
-4. Select **Mobile Webcam** in your camera application. The PC window previews
-   the picture before that app is opened.
+- **Windows:** run **Setup.exe** once to register the virtual camera (requires a
+  DX12 graphics driver; USB also requires a libusb-compatible accessory driver).
+  The ZIP archive is portable after setup.
+- **Linux:** make the AppImage executable and launch it (requires your
+  distribution's `v4l2loopback` kernel module, a Vulkan driver/loader, and
+  glibc 2.39+; an optional `--features pipewire` source build uses a PipeWire
+  video source instead of `v4l2loopback`).
 
-While it streams, the PC window shows a preview of what the camera delivers, so
-you can frame yourself without opening another app. The preview also works when
-nothing has attached to the virtual camera yet, and updates a few times a second
-independently of the window.
+## Quick start
 
-Windows: run **Setup.exe** once to install the virtual camera. The ZIP is
-portable after setup. Linux: make the AppImage executable and launch it.
+1. Open **Mobile Webcam** on your phone and PC. The phone starts in USB mode.
+2. **USB:** plug in the cable and press **Connect** on the PC (a single phone is
+   selected automatically). On the phone, allow USB access (tick **always
+   allow**), approve this PC for 90 days, then press **Start camera** and allow
+   camera access. Approving a PC never starts capture on its own.
+3. **Wi-Fi (first time, Android 10+):** after approving the PC over USB in step
+   2, press **Send Wi-Fi pairing to PC** on the phone, tap **Wi-Fi** on the
+   phone, and press **Switch to Wi-Fi** on the PC (nothing to type). If you
+   cannot use a cable, open **Details → Show pairing key** on the phone, verify
+   the SHA-256 certificate fingerprint on the phone screen, and enter the phone
+   address, fingerprint, and 128-bit key on the PC before pressing **Connect**.
+4. Select **Mobile Webcam** in your camera or meeting application.
 
-[Connection and setup](host-rs/README.md) ·
-[Roadmap and TODO](docs/roadmap.md) ·
+## Security and compatibility
+
+Current releases (`v0.3.x`) enforce TLS 1.3 with a pinned phone certificate and
+128-bit access key on Wi-Fi, plus [per-PC authorization](docs/per-pc-authorization.md)
+on both USB and Wi-Fi. Upgrade the Android app and Rust desktop host together;
+older builds (`v0.2.0` and earlier, including classic Qt `v0.1.2`) used
+unauthenticated plaintext Wi-Fi and do not implement the per-PC gate (do not
+expose pre-`v0.3.0` Wi-Fi builds to untrusted networks). Independent security
+review of the pairing/authorization protocol and on-hardware Windows consumer
+verification remain open; see [security details](docs/security.md),
+[migrating to secure Wi-Fi](docs/migration-tls-wifi.md), and the
+[roadmap](docs/roadmap.md).
+
+## Documentation and license
+
+[Connection, headless CLI, and setup](host-rs/README.md) ·
+[Architecture](docs/architecture.md) ·
+[Security](docs/security.md) ·
+[Roadmap and evidence](docs/roadmap.md) ·
 [Build and verification](specs/rust-host-rewrite/implementation.md) ·
 [Classic Qt v0.1.2](docs/classic-qt.md)
 
 Source: [Apache 2.0](LICENSE). Bundled components have their own licenses; see
-[third-party notices](THIRD_PARTY_NOTICES.md) and the licenses in each package.
+[third-party notices](THIRD_PARTY_NOTICES.md),
+[FFmpeg source offer](docs/licenses/FFMPEG_SOURCE_OFFER.md), and the notices in
+each release package.
