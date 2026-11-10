@@ -32,13 +32,21 @@ Capture exact stdout and `lsusb` before/after as evidence. Prefer selecting the
 pre-AOA device explicitly with `--device VID:PID`; do not spray vendor requests
 across unrelated USB peripherals when a selector is available.
 
-**Instrument (2026-10-24):** `mobile-webcam --usb-probe [--frames N] [--budget-ms N]` runs
+**Instrument (2026-10-24):** `mobile-webcam --usb-probe [--frames N] [--budget-ms N] [--rate N]` runs
 this gate against an attached phone: the AOA transition, the per-PC authorization, then N
 synchronous PING/PONG round trips with the sequence and the payload checked on every one,
-printing RTT min/avg/p50/p95/max and exiting 0/1/2. `--usb-dump` and `--usb-frames` show
-what the phone sends and what the reader makes of it. The first measured run is in
-[evidence/2026-10-24-usb-g0.md](evidence/2026-10-24-usb-g0.md): G0 passes, G0.5 passes at
-50 round trips and not yet at 1000.
+printing RTT min/avg/p50/p95/max and exiting 0/1/2. The defaults are 1000 round trips,
+2000 ms per exchange and a maximum of 32 round trips per second. The 32/s pacing is
+intentional: the phone refuses a session that exceeds its 64/s PING rate limit.
+`--usb-dump` and `--usb-frames` show what the phone sends and what the reader makes of it.
+
+**Hardware evidence, 2026-10-24:** G0 passes and G0.5 **passed at 1000 round trips** on an
+XQ-GE44 (1000 echoed, 0 mismatches, 0 timeouts, p50 550 µs) after the host's
+stream-alignment, HELLO/reset and probe-pacing fixes ([PR #84](https://github.com/nekomario28/mobile-webcam-bridge/pull/84),
+[Issue #78 conclusion](https://github.com/nekomario28/mobile-webcam-bridge/issues/78#issuecomment-6385366128)).
+The earlier failures at 50/1000 in [the first device session](evidence/2026-10-24-usb-g0.md)
+are historical, not the current gate result. This is one documented hardware pass,
+not proof of repeated reliability on every phone or host.
 
 ## G0.5 — framed bulk smoke test
 

@@ -187,8 +187,8 @@ class PhoneAuthorizationTest {
         // The wire's behaviour, not a method's: `readMedia` routes to the control handler only
         // while authorized, so a hello during PROOF is refused by the gate and ends the
         // session. An earlier version of this file pinned a re-send that no code path reached,
-        // which is why the rule now matches what the wire does. (The routing itself still needs
-        // a socket-level test; this pins the session half.)
+        // which is why the rule now matches what the wire does. The actual routing is
+        // exercised by HostHelloAndPairingGateWireTest.
         Harness().use { h ->
             h.open()
             assertFalse(h.session.isAuthorized())
@@ -214,8 +214,8 @@ class PhoneAuthorizationTest {
     @Test fun a_host_hello_cannot_be_spun() {
         // A peer that repeats the hello must not make the phone keep answering: once the
         // session has ended, further hellos send nothing. (Before `start()` the session is
-        // in NEW and the guard makes a hello a no-op; after it, PROOF re-sends — that is the
-        // test above — and everything else ends the session.)
+        // in NEW and the guard makes a hello a no-op; after it, PROOF and the
+        // later phases end the session instead of re-sending a challenge.)
         Harness().use { h ->
             h.open(); h.receive(h.proof(keyPair()))
             h.session.approve()
