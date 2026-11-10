@@ -1,8 +1,13 @@
 name: fuzz
 
-# Not per pull request: a coverage-guided run needs minutes to be worth anything, and
-# the stable property tests in host-rs/tests/parsers.rs already guard every PR.
+# Full coverage fuzzing runs weekly; relevant PRs run a short decoder smoke.
+# The stable property tests in host-rs/tests/parsers.rs guard other PRs.
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/fuzz.yml'
+      - 'host-rs/fuzz/**'
+      - 'host-rs/src/video_config.rs'
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
@@ -30,7 +35,13 @@ jobs:
           cargo install --locked cargo-fuzz
       - name: Fuzz every decoder reachable from the network
         working-directory: host-rs
-        run: cargo +nightly fuzz run wire_decode -- -max_total_time=300 -print_final_stats=1
+        run: |
+          set -euo pipefail
+          seconds=300
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            seconds=15
+          fi
+          cargo +nightly fuzz run wire_decode -- "-max_total_time=$seconds" -print_final_stats=1
       - name: Keep the crashing input
         if: failure()
         uses: actions/upload-artifact@v7

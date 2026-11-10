@@ -1,9 +1,14 @@
 name: mutants
 
-# Weekly, not per pull request: a mutation run rebuilds and retests for every mutant,
-# and the value is a trend rather than a gate on one change. `--in-place` is required
-# because the tests include `protocol/fixtures` by a path outside the crate directory.
+# Full mutation testing runs weekly; relevant PRs only check the minimal test build.
+# `--in-place` is required because the tests include `protocol/fixtures`
+# by a path outside the crate directory.
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/mutants.yml'
+      - 'host-rs/src/preview.rs'
+      - 'host-rs/src/preview/**'
   schedule:
     - cron: '41 4 * * 1'
   workflow_dispatch:
@@ -25,9 +30,15 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends pkg-config libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev
+      - name: Check preview tests without runtime GUI/video dependencies
+        if: github.event_name == 'pull_request'
+        working-directory: host-rs
+        run: cargo test --no-default-features --lib preview::
       - name: Install cargo-mutants
+        if: github.event_name != 'pull_request'
         run: cargo install --locked cargo-mutants
       - name: Mutate the preview record against its own tests
+        if: github.event_name != 'pull_request'
         working-directory: host-rs
         # Quoted: YAML reads a plain scalar ending in `::` as the start of a mapping.
         run: "cargo mutants --no-default-features --in-place --file src/preview.rs --timeout 25 -- --lib preview::"
