@@ -49,6 +49,8 @@ jobs:
           cargo fmt --manifest-path host-rs/Cargo.toml --check
           cargo clippy --manifest-path host-rs/Cargo.toml --all-targets --locked -- -D warnings
           cargo test --manifest-path host-rs/Cargo.toml --locked
+          # Parsing must also build without the GUI and FFmpeg features.
+          cargo test --manifest-path host-rs/Cargo.toml --locked --no-default-features --lib video_config::
 
   linux-release:
     # The release artifacts and the settings round-trip against the classic Qt app.

@@ -20,34 +20,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Config {
-    pub width: u32,
-    pub height: u32,
-    pub fps: u32,
-}
-impl Config {
-    pub fn parse(bytes: &[u8]) -> crate::Result<Self> {
-        if bytes.len() != 16 || bytes[12] != 1 || bytes[13] != 1 {
-            return Err("invalid VIDEO_CONFIG".into());
-        }
-        let c = Self {
-            width: u16::from_le_bytes(bytes[0..2].try_into()?) as u32,
-            height: u16::from_le_bytes(bytes[2..4].try_into()?) as u32,
-            fps: u16::from_le_bytes(bytes[4..6].try_into()?) as u32,
-        };
-        if c.width == 0
-            || c.height == 0
-            || c.fps == 0
-            || c.width > 8192
-            || c.height > 8192
-            || c.width as u64 * c.height as u64 > 33_554_432
-        {
-            return Err("invalid VIDEO_CONFIG dimensions or rate".into());
-        }
-        Ok(c)
-    }
-}
+pub use crate::video_config::Config;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Transform {
     pub rotation: u16,

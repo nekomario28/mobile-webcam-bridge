@@ -20,7 +20,7 @@ proptest! {
         let _ = mobile_webcam::wire::Epoch::decode(&bytes);
         let _ = mobile_webcam::wire::Header::decode(&bytes);
         let _ = mobile_webcam::wire::PairingInfo::decode(&bytes);
-        let _ = mobile_webcam::video::Config::parse(&bytes);
+        let _ = mobile_webcam::video_config::Config::parse(&bytes);
     }
 
     #[test]

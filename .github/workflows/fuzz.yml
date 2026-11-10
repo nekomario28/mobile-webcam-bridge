@@ -18,6 +18,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      # The decoder-only build needs USB headers, not the GUI, Wayland or FFmpeg.
+      - name: Native dependencies for USB decoder
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pkg-config libusb-1.0-0-dev
       - name: Install nightly and cargo-fuzz
         run: |
           set -euo pipefail

@@ -20,6 +20,7 @@ pub mod usb;
 pub mod usb_probe;
 #[cfg(feature = "video")]
 pub mod video;
+pub mod video_config;
 pub mod wire;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;

@@ -19,12 +19,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      # Unit-test dev dependencies still include egui_kittest/eframe, even
+      # when the runtime GUI/video features are disabled.
+      - name: Native dependencies for host unit tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pkg-config libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev
       - name: Install cargo-mutants
         run: cargo install --locked cargo-mutants
       - name: Mutate the preview record against its own tests
         working-directory: host-rs
         # Quoted: YAML reads a plain scalar ending in `::` as the start of a mapping.
-        run: "cargo mutants --in-place --file src/preview.rs --timeout 25 -- --lib preview::"
+        run: "cargo mutants --no-default-features --in-place --file src/preview.rs --timeout 25 -- --lib preview::"
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@v7
