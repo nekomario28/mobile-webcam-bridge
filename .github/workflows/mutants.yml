@@ -33,7 +33,7 @@ jobs:
       - name: Check preview tests without runtime GUI/video dependencies
         if: github.event_name == 'pull_request'
         working-directory: host-rs
-        run: cargo test --no-default-features --lib preview::
+        run: "cargo test --no-default-features --lib preview::"
       - name: Install cargo-mutants
         if: github.event_name != 'pull_request'
         run: cargo install --locked cargo-mutants
