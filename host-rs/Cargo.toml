@@ -6,7 +6,11 @@ rust-version = "1.98"
 license = "Apache-2.0"
 
 [features]
-default = ["gui", "video"]
+default = ["gui", "video", "keyring"]
+# Linux: seal the PC identity and the Wi-Fi key under a storage key kept in the
+# desktop Secret Service (GNOME Keyring, KWallet, ...). Pure Rust (zbus); without a
+# Secret Service at run time the 0600 files are used exactly as before.
+keyring = ["dep:secret-service"]
 gui = ["dep:eframe", "dep:fontdb", "dep:sys-locale", "dep:wgpu"]
 video = ["dep:ffmpeg-sys-next", "dep:bindgen"]
 capture = ["gui", "dep:image"]
@@ -40,6 +44,9 @@ image = { version = "=0.25.10", default-features = false, features = ["png"], op
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.191"
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "vulkan"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "=5.2.0", default-features = false, features = ["rt-async-io-crypto-rust"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Memory", "Win32_System_JobObjects", "Win32_Security", "Win32_Globalization"] }

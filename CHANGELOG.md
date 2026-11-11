@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Linux: the PC identity and the saved Wi-Fi key are sealed under a storage key kept in the
+  desktop Secret Service when one is available, and existing plain files are migrated on load.
+  Without a Secret Service the 0600 files are used as before (`MOBILE_WEBCAM_KEYRING=off`
+  opts out). Releases older than this one cannot read sealed files.
+
 ## 0.3.2 - 2026-10-26
 
 The windows installer is built from a script that carries its own delete macros. `makensis`

@@ -12,7 +12,7 @@
 | スマホの TLS 秘密鍵（P-256、エイリアス `mobile_webcam_wifi_tls_v2`） | Android Keystore。`SecureLanIdentity.keyStore` | ピンと一致する証明書を、鍵を持つ者が提示できる |
 | 証明書の SHA-256（ピン） | スマホ画面、PC の `lanFingerprint`、USB の `PAIRING_INFO` | 秘密ではない。間違った値を信じると別の証明書を信頼する |
 | 128 bit アクセスキー | スマホは `encrypted_secret_v1`（Keystore AES-GCM）。PC は Linux の設定ファイルまたは Windows の DPAPI 値 `lanKeyProtected` | キーを持つ者は、ピンされたスマホへの TLS のあと HELLO を通過できる。PC ごとの認可は別 |
-| PC の署名秘密鍵 | `Identity`。Unix は利用者のファイル（作成時 mode 0600）。Windows は利用者スコープ | その PC として認可証明を作れる。ハードウェア証明ではない |
+| PC の署名秘密鍵 | `Identity`。Unix は利用者のファイル（作成時 mode 0600）。Linux で Secret Service がある場合は、その keyring に置いた保存鍵で封印する。Windows は利用者スコープ | その PC として認可証明を作れる。ハードウェア証明ではない |
 | 認可レコード（公開鍵、表示名、期限） | スマホ `ClientStore`（別エイリアスの AES-GCM）。PC 側は秘密鍵から公開鍵を導出 | 改ざんに成功すると、誰を許可したかの記録が変わる |
 | 映像 | 認可後の TLS または USB | セッションを持てる者にカメラが見える |
 
@@ -33,7 +33,7 @@
 - **画面。** 指紋とアクセスキーは「接続キーを表示」のあいだ `FLAG_SECURE` が付く（`MainActivity.setPairingKeyVisible`）。`onPause` で文言とフラグを外す。クリップボードや別カメラによる撮影までは、このフラグは止めていない（既存の static review もそう書いている。このレビューでは端末で再確認していない。未確認）。
 - **LAN。** 本番の Wi-Fi 経路は `video.rs` の `SecureTcp::connect` のみ。平文の `Tcp::connect` は `transport.rs` のテストから呼ばれる。本番の LAN 分岐からは呼ばれない。
 - **USB。** 認可の前に `PAIRING_INFO` は送られない。`AuthorizedMediaSession.sendPairingInfo` は `permitted()` のときだけ書き、ボタン表示も認可済み USB セッションに限る（`MainActivity.applySecondaryVisibility`）。
-- **PC の利用者。** 設定と Identity は利用者のファイルまたは DPAPI。同一利用者の別プロセスは、Unix の 0600 では区別されない。
+- **PC の利用者。** 設定と Identity は利用者のファイルまたは DPAPI。同一利用者の別プロセスは、Unix の 0600 では区別されない（Secret Service での封印も、解錠済み keyring を読める同一利用者のプロセスとは区別しない）。
 - **他の Android アプリ。** `allowBackup="false"`。`SessionService` は `exported="false"`。`MainActivity` はランチャーと USB アタッチのため `exported="true"`。停止インテントは Activity 側で資格情報ではない、と `SessionService` のコメントにある。このレビューは他アプリからの呼び出しを実行していない（未確認）。
 
 ## 攻撃者（この範囲で想定するもの）
