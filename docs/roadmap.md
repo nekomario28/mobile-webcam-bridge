@@ -164,7 +164,8 @@ no partial file left.
 `host-ci` / `rust-host-ci` (unit, clippy, fmt, Windows target), `android-ci`, the
 emulator conformance run, the GUI capture gate, `lint-workflows` (actionlint + zizmor),
 `lint-text` (typos + offline link check), a weekly `mutants` run over the preview record (89% of its mutants killed, the rest
-equivalent), and a weekly `fuzz` run (the decoders carry
+equivalent), and a weekly `fuzz` run over four targets — the payload decoders, the AMB1
+frame reassembly, the JSON control lines and the Linux settings loader (each carries
 a committed corpus; the stable property tests run per pull request). The host UI itself is now covered by
 AccessKit-driven tests, so "clicking this opens that" no longer needs a screenshot.
 A weekly `soak` run streams synthetic frames over the real TLS transport and reconnects

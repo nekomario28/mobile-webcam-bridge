@@ -1,0 +1,5 @@
+[General]
+output="\x2f\x64ev/video10"
+outputKind=@@loopback
+[Other]
+lanKey=x

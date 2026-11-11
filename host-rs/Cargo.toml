@@ -22,6 +22,8 @@ pipewire = ["dep:pipewire-vircam"]
 # Developer traces (AMB_AUTH_TRACE, AMB_USB_TRACE) in a release build. Debug builds
 # always have them; release builds without this feature contain none.
 trace = []
+# Entry points for the cargo-fuzz targets in fuzz/. Nothing else enables it.
+fuzzing = []
 
 [dependencies]
 io-budget = { git = "https://github.com/nekomario28/io-budget", rev = "65df550" }

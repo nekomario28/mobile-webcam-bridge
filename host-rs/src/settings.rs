@@ -413,6 +413,17 @@ impl Store {
     }
 }
 
+/// Fuzz entry: parse and validate settings text as `Store::read` does.
+#[cfg(feature = "fuzzing")]
+pub(crate) fn fuzz_parse(text: &str) {
+    #[cfg(unix)]
+    if let Ok(values) = parse_ini(text) {
+        let _ = Settings::from_values(&values);
+    }
+    #[cfg(not(unix))]
+    let _ = text;
+}
+
 /// Open a `lanKey` sealed under the desktop keyring; plain values pass through.
 #[cfg(unix)]
 fn unseal_values(values: &mut BTreeMap<String, String>) -> crate::Result<()> {

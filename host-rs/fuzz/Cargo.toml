@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "=0.4.13"
-mobile-webcam = { path = "..", default-features = false }
+mobile-webcam = { path = "..", default-features = false, features = ["fuzzing"] }
 
 # A fuzz crate in its own workspace: `cargo test` at the crate root must not try to
 # build a libFuzzer binary.
@@ -18,6 +18,27 @@ mobile-webcam = { path = "..", default-features = false }
 [[bin]]
 name = "wire_decode"
 path = "fuzz_targets/wire_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "frame_stream"
+path = "fuzz_targets/frame_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "control_lines"
+path = "fuzz_targets/control_lines.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "settings_file"
+path = "fuzz_targets/settings_file.rs"
 test = false
 doc = false
 bench = false
