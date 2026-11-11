@@ -485,3 +485,15 @@ fn the_signature_covers_the_label() {
         &signature
     ));
 }
+
+#[test]
+fn trace_digest_identifies_a_nonce_without_revealing_it() {
+    let nonce = [0xa5u8; 32];
+    let other = [0x5au8; 32];
+    let digest = super::trace_digest(&nonce);
+    assert_eq!(digest.len(), 16);
+    assert!(digest.bytes().all(|b| b.is_ascii_hexdigit()));
+    assert_eq!(digest, super::trace_digest(&nonce), "repeats stay visible");
+    assert_ne!(digest, super::trace_digest(&other));
+    assert!(!"a5".repeat(32).contains(&digest));
+}
