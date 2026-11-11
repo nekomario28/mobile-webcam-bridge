@@ -89,8 +89,8 @@ unlocked keyring are not separated from this app.
 There is no TLS client certificate or authenticated hardware/process label.
 PC identity is a per-user application key, not hardware attestation. LAN proofs
 bind the pinned phone certificate; USB has no cryptographic phone attestation
-and does not claim to defeat an active physical relay. The deprecated classic
-C++ host does not implement v2 authorization, including on USB: upgrade Android
+and does not claim to defeat an active physical relay. The classic C++ host,
+removed from the tree after v0.3.2, never implemented v2 authorization, including on USB: upgrade Android
 and the Rust host together. A leaked Wi-Fi pairing key can reach the proof gate
 but alone cannot satisfy it. Remote network flooding, local compromise and
 traffic metadata remain outside TLS guarantees.
@@ -137,4 +137,4 @@ numeric bus, address, vendor, product and port fields. The script still refuses
 to replace a modified modprobe or modules-load file. When a USB switch is
 required, the helper is installed to `/usr/lib/mobile-webcam/mobile-webcam-usb`
 and executed only at that path, with the device JSON on its standard input.
-Manual `sudo` and the classic Qt host still use the on-disk script.
+Manual `sudo` still uses the on-disk script.

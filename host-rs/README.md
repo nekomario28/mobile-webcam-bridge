@@ -104,5 +104,6 @@ enough to contain it, so the quality controls are inside the frame).
 [Implementation evidence](../specs/rust-host-rewrite/implementation.md) records
 CI and outstanding device checks. Linux/Xperia success was reported by the user;
 physical USB on Linux/Windows was not retested in this update. Classic Qt
-[v0.1.2](../docs/classic-qt.md) remains available for rollback with a matching
-older APK, not as a USB bypass for an authorization-v2 phone.
+[v0.1.2](../docs/classic-qt.md) is withdrawn and its source was removed from the
+tree (it remains in git history); it is not a rollback path for an
+authorization-v2 phone.

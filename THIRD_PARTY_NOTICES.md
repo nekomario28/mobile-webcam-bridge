@@ -16,7 +16,7 @@ unchanged by either grant.
 | **FFmpeg** (minimal shared build) | Dynamically linked H.264 decoder + swscale + avutil; **no** `--enable-gpl` / `--enable-nonfree` | **LGPL-2.1-or-later**. Linux **7.1.5**, Windows **9.0.2**. Recipe + offer: [FFMPEG_SOURCE_OFFER.md](docs/licenses/FFMPEG_SOURCE_OFFER.md); builder `host-rs/tools/build_ffmpeg.py` |
 | **libusb** (via `rusb` 0.9.4) | Dynamically linked USB access | LGPL-2.1-or-later |
 | **v4l2loopback** | Separately installed Linux kernel module, not bundled; accessed through V4L2 | GPL-2.0-or-later |
-| **Unity Capture filter** | Bundled Windows virtual camera DLLs (pinned checksums in `windows/unity-capture.sha256`); adapted sender in [the vendor directory](host/third_party/unity_capture/) | MIT |
+| **Unity Capture filter** | Bundled Windows virtual camera DLLs (pinned checksums in `windows/unity-capture.sha256`); adapted sender in [the vendor directory](third_party/unity_capture/) | MIT |
 | **Rust crates** (direct runtime pins from `host-rs/Cargo.toml`) | Full license texts collected into each desktop package by `host-rs/tools/package_licenses.py` | Multiple (Apache-2.0 / MIT / BSD / OFL / …). Preserve crate and font notices |
 | Kotlin standard library | Android runtime; build tools retain their own licenses | Apache-2.0 |
 | System runtime libraries | Platform-specific bundled closure; retain copyright notices and any source obligations, including GCC runtime exceptions | Component-specific |

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run after build_linux.sh and package_licenses.py. Produces the Rust AppImage
-# (never the classic Qt AppImage from linux/build-appimage.sh).
+# (the classic Qt AppImage path has been removed).
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 : "${FFMPEG_DIR:?Minimal FFmpeg prefix required}"

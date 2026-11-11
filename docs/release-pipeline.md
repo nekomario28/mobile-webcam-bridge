@@ -11,7 +11,7 @@ GitHub Actions workflow: `.github/workflows/release.yml`.
 
 - Built by `linux/build-rust-appimage.sh` → `host-rs/tools/package_linux.sh`.
 - Uses the minimal LGPL FFmpeg from `host-rs/tools/build_ffmpeg.py`.
-- `linux/build-appimage.sh` is the **classic Qt** path and refuses to run unless
+- The classic Qt AppImage script (`linux/build-appimage.sh`) was removed with the classic host; it refused to run unless
   `AMB_ALLOW_CLASSIC_APPIMAGE=1`. It must not feed GitHub Releases for current tags.
 
 ## Android

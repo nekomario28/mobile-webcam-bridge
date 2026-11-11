@@ -41,7 +41,7 @@ does not publish a separate security email address.
 In scope:
 
 - The Android app under `android/`
-- The Rust host under `host-rs/` and the classic host under `host/`
+- The Rust host under `host-rs/` (the classic C++ host was removed from the tree; it remains in git history)
 - The wire protocol under `protocol/`
 - USB and Wi-Fi session handling, pairing, authorization, and credential storage
 - Release signing and how the release workflow handles the signing key

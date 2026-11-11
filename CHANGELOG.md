@@ -9,6 +9,9 @@
 - `AMB_AUTH_TRACE` and `AMB_USB_TRACE` only work in debug builds or with the new non-default
   `trace` cargo feature; release builds contain no trace output. The auth trace prints a short
   digest of the challenge nonce instead of the nonce.
+- The classic C++/Qt host (`host/`) is removed from the tree; it was not shipped in v0.3.x and
+  remains in git history (tag `v0.1.2`). The Unity Capture notice moved to `third_party/`, and
+  the manual hardware-gates workflow now uses the Rust host (`g1-dump` was dropped).
 
 ## 0.3.2 - 2026-10-26
 

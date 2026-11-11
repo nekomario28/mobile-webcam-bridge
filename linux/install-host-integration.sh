@@ -2,7 +2,7 @@
 # Host integration setup.
 #
 #   sudo linux/install-host-integration.sh [--switch-parent PID]
-#       Manual use and the classic Qt host. Assets are the files next to this
+#       Manual use. Assets are the files next to this
 #       script. pkexec must not be pointed at that path: it is derived from
 #       wherever the application binary lives and may be user-writable.
 #

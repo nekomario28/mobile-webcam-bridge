@@ -9,3 +9,7 @@ view on destruction, request the mutex/event rights required for writing and
 waiting, use a numeric zero for the mapping size, and bound producer mutex waits.
 The shared layout and names remain compatible with the pinned filter DLLs.
 The Unity plugin is not used or copied.
+
+This directory used to live under `host/third_party/` with the classic C++ host. It stays
+in the tree for its MIT notice (shipped with the Windows package) and as the reference
+for the shared-memory layout the Rust host writes.
