@@ -303,7 +303,7 @@ impl Usb {
         };
         // Start at a frame boundary. The endpoint may hold frames from a previous host
         // connection; AOA reports no disconnect, so nothing else resets it.
-        if std::env::var_os("AMB_USB_TRACE").is_some() {
+        if crate::trace_enabled("AMB_USB_TRACE") {
             eprintln!(
                 "usb trace: input ep=0x{input:02x} output ep=0x{output:02x} transfer_scratch={TRANSFER_SCRATCH}"
             );
@@ -314,7 +314,7 @@ impl Usb {
         // loud when it was a guess, because that is the case whose later failure - a bad header
         // with nothing to explain it - is the one that costs a debugging session.
         let aligned = opened.align_stream();
-        if std::env::var_os("AMB_USB_TRACE").is_some() {
+        if crate::trace_enabled("AMB_USB_TRACE") {
             eprintln!("usb trace: align_stream verdict={aligned:?}");
         }
         Ok(opened)

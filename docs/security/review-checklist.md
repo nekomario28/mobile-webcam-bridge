@@ -106,8 +106,8 @@ AI が `main` `791568606368da074529701ac3a2bdcf78dfc2e4` を読み、この PR �
 |---|---|
 | `Settings` の `Debug` | 確認済み。`lan_key` は `<redacted>`。`lan_fingerprint` は全文。本番の `println` / `eprintln` で `Settings` を `{:?}` している箇所は見つからなかった |
 | `PairingInfo` の `Debug` | 要確認。導出 `Debug` は `key` を含む。本番ログで `{:?}` している箇所は見つからなかった。テスト失敗時の表示には出る |
-| `client_auth` の `AMB_AUTH_TRACE` | 確認済み。環境変数があるとき nonce、binding、ラベル、公開鍵長を `eprintln` する。アクセスキーは出さない。既定では出さない |
-| `usb.rs` の `AMB_USB_TRACE` | 確認済み。エンドポイント番号とスクラッチサイズだけ |
+| `client_auth` の `AMB_AUTH_TRACE` | 確認済み。debug ビルドか `trace` feature のときだけ有効。環境変数があるとき nonce の SHA-256 先頭8バイト、binding、ラベル、公開鍵長を `eprintln` する。nonce そのものとアクセスキーは出さない。release ビルドには含まれない |
+| `usb.rs` の `AMB_USB_TRACE` | 確認済み。エンドポイント番号とスクラッチサイズだけ。debug ビルドか `trace` feature のときだけ有効 |
 | `--usb-dump` | 要判断。`usb_probe.rs` は最大 512 バイトの生バイトを 16 進で出す。その窓に `PAIRING_INFO` があればキーのバイトが含まれる。コマンドの目的がダンプなので、この PR では伏せていない |
 | `--headless` | 確認済み（この PR で修正）。修正前は worker の JSON 行をそのまま `println` していた。`Event::PairingInfo` は `key` を持つ。今は `printed_event_line` が `key` を `<redacted>` にする。パースできない行に `pairing_info` が含まれるときは本文を出さない。GUI へのパイプは変えていない。テストは `a_printed_pairing_event_does_not_contain_the_access_key` |
 | Android `Log` | 確認済み。`SecureWifiGate` はリセット成否と、認可ストレージ不能の例外。キー文字列の補間は、読んだ呼び出しにはない。例外メッセージがキーを含む実装は見つからなかった。全例外型のメッセージは未確認 |
