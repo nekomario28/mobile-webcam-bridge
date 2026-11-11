@@ -79,7 +79,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          usb=host-rs/target/release/mobile-webcam-usb
+          usb="host-rs/target/release/mobile-webcam-usb"
           if "$usb" --list; then
             exit 0
           fi
@@ -90,7 +90,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          usb=host-rs/target/release/mobile-webcam-usb
+          usb="host-rs/target/release/mobile-webcam-usb"
           if lsusb | awk '{print tolower($6)}' | grep -qx '18d1:2d00'; then
             echo '[PASS G0 HOST] already in accessory-only AOA: 18d1:2d00'
             exit 0
@@ -139,7 +139,7 @@ jobs:
           [[ "$ITERATIONS" =~ ^[1-9][0-9]{0,5}$ ]] || { echo 'invalid smoke_iterations'; exit 2; }
           # The probe performs the AOA transition and the per-PC authorization itself;
           # approve this PC on the phone when it asks.
-          host=host-rs/target/release/mobile-webcam
+          host="host-rs/target/release/mobile-webcam"
           if "$host" --usb-probe --frames "$ITERATIONS"; then
             exit 0
           fi
