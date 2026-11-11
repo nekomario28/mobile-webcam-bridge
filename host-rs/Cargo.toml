@@ -55,6 +55,11 @@ proptest = "=1.12.0"
 egui_kittest = { version = "=0.37.0", features = ["eframe"] }
 # The harness takes and returns egui types, so the test crate needs the same egui.
 egui = { version = "=0.37.0", features = ["default_fonts"] }
+# egui_kittest's eframe feature does not enable glow or wgpu, but eframe 0.37
+# gates `run_native_ext` on `glow` or `wgpu_no_default_features`. Declare the
+# same eframe features the `gui` feature uses so `--no-default-features` tests
+# still compile the harness.
+eframe = { version = "=0.37.0", default-features = false, features = ["accesskit", "default_fonts", "wgpu_no_default_features", "wayland", "x11"] }
 
 [build-dependencies]
 bindgen = { version = "=0.72.1", optional = true }
