@@ -1,5 +1,12 @@
 # Classic Qt v0.1.2 on Windows
 
+> **Removed from the tree.** The classic C++/Qt host source (`host/`) was removed after
+> v0.3.2; it is not shipped in v0.3.x, uses plaintext Wi-Fi and has no per-PC
+> authorization. It remains in git history: tag `v0.1.2`, or [`host/` at `d6d0538`](https://github.com/nekomario28/mobile-webcam-bridge/tree/d6d0538/host),
+> the last commit that contained it. The classic releases are withdrawn. This page is
+> kept as a historical record only; its build commands work only on such a checkout.
+
+
 For the current Rust desktop, use [the Rust guide](../host-rs/README.md).
 The Qt/MSYS2 licensing and packaging instructions below apply to the classic build.
 

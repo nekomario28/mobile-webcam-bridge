@@ -60,7 +60,7 @@ Issues and pull requests are welcome. All contributions require a [Developer Cer
 [Security](docs/security.md) ·
 [Roadmap and evidence](docs/roadmap.md) ·
 [Build and verification](specs/rust-host-rewrite/implementation.md) ·
-[Classic Qt v0.1.2](docs/classic-qt.md)
+[Classic Qt v0.1.2 (historical)](docs/classic-qt.md)
 
 Source: [Apache 2.0](LICENSE). Bundled components have their own licenses; see
 [third-party notices](THIRD_PARTY_NOTICES.md),

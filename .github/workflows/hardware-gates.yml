@@ -11,16 +11,11 @@ on:
           - enumerate
           - g0-switch
           - g0.5-smoke
-          - g1-dump
         default: enumerate
       smoke_iterations:
         description: G0.5 PING/PONG count
         required: false
         default: '1000'
-      g1_frames:
-        description: G1 H.264 access units to capture
-        required: false
-        default: '300'
 
 permissions:
   contents: read
@@ -47,18 +42,25 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain)"
 
-      - name: Build host tools against real libusb
+      # The classic C++ probe tools (host/) were removed; these gates use the Rust host.
+      # The old g1-dump action needed the classic amb-video-dump, which cannot pass
+      # per-PC authorization against a v0.3.x phone; G1 is exercised by the app itself.
+      - name: Build Rust host tools against real libusb
         shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
         run: |
           set -euo pipefail
-          command -v cmake
-          command -v c++
-          command -v pkg-config
+          command -v cargo
           command -v lsusb
+          command -v python3
           pkg-config --exists libusb-1.0
-          cmake -S host -B build/host -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/host --parallel
-          ctest --test-dir build/host --output-on-failure
+          cargo build --manifest-path host-rs/Cargo.toml --release --locked \
+            --no-default-features --bin mobile-webcam-usb
+          if [[ "$ACTION" == g0.5-smoke ]]; then
+            # --usb-probe lives in the full host binary (needs the FFmpeg headers).
+            cargo build --manifest-path host-rs/Cargo.toml --release --locked --bin mobile-webcam
+          fi
 
       - name: USB policy preflight
         shell: bash
@@ -72,40 +74,43 @@ jobs:
           fi
           echo 'usb_debugging_policy=PASS(no 18d1:2d01 observed)'
 
-      - name: Enumerate with AMB probe
+      - name: Enumerate with the Rust USB helper
         if: inputs.action == 'enumerate'
         shell: bash
         run: |
           set -euo pipefail
-          if ./build/host/amb-aoa-probe --list; then
+          usb=host-rs/target/release/mobile-webcam-usb
+          if "$usb" --list; then
             exit 0
           fi
-          sudo -n ./build/host/amb-aoa-probe --list
+          sudo -n "$usb" --list
 
       - name: G0 switch to accessory-only AOA
         if: inputs.action == 'g0-switch'
         shell: bash
         run: |
           set -euo pipefail
+          usb=host-rs/target/release/mobile-webcam-usb
           if lsusb | awk '{print tolower($6)}' | grep -qx '18d1:2d00'; then
             echo '[PASS G0 HOST] already in accessory-only AOA: 18d1:2d00'
             exit 0
           fi
 
-          mapfile -t sony < <(lsusb | awk '{id=tolower($6); if (id ~ /^0fce:/) print id}')
-          if (( ${#sony[@]} != 1 )); then
-            echo "Expected exactly one pre-AOA Sony device; found ${#sony[@]}. Refusing mutation."
-            exit 22
-          fi
-          id="${sony[0]}"
-          echo "xperia_candidate=$id"
+          listing="$("$usb" --list 2>/dev/null || sudo -n "$usb" --list)"
+          # Exactly one Sony (0fce) candidate, or refuse to send any vendor request.
+          selected="$(printf '%s\n' "$listing" | python3 -c '
+          import json, sys
+          found = [c["id"] for c in json.loads(sys.stdin.read()) if c["id"]["vid"] == 0x0FCE]
+          if len(found) != 1:
+              sys.exit(f"Expected exactly one pre-AOA Sony device; found {len(found)}. Refusing mutation.")
+          print(json.dumps(found[0]))
+          ')" || exit 22
+          echo "xperia_candidate=$selected"
 
-          run_probe() {
-            if "$@"; then return 0; fi
-            sudo -n "$@"
-          }
-          run_probe ./build/host/amb-aoa-probe --device "$id"
-          run_probe ./build/host/amb-aoa-probe --device "$id" --switch
+          if ! printf '%s\n' "$selected" | "$usb" --switch; then
+            # As root the helper insists on a parent whose exit ends it.
+            printf '%s\n' "$selected" | sudo -n "$usb" --switch --parent "$$"
+          fi
 
           found=''
           for _ in {1..40}; do
@@ -132,42 +137,10 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$ITERATIONS" =~ ^[1-9][0-9]{0,5}$ ]] || { echo 'invalid smoke_iterations'; exit 2; }
-          lsusb | awk '{print tolower($6)}' | grep -qx '18d1:2d00' || {
-            echo 'G0.5 requires accessory-only AOA 18d1:2d00 and the Android app to have opened the accessory.'
-            exit 25
-          }
-          if ./build/host/amb-aoa-probe --smoke "$ITERATIONS"; then
+          # The probe performs the AOA transition and the per-PC authorization itself;
+          # approve this PC on the phone when it asks.
+          host=host-rs/target/release/mobile-webcam
+          if "$host" --usb-probe --frames "$ITERATIONS"; then
             exit 0
           fi
-          sudo -n ./build/host/amb-aoa-probe --smoke "$ITERATIONS"
-
-      - name: G1 capture raw Annex-B stream
-        if: inputs.action == 'g1-dump'
-        shell: bash
-        env:
-          FRAMES: ${{ inputs.g1_frames }}
-        run: |
-          set -euo pipefail
-          [[ "$FRAMES" =~ ^[1-9][0-9]{0,5}$ ]] || { echo 'invalid g1_frames'; exit 2; }
-          lsusb | awk '{print tolower($6)}' | grep -qx '18d1:2d00' || {
-            echo 'G1 requires accessory-only AOA 18d1:2d00.'
-            exit 25
-          }
-          mkdir -p evidence
-          if ./build/host/amb-video-dump --output evidence/capture.h264 --frames "$FRAMES"; then
-            :
-          else
-            sudo -n ./build/host/amb-video-dump --output evidence/capture.h264 --frames "$FRAMES"
-          fi
-          test -s evidence/capture.h264
-          sha256sum evidence/capture.h264
-          command -v ffprobe >/dev/null && ffprobe -v error -show_streams evidence/capture.h264 || true
-
-      - name: Upload G1 capture
-        if: inputs.action == 'g1-dump' && success()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: xperia-g1-capture
-          path: evidence/capture.h264
-          if-no-files-found: error
-          retention-days: 7
+          sudo -n "$host" --usb-probe --frames "$ITERATIONS"

@@ -95,7 +95,7 @@ if(DEFINED AMB_RUST_EXECUTABLE)
 else()
     file(COPY "${repo}/windows/README.md" DESTINATION "${stage}")
 endif()
-file(COPY "${repo}/host/third_party/unity_capture/LICENSE"
+file(COPY "${repo}/third_party/unity_capture/LICENSE"
      DESTINATION "${stage}/licenses/unity-capture")
 if(DEFINED AMB_RUST_EXECUTABLE)
     file(COPY "${AMB_RUST_LICENSES}/" DESTINATION "${stage}/licenses/rust")

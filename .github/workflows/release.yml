@@ -133,7 +133,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Explicitly do not invoke linux/build-appimage.sh (Qt + GPL FFmpeg).
+          # The classic Qt + GPL FFmpeg AppImage script no longer exists.
           ./linux/build-rust-appimage.sh
 
       - name: Prepare release assets

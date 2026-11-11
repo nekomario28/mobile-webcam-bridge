@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build the current (Rust) Linux AppImage for GitHub Releases.
-# Deliberately does NOT call linux/build-appimage.sh (classic Qt + GPL FFmpeg).
+# The classic Qt + GPL FFmpeg AppImage script was removed with the classic host.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 version=$(cat "$root/VERSION")

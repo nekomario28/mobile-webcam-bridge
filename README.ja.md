@@ -33,6 +33,6 @@ Android スマートフォンを USB または Wi-Fi 経由で PC の Web カメ
 [セキュリティ](docs/security.md) ·
 [ロードマップと検証記録](docs/roadmap.md) ·
 [ビルドと検証](specs/rust-host-rewrite/implementation.md) ·
-[Classic Qt v0.1.2](docs/classic-qt.md)
+[Classic Qt v0.1.2（履歴のみ）](docs/classic-qt.md)
 
 ソースコード: [Apache 2.0](LICENSE)。同梱コンポーネントには個別のライセンスが適用されます。[第三者ライセンス通知](THIRD_PARTY_NOTICES.md)、[FFmpeg ソース提供案内](docs/licenses/FFMPEG_SOURCE_OFFER.md)、および各配布パッケージ内のライセンスファイルを参照してください。

@@ -1,17 +1,14 @@
 # Run from the repository root on CachyOS / Arch.
-sudo pacman -S --needed base-devel cmake pkgconf libusb ffmpeg v4l2loopback-dkms v4l2loopback-utils
-cmake -S host -B build/host -DCMAKE_BUILD_TYPE=Release
-cmake --build build/host --parallel
-ctest --test-dir build/host --output-on-failure
+# The classic C++ probe tools (host/) were removed; this uses the Rust host.
+sudo pacman -S --needed base-devel pkgconf libusb ffmpeg clang v4l2loopback-dkms v4l2loopback-utils
+cargo build --manifest-path host-rs/Cargo.toml --release --locked
 
 # Install access for accessory-only USB mode and the virtual-camera name.
 sudo ./linux/install-host-integration.sh
 
 # Safe discovery: no AOA vendor request is sent.
-sudo ./build/host/amb-aoa-probe --list
+./host-rs/target/release/mobile-webcam-usb --list
 
-# Then use the Xperia VID:PID printed above, for example:
-# sudo ./build/host/amb-aoa-probe --device 0fce:XXXX
-# sudo ./build/host/amb-aoa-probe --device 0fce:XXXX --switch
-# After the Android app opens the accessory:
-# ./build/host/amb-aoa-probe --smoke 1000
+# After the Android app is open (USB mode), run the G0/G0.5 gate end to end:
+# AOA switch, per-PC authorization, then 1000 PING/PONG round trips.
+# ./host-rs/target/release/mobile-webcam --usb-probe --frames 1000

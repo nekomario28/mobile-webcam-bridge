@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The classic C++/Qt host (`host/`) is removed from the tree; it was not shipped in v0.3.x and
+  remains in git history (tag `v0.1.2`). The Unity Capture notice moved to `third_party/`, and
+  the manual hardware-gates workflow now uses the Rust host (`g1-dump` was dropped).
+
 ## 0.3.2 - 2026-10-26
 
 The windows installer is built from a script that carries its own delete macros. `makensis`

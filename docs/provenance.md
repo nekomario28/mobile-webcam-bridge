@@ -86,7 +86,7 @@ API contracts are authoritative.
 
 The Windows host adapts the filter's shared-memory sender under its MIT license.
 Exact source identity and local changes are recorded in
-[`host/third_party/unity_capture/`](../host/third_party/unity_capture/).
+[`third_party/unity_capture/`](../third_party/unity_capture/).
 The build script verifies the external filter DLLs before packaging. The Unity
 plugin is not used. This reuses the Windows output device while keeping the
 existing Android protocol and decoder/transform path.
