@@ -63,8 +63,22 @@ Desktop settings enforce mode 0600 for Linux files containing a Wi-Fi key
 and store the Windows credential as per-user DPAPI ciphertext in the
 registry. An earlier plain-text development-build registry value is read for
 migration and removed once the protected value is successfully saved.
-**Linux mode 0600 is access control, not encryption at rest**; application-
-level encryption or desktop Secret Service integration remains open.
+
+On Linux, when a desktop Secret Service (GNOME Keyring, KWallet, KeePassXC, ...)
+answers on the session bus, the PC identity file and the settings file's
+`lanKey` are sealed with ChaCha20-Poly1305 under a random 256-bit storage key
+kept in that keyring (item label "Mobile Webcam storage key"); the files hold
+`mwss1:` ciphertext and keep mode 0600. Plain values written by earlier
+versions are sealed on the next load. Without a Secret Service (headless
+sessions, no D-Bus, a build without the default `keyring` feature, or
+`MOBILE_WEBCAM_KEYRING=off`) the files keep the previous plain 0600 format,
+and **mode 0600 there is access control, not encryption at rest**. A sealed
+value never falls back: if the keyring is locked, missing or no longer holds
+the storage key, loading fails closed and the file is preserved. Deleting the
+keyring item is equivalent to losing the PC key: use explicit recovery and
+re-pair. Downgrading to a release older than this change cannot read sealed
+files; re-pair after a downgrade. Same-user processes that can query the
+unlocked keyring are not separated from this app.
 
 There is no TLS client certificate or authenticated hardware/process label.
 PC identity is a per-user application key, not hardware attestation. LAN proofs
