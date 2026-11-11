@@ -47,7 +47,8 @@ on earlier supported Android releases.
 - The AMB1 HELLO deadline is absolute, and active LAN sessions reject excessive
   PING rates. TLS negotiation has both a per-operation socket timeout and an
   absolute 5-second whole-handshake deadline that closes the unauthenticated
-  socket, with at most four concurrent untrusted handshakes in flight.
+  socket, with at most six concurrent untrusted handshakes in flight and at
+  most two from any one remote address.
 - The Rust client propagates one monotonic deadline beneath TLS record
   buffering. Socket connection attempts, TLS negotiation and AMB1 pairing
   share a budget; frame header, payload and flush do not renew it. A timeout
