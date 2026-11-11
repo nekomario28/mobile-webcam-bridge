@@ -13,7 +13,6 @@ import javax.net.ssl.SSLSocket
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
-import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -90,7 +89,7 @@ class LanServer(
     private val handshakeWorkers = Executors.newFixedThreadPool(MAX_HANDSHAKES) { task ->
         Thread(task, "mwb-tls-handshake").apply { isDaemon = true }
     }
-    private val handshakeSlots = Semaphore(MAX_HANDSHAKES)
+    private val handshakeSlots = HandshakeAdmission(MAX_HANDSHAKES, MAX_HANDSHAKES_PER_PEER)
     private val unauthenticated = Collections.newSetFromMap(ConcurrentHashMap<Socket, Boolean>())
 
     fun start() {
@@ -124,22 +123,25 @@ class LanServer(
             }
             // Do not let one stalled TLS handshake monopolize the accept loop.
             // Only a fixed number of untrusted sockets may consume worker slots.
-            if (active.get() != null || !handshakeSlots.tryAcquire()) {
+            // One peer address may hold only part of them, so a single host
+            // cannot keep every slot busy.
+            val peer = socket.inetAddress
+            if (active.get() != null || !handshakeSlots.tryAdmit(peer)) {
                 runCatching { socket.close() }
                 continue
             }
             unauthenticated.add(socket)
             try {
-                handshakeWorkers.execute { completeHandshake(socket) }
+                handshakeWorkers.execute { completeHandshake(socket, peer) }
             } catch (_: java.util.concurrent.RejectedExecutionException) {
                 unauthenticated.remove(socket)
-                handshakeSlots.release()
+                handshakeSlots.release(peer)
                 runCatching { socket.close() }
             }
         }
     }
 
-    private fun completeHandshake(socket: Socket) {
+    private fun completeHandshake(socket: Socket, peer: InetAddress?) {
         // Per-read SO_TIMEOUT is insufficient against a TLS record byte trickle.
         // This task closes the unauthenticated connection after an absolute deadline.
         val timeout = handshakeTimer.schedule(
@@ -179,7 +181,7 @@ class LanServer(
         } finally {
             timeout.cancel(false)
             unauthenticated.remove(socket)
-            handshakeSlots.release()
+            handshakeSlots.release(peer)
         }
     }
 
@@ -220,7 +222,8 @@ class LanServer(
 
     companion object {
         const val DEFAULT_PORT = 48_527
-        private const val MAX_HANDSHAKES = 4
+        private const val MAX_HANDSHAKES = 6
+        private const val MAX_HANDSHAKES_PER_PEER = 2
         private const val HANDSHAKE_TIMEOUT_MS = 5_000L
 
         fun localIpv4Addresses(): List<String> = runCatching {
@@ -234,6 +237,40 @@ class LanServer(
                 .distinct()
         }.getOrDefault(emptyList())
     }
+}
+
+/**
+ * Bounded admission for unauthenticated handshakes: at most [maxTotal] in
+ * flight, and at most [maxPerPeer] from any one remote address.
+ */
+internal class HandshakeAdmission(private val maxTotal: Int, private val maxPerPeer: Int) {
+    init {
+        require(maxTotal > 0 && maxPerPeer in 1..maxTotal)
+    }
+
+    private val lock = Any()
+    private var total = 0
+    private val perPeer = HashMap<InetAddress?, Int>()
+
+    fun tryAdmit(peer: InetAddress?): Boolean = synchronized(lock) {
+        val held = perPeer[peer] ?: 0
+        if (total >= maxTotal || held >= maxPerPeer) return false
+        total++
+        perPeer[peer] = held + 1
+        true
+    }
+
+    fun release(peer: InetAddress?) {
+        synchronized(lock) {
+            val held = perPeer[peer] ?: return
+            if (held <= 1) perPeer.remove(peer) else perPeer[peer] = held - 1
+            total--
+        }
+    }
+
+    fun inFlight(): Int = synchronized(lock) { total }
+
+    fun inFlight(peer: InetAddress?): Int = synchronized(lock) { perPeer[peer] ?: 0 }
 }
 
 /**
