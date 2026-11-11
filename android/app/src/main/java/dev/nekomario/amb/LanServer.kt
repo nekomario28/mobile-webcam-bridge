@@ -3,6 +3,8 @@ package dev.nekomario.amb
 import java.io.EOFException
 import java.io.FilterInputStream
 import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
@@ -113,6 +115,13 @@ class LanServer(
                 if (running.get()) onError(t.message ?: t.javaClass.simpleName)
                 break
             }
+            // The listener follows address changes, so it is bound to the wildcard;
+            // connections that did not arrive on a local-network interface are
+            // closed here, before they reach TLS or a handshake slot.
+            if (!LanAddressPolicy.acceptsLocal(socket.localAddress)) {
+                runCatching { socket.close() }
+                continue
+            }
             // Do not let one stalled TLS handshake monopolize the accept loop.
             // Only a fixed number of untrusted sockets may consume worker slots.
             if (active.get() != null || !handshakeSlots.tryAcquire()) {
@@ -216,14 +225,53 @@ class LanServer(
 
         fun localIpv4Addresses(): List<String> = runCatching {
             NetworkInterface.getNetworkInterfaces().toList()
-                .filter { it.isUp && !it.isLoopback }
+                .filter { it.isUp && !it.isLoopback && !LanAddressPolicy.isCellularName(it.name) }
                 .flatMap { it.inetAddresses.toList() }
                 .filterIsInstance<Inet4Address>()
-                .filter { !it.isLoopbackAddress }
+                .filter { !it.isLoopbackAddress && LanAddressPolicy.isLocalNetworkAddress(it) }
                 .map { it.hostAddress ?: "" }
                 .filter { it.isNotBlank() }
                 .distinct()
         }.getOrDefault(emptyList())
+    }
+}
+
+/**
+ * Which local addresses the Wi-Fi listener answers on: the phone's own local
+ * networks (Wi-Fi, hotspot, USB/Ethernet tethering) and loopback (adb forward),
+ * never a mobile-data interface or a publicly routed address.
+ */
+internal object LanAddressPolicy {
+    // Kernel names Android vendors use for mobile-data links (incl. their 464xlat).
+    private val cellularPrefixes = listOf(
+        "rmnet", "r_rmnet", "rev_rmnet", "v4-rmnet", "ccmni", "v4-ccmni", "cc2mni", "ccinet",
+        "pdp", "seth_lte", "wwan", "qmi",
+    )
+
+    fun isCellularName(name: String?): Boolean {
+        val lower = name?.lowercase() ?: return false
+        return cellularPrefixes.any { lower.startsWith(it) }
+    }
+
+    /** RFC 1918 / link-local IPv4, IPv6 link-local and unique-local, or loopback. */
+    fun isLocalNetworkAddress(address: InetAddress): Boolean = when {
+        address.isLoopbackAddress -> true
+        address is Inet4Address -> address.isSiteLocalAddress || address.isLinkLocalAddress
+        address is Inet6Address -> address.isLinkLocalAddress ||
+            (address.address[0].toInt() and 0xfe) == 0xfc
+        else -> false
+    }
+
+    /** Whether a connection accepted on [local] may proceed to TLS. */
+    fun acceptsLocal(
+        local: InetAddress?,
+        interfaceName: (InetAddress) -> String? = { address ->
+            runCatching { NetworkInterface.getByInetAddress(address)?.name }.getOrNull()
+        },
+    ): Boolean {
+        if (local == null || !isLocalNetworkAddress(local)) return false
+        if (local.isLoopbackAddress) return true
+        return !isCellularName(interfaceName(local))
     }
 }
 

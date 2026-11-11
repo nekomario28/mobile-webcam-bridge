@@ -39,6 +39,11 @@ on earlier supported Android releases.
 - Disconnect notifications identify their originating session, preventing a
   stale close event from discarding a newer connection.
 - The Android activity stops camera capture when leaving the foreground.
+- The Android Wi-Fi listener only serves connections that arrive on a local
+  network address of the phone (RFC 1918 / link-local IPv4, IPv6 link-local or
+  unique-local, loopback for `adb forward`) on a non-mobile-data interface;
+  others are closed before TLS. The pairing addresses sent to the PC use the
+  same rule.
 - The AMB1 HELLO deadline is absolute, and active LAN sessions reject excessive
   PING rates. TLS negotiation has both a per-operation socket timeout and an
   absolute 5-second whole-handshake deadline that closes the unauthenticated
