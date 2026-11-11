@@ -180,6 +180,10 @@ jobs:
           export LIBCLANG_PATH="$(cygpath -am /mingw64/bin)"
           export CLANG_PATH="$(cygpath -am /mingw64/bin/clang.exe)"
           export BINDGEN_EXTRA_CLANG_ARGS='--target=x86_64-w64-windows-gnu'
+          # rust-toolchain.toml names only the channel. On this runner that
+          # resolves to the MSVC host triple, which does not have rustfmt.
+          # Keep cargo on the GNU toolchain this job already installed.
+          export RUSTUP_TOOLCHAIN=1.98.1-x86_64-pc-windows-gnu
           clang --version
           cargo fmt --manifest-path host-rs/Cargo.toml --check
           cargo clippy --manifest-path host-rs/Cargo.toml --target x86_64-pc-windows-gnu --all-targets --locked -- -D warnings
