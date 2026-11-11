@@ -196,11 +196,11 @@ first — which clears the app's own data (its approvals and Wi-Fi key), not the
    ```
 
 The `release` workflow rejects a tag that differs from `VERSION`, rebuilds and
-verifies the signed APK, runs the host tests through the AppImage build, and then
-publishes the Android/Linux artifacts with `SHA256SUMS` to GitHub Releases.
-It does not build Windows.
+verifies the signed APK, runs the host tests through the AppImage build, builds
+Windows on `windows-2025`, and publishes the artifacts with `SHA256SUMS` to
+GitHub Releases. Both jobs have run end to end from `v0.3.2`.
 
-If the self-hosted runner is unavailable, build from the exact tag locally using
+If you ever have to publish by hand, build from the exact tag locally using
 the same Android signing key. Include the Windows Setup.exe produced by
 [`windows/build-windows.sh`](../windows/build-windows.sh), source archives,
 dependency inventories and a combined `SHA256SUMS`. Create a draft release,
@@ -211,3 +211,22 @@ local validation must not be described as CI success.
 
 Hardware evidence remains separate from packaging. The release notes must describe
 only the device gates recorded under `docs/evidence/` and keep unrun gates explicit.
+
+## Withdrawing a release
+
+To take a published GitHub Release off the public list without deleting the git
+tag or the release object:
+
+1. Convert the Release to a draft (`gh release edit vX.Y.Z --draft`). The tag
+   stays in the repository. Assets remain on the draft and are visible only to
+   people with write access.
+2. Confirm that
+   <https://github.com/nekomario28/mobile-webcam-bridge/releases/latest>
+   still points at a known-good published tag. If you withdrew the release that
+   was marked Latest, mark a previous known-good release as latest instead.
+3. Android `versionCode` is monotonic (`major * 1_000_000 + minor * 1_000 +
+   patch` in `android/app/build.gradle.kts`). A phone cannot install an older
+   APK over a newer one. Stepping a device back requires uninstalling the app
+   first, which clears that install's local data.
+
+Do not delete tags or releases in order to withdraw a build.
