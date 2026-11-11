@@ -276,6 +276,13 @@ impl Store {
     /// write keeps the clamp in memory and says so in `quality_warning`).
     pub fn load(&self) -> crate::Result<Settings> {
         let mut settings = self.read()?;
+        // A plain Wi-Fi key from an earlier version is sealed under the desktop
+        // keyring when one is available. Best effort: the loaded value is used
+        // either way, and a failed save leaves the file as it was.
+        #[cfg(unix)]
+        if !settings.quality_clamped && self.primary_has_plain_key() {
+            let _ = self.save(&settings);
+        }
         if settings.quality_clamped {
             match self.save(&settings) {
                 Ok(()) => settings.quality_clamped = false,
@@ -287,6 +294,14 @@ impl Store {
             }
         }
         Ok(settings)
+    }
+    #[cfg(unix)]
+    fn primary_has_plain_key(&self) -> bool {
+        read_file(&self.path)
+            .ok()
+            .and_then(|data| parse_ini(&data).ok())
+            .and_then(|values| values.get("lanKey").cloned())
+            .is_some_and(|key| sealed::should_migrate(&key))
     }
     fn read(&self) -> crate::Result<Settings> {
         #[cfg(unix)]
@@ -311,6 +326,7 @@ impl Store {
                     values.entry(key).or_insert(value);
                 }
             }
+            unseal_values(&mut values)?;
             Settings::from_values(&values)
         }
         #[cfg(windows)]
@@ -325,8 +341,14 @@ impl Store {
             use std::io::Write;
             let data = read_file(&self.path)?;
             // Refuse to replace damaged settings. Unknown lines and sections survive.
-            Settings::from_values(&parse_ini(&data)?)?;
-            let values = settings.values();
+            let mut existing = parse_ini(&data)?;
+            unseal_values(&mut existing)?;
+            Settings::from_values(&existing)?;
+            let parent = self.path.parent().ok_or("settings directory unavailable")?;
+            let mut values = settings.values();
+            if let Some(key) = values.get_mut("lanKey") {
+                *key = sealed::seal(parent, "lanKey", key)?;
+            }
             let mut lines = Vec::new();
             let mut general = false;
             for line in data.lines() {
@@ -352,7 +374,6 @@ impl Store {
                 lines.push("[General]".into());
                 lines.extend(additions);
             }
-            let parent = self.path.parent().ok_or("settings directory unavailable")?;
             std::fs::create_dir_all(parent)?;
             // Unpredictable, not just unique: the first version used the pid, so a
             // same-user process could pre-create the name and make every save fail
@@ -401,6 +422,15 @@ pub(crate) fn fuzz_parse(text: &str) {
     }
     #[cfg(not(unix))]
     let _ = text;
+}
+
+/// Open a `lanKey` sealed under the desktop keyring; plain values pass through.
+#[cfg(unix)]
+fn unseal_values(values: &mut BTreeMap<String, String>) -> crate::Result<()> {
+    if let Some(key) = values.get_mut("lanKey") {
+        *key = sealed::open("lanKey", key)?;
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -580,6 +610,8 @@ fn encode_ini(value: &str) -> String {
 pub(crate) mod dpapi;
 #[cfg(windows)]
 mod registry;
+#[cfg(unix)]
+pub(crate) mod sealed;
 
 #[cfg(test)]
 mod tests {
@@ -804,6 +836,59 @@ mod tests {
         assert_eq!(
             Store::at(path).load().unwrap().lan_key,
             "00112233445566778899aabbccddeeff"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn with_a_keyring_the_wifi_key_is_sealed_and_plain_keys_migrate() {
+        use std::os::unix::fs::PermissionsExt;
+        let keyring = super::sealed::test_support::install();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.conf");
+        let plain = "00112233445566778899aabbccddeeff";
+        std::fs::write(&path, format!("[General]\nlanKey={plain}\nmirror=false\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let store = Store::at(path.clone());
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.lan_key, plain);
+        assert!(!loaded.mirror);
+        let data = std::fs::read_to_string(&path).unwrap();
+        assert!(!data.contains(plain), "migrated on load");
+        assert!(data.contains("lanKey=\"mwss1:"), "{data}");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        // Reads, saves and re-reads keep working on the sealed form.
+        let mut changed = store.load().unwrap();
+        assert_eq!(changed.lan_key, plain);
+        changed.rotation = 90;
+        store.save(&changed).unwrap();
+        let reread = store.load().unwrap();
+        assert_eq!((reread.lan_key.as_str(), reread.rotation), (plain, 90));
+        // A missing storage key fails closed instead of reading an empty key.
+        *keyring.key.borrow_mut() = None;
+        assert!(store.load().is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn without_a_keyring_the_wifi_key_stays_in_the_previous_format() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.conf");
+        let settings = Settings {
+            lan_key: "00112233445566778899aabbccddeeff".into(),
+            ..Default::default()
+        };
+        std::fs::write(&path, "").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        Store::at(path.clone()).save(&settings).unwrap();
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("lanKey=\"00112233445566778899aabbccddeeff\"")
         );
     }
 
