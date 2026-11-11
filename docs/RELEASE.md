@@ -202,7 +202,8 @@ GitHub Releases. Both jobs have run end to end from `v0.3.2`.
 
 If you ever have to publish by hand, build from the exact tag locally using
 the same Android signing key. Include the Windows Setup.exe produced by
-[`windows/build-windows.sh`](../windows/build-windows.sh), source archives,
+the release workflow's Windows steps ([`host-rs/tools/build_windows.sh`](../host-rs/tools/build_windows.sh)
+and [`windows/package.cmake`](../windows/package.cmake)), source archives,
 dependency inventories and a combined `SHA256SUMS`. Create a draft release,
 verify every uploaded asset against its local hash and the tag against `main`,
 then publish it. Cancel the queued workflow for that tag so it cannot later
