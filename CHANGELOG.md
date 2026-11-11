@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Linux: the PC identity and the saved Wi-Fi key are sealed under a storage key kept in the
+  desktop Secret Service when one is available, and existing plain files are migrated on load.
+  Without a Secret Service the 0600 files are used as before (`MOBILE_WEBCAM_KEYRING=off`
+  opts out). Releases older than this one cannot read sealed files.
 - The classic C++/Qt host (`host/`) is removed from the tree; it was not shipped in v0.3.x and
   remains in git history (tag `v0.1.2`). The Unity Capture notice moved to `third_party/`, and
   the manual hardware-gates workflow now uses the Rust host (`g1-dump` was dropped).

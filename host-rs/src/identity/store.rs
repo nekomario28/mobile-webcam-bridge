@@ -111,6 +111,23 @@ fn replace_at(path: &Path) -> crate::Result<std::path::PathBuf> {
 }
 
 fn read_at(path: &Path) -> crate::Result<Option<Identity>> {
+    match read_raw_at(path)? {
+        Some(stored) => decode(&stored).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn decode(stored: &str) -> crate::Result<Identity> {
+    #[cfg(windows)]
+    let stored = crate::settings::dpapi::unprotect(stored)?;
+    #[cfg(unix)]
+    let stored = crate::settings::sealed::open("identity", stored)?;
+    Identity::from_hex(&stored)
+        .ok_or_else(|| "PC identity is corrupt; explicit recovery required (file preserved)".into())
+}
+
+/// The stored text of the identity file, before any unprotection.
+fn read_raw_at(path: &Path) -> crate::Result<Option<String>> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -143,15 +160,62 @@ fn read_at(path: &Path) -> crate::Result<Option<Identity>> {
     if stored.len() as u64 > MAX_STORED_BYTES {
         return Err("PC identity exceeds its storage limit".into());
     }
-    #[cfg(windows)]
-    let stored = crate::settings::dpapi::unprotect(&stored)?;
-    Identity::from_hex(&stored)
-        .map(Some)
-        .ok_or_else(|| "PC identity is corrupt; explicit recovery required (file preserved)".into())
+    Ok(Some(stored))
+}
+
+/// Rewrite a readable plain identity sealed under the desktop keyring. Best
+/// effort: any failure leaves the existing, readable file exactly as it was.
+#[cfg(unix)]
+fn migrate_at(path: &Path, plain_stored: &str, identity: &Identity) -> crate::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or("identity needs a parent directory")?;
+    let sealed = crate::settings::sealed::seal(parent, "identity", &identity.to_hex())?;
+    if !crate::settings::sealed::is_sealed(&sealed) {
+        return Ok(()); // no keyring after all: keep the current file
+    }
+    // Never publish something that does not open back to the same key.
+    if decode(&sealed)?.client_id() != identity.client_id() {
+        return Err("sealed PC identity did not read back".into());
+    }
+    let temporary = parent.join(format!(
+        ".pc-identity-{}.seal.tmp",
+        super::hex(&identity.client_id())
+    ));
+    let _ = fs::remove_file(&temporary);
+    let result = (|| -> crate::Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&temporary)?;
+        file.write_all(sealed.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        // Only replace the exact file that was read; a concurrent recovery wins.
+        if read_raw_at(path)?.as_deref() != Some(plain_stored) {
+            return Err("PC identity changed during migration".into());
+        }
+        fs::rename(&temporary, path)?;
+        File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn load_at(path: &Path) -> crate::Result<Identity> {
-    if let Some(identity) = read_at(path)? {
+    if let Some(stored) = read_raw_at(path)? {
+        let identity = decode(&stored)?;
+        #[cfg(unix)]
+        if crate::settings::sealed::should_migrate(&stored) {
+            let _ = migrate_at(path, &stored, &identity);
+        }
         return Ok(identity);
     }
     let parent = path
@@ -197,7 +261,7 @@ fn load_at(path: &Path) -> crate::Result<Identity> {
     #[cfg(windows)]
     let stored = crate::settings::dpapi::protect(&identity.to_hex())?;
     #[cfg(unix)]
-    let stored = identity.to_hex();
+    let stored = crate::settings::sealed::seal(parent, "identity", &identity.to_hex())?;
     file.write_all(stored.as_bytes())?;
     file.sync_all()?;
     drop(file);
@@ -407,6 +471,62 @@ mod tests {
         fs::write(&path, vec![b'a'; MAX_STORED_BYTES as usize + 1]).unwrap();
         assert!(load_at(&path).is_err());
         assert!(load_at(&path.join("child")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn with_a_keyring_new_keys_are_sealed_and_plain_keys_migrate() {
+        let keyring = crate::settings::sealed::test_support::install();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("private/identity");
+        let identity = load_at(&path).unwrap();
+        let stored = fs::read_to_string(&path).unwrap();
+        assert!(crate::settings::sealed::is_sealed(&stored));
+        assert!(!stored.contains(&identity.to_hex()));
+        assert_eq!(load_at(&path).unwrap().client_id(), identity.client_id());
+
+        // An existing plain file (a previous version's) is sealed on load.
+        let legacy = dir.path().join("legacy/identity");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            fs::set_permissions(legacy.parent().unwrap(), fs::Permissions::from_mode(0o700))
+                .unwrap();
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&legacy)
+                .unwrap()
+                .write_all(identity.to_hex().as_bytes())
+                .unwrap();
+        }
+        assert_eq!(load_at(&legacy).unwrap().client_id(), identity.client_id());
+        let migrated = fs::read_to_string(&legacy).unwrap();
+        assert!(crate::settings::sealed::is_sealed(&migrated));
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&legacy).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        assert_eq!(load_at(&legacy).unwrap().client_id(), identity.client_id());
+        assert!(
+            fs::read_dir(legacy.parent().unwrap())
+                .unwrap()
+                .all(|entry| !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp")),
+            "no temporary file is left behind"
+        );
+
+        // Losing the storage key fails closed and preserves the file.
+        *keyring.key.borrow_mut() = None;
+        assert!(load_at(&legacy).is_err());
+        assert_eq!(fs::read_to_string(&legacy).unwrap(), migrated);
     }
 
     #[cfg(unix)]
