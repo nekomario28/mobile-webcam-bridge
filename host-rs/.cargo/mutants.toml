@@ -1,0 +1,4 @@
+# `body < HEADER + CAPACITY` and `body <= HEADER + CAPACITY` are equivalent
+# in Producer::open: when the record is already exactly that length, set_len
+# to the same length is a no-op, so the extra equality case cannot be observed.
+exclude_re = ["replace < with <= in Producer::open"]
