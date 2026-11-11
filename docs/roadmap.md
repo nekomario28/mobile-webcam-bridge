@@ -72,9 +72,16 @@ the claim each one would let us make.
   `HOST_HELLO` reset for a spent accessory session, and pacing the round trips under the
   phone'"'"'s own PING rate limit — the last one being an instrument that was measuring its own
   violation). Evidence and the ordered story:
-  [evidence/2026-10-24-usb-g0.md](evidence/2026-10-24-usb-g0.md). Remaining on this path: the
-  same run repeated, and the app-side items in #78 (a per-attach USB approval, and the session
-  lifetime that makes `HOST_HELLO` necessary).
+  [evidence/2026-10-24-usb-g0.md](evidence/2026-10-24-usb-g0.md), plus the final
+  [1000-round-trip evidence in #84](https://github.com/nekomario28/mobile-webcam-bridge/pull/84).
+  [Issue #78](https://github.com/nekomario28/mobile-webcam-bridge/issues/78)'s
+  out-of-order-frame and reconnect blockers were resolved by #80/#81/#83/#84;
+  `HOST_HELLO` handles the unavoidable lack of an AOA disconnect boundary. The phone's
+  USB permission UI can offer **Always allow** (confirmed on the XQ-GE44, see
+  `MainActivity.discoverUsb`), so **do not** claim that every reattach always requires
+  another tap. Remaining acceptance work: repeat the completed gate on fresh devices
+  and released builds; decide separately whether the accessory description needs
+  a clearer user-facing name.
 - **Two USB stream questions the 2026-10-24 review left open.** Q1: `align_stream`'s "aligned"
   verdict is a guess after 200 ms of silence, and the shipping path discards the verdict. Q2: the
   shipping hello retry cannot realign the stream it retries on. Both are answered in that review's

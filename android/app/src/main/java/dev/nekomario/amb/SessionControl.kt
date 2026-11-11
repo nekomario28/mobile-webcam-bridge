@@ -8,7 +8,7 @@ class SessionControl(
     private val outbound: FramedOutbound,
     private val onQuality: (Wire.HostCommand) -> Unit,
     private val onPing: () -> Unit = {},
-    /** A host said hello: start a fresh exchange, or re-send what it is waiting for. */
+    /** Authorized HOST_HELLO ends this session; a pre-authorization hello is refused by the gate. */
     private val onHostHello: () -> Unit = {},
 ) {
     private var pingWindowStart = System.nanoTime()
@@ -36,8 +36,8 @@ class SessionControl(
                 onPing()
             }
             Wire.TYPE_HOST_HELLO -> {
-                // Same window shape as PING: a peer cannot spin this, and the handler
-                // re-sends or ends a session, both of which cost the phone something.
+                // Same window shape as PING: a peer cannot spin session resets.
+                // This dispatch path is reachable only after authorization.
                 val now = System.nanoTime()
                 if (now - helloWindowStart >= 1_000_000_000L) {
                     helloWindowStart = now
