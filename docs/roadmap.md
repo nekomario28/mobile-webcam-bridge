@@ -167,6 +167,9 @@ emulator conformance run, the GUI capture gate, `lint-workflows` (actionlint + z
 equivalent), and a weekly `fuzz` run (the decoders carry
 a committed corpus; the stable property tests run per pull request). The host UI itself is now covered by
 AccessKit-driven tests, so "clicking this opens that" no longer needs a screenshot.
+A weekly `soak` run streams synthetic frames over the real TLS transport and reconnects
+repeatedly for ten minutes each, failing if the resident set grows (`host-rs/tests/soak.rs`;
+the phone-side soak stays `host-rs/tools/phone-soak.sh`).
 
 ## Performance
 
