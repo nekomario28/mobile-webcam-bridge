@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `AMB_AUTH_TRACE` and `AMB_USB_TRACE` only work in debug builds or with the new non-default
+  `trace` cargo feature; release builds contain no trace output. The auth trace prints a short
+  digest of the challenge nonce instead of the nonce.
+
 ## 0.3.2 - 2026-10-26
 
 The windows installer is built from a script that carries its own delete macros. `makensis`
