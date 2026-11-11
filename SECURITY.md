@@ -2,20 +2,23 @@
 
 ## Supported versions
 
-The published desktop release **v0.2.0** and Android APK **0.1.4** use
-**unauthenticated plaintext Wi-Fi**. USB-only is the recommended way to use
-those releases. Do not put them on a network you do not trust.
+The current published line is **v0.3.x** (latest **v0.3.2**). Those releases
+use TLS 1.3 with a pinned phone certificate and per-PC authorization on USB
+and Wi-Fi. Independent review of the pairing and authorization protocol
+remains open; see `docs/security.md` and issues #4 and #9. That write-up is
+not a security-support commitment or a release sign-off.
 
-There is no supported security release of the later TLS and per-PC
-authorization work. That code is on `main` and is unreleased. `docs/security.md`
-describes the source tree. It is not a statement about the published v0.2.0
-binaries. The plaintext-to-TLS break is described in
+Historical tags through **v0.2.0**, including Android APK **0.1.4** and
+classic Qt **v0.1.2**, used unauthenticated plaintext Wi-Fi. Do not put those
+builds on a network you do not trust. USB-only is the recommended way to use
+them, if at all. The change from those builds to TLS is described in
 `docs/migration-tls-wifi.md`.
 
 | Release | Security support |
 | --- | --- |
-| Desktop v0.2.0 and Android APK 0.1.4 | Published. Wi-Fi is unauthenticated plaintext. Use USB only. |
-| Older tags, `main`, and other development builds | No security-support commitment. |
+| v0.3.x (latest v0.3.2) | Current published line. See `docs/security.md` for the review boundary. |
+| v0.2.0 and earlier, including APK 0.1.4 and classic Qt v0.1.2 | Historical. Wi-Fi is unauthenticated plaintext. Use USB only, if at all. |
+| Other tags, `main`, and development builds | No security-support commitment. |
 
 ## Reporting a vulnerability
 
@@ -45,7 +48,7 @@ In scope:
 
 Out of scope:
 
-- The plaintext Wi-Fi design of published desktop v0.2.0 and Android APK 0.1.4. That behavior is a documented property of those releases. Use USB.
+- The plaintext Wi-Fi design of historical desktop v0.2.0 and Android APK 0.1.4. That behavior is a documented property of those releases. Use USB.
 - Vulnerabilities that exist only in a third-party project and are not reachable through this repository's use of it. Report those upstream as well.
 - Social engineering, and attacks that start from physical possession of an unlocked device beyond the limits already stated in `docs/security.md`.
 
