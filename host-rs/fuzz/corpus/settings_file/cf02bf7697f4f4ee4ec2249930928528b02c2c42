@@ -1,0 +1,9 @@
+[General]
+transport=lan
+lanHost=192.168.1.2
+lanKey="00112233445566778899aabbccddeeff"
+mirror=true
+rotation=90
+qualityWidth=1280
+qualityHeight=720
+qualityFps=30

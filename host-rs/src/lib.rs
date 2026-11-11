@@ -1,6 +1,9 @@
 pub mod cli;
 pub mod client_auth;
 pub mod control;
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod headless;

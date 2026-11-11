@@ -15,6 +15,8 @@ capture = ["gui", "dep:image"]
 # uses SPA metadata that older headers do not define) and only PipeWire-aware consumers
 # see the result.
 pipewire = ["dep:pipewire-vircam"]
+# Entry points for the cargo-fuzz targets in fuzz/. Nothing else enables it.
+fuzzing = []
 
 [dependencies]
 io-budget = { git = "https://github.com/nekomario28/io-budget", rev = "65df550" }

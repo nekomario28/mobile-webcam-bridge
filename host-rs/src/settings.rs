@@ -392,6 +392,17 @@ impl Store {
     }
 }
 
+/// Fuzz entry: parse and validate settings text as `Store::read` does.
+#[cfg(feature = "fuzzing")]
+pub(crate) fn fuzz_parse(text: &str) {
+    #[cfg(unix)]
+    if let Ok(values) = parse_ini(text) {
+        let _ = Settings::from_values(&values);
+    }
+    #[cfg(not(unix))]
+    let _ = text;
+}
+
 #[cfg(unix)]
 fn read_file(path: &std::path::Path) -> crate::Result<String> {
     match std::fs::read_to_string(path) {
