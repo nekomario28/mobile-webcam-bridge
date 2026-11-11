@@ -104,23 +104,21 @@ pub fn exchange(
         return Err("phone does not support required per-PC authorization v2".into());
     }
     let challenge = wire::ClientChallenge::decode(&challenge.payload)?;
-    // Diagnostic, off unless asked: a nonce that repeats across runs means the phone is
-    // answering from a session older than this connection, which is invisible otherwise
-    // (the signature simply fails and reads like a key problem).
-    if std::env::var_os("AMB_AUTH_TRACE").is_some() {
+    // Diagnostic, off unless asked and absent from release builds: a nonce that repeats
+    // across runs means the phone is answering from a session older than this connection,
+    // which is invisible otherwise (the signature simply fails and reads like a key
+    // problem). A short digest is enough to see a repeat, so the nonce itself is never
+    // printed.
+    if crate::trace_enabled("AMB_AUTH_TRACE") {
         eprintln!(
-            "auth trace: transport={} binding={} nonce={}",
+            "auth trace: transport={} binding={} nonce_digest={}",
             challenge.transport,
             challenge
                 .phone_binding
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>(),
-            challenge
-                .nonce
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>()
+            trace_digest(&challenge.nonce)
         );
     }
     if challenge.transport != route.transport() {
@@ -130,7 +128,7 @@ pub fn exchange(
         return Err("authorization phone certificate binding mismatch".into());
     }
     let label = proposed_label();
-    if std::env::var_os("AMB_AUTH_TRACE").is_some() {
+    if crate::trace_enabled("AMB_AUTH_TRACE") {
         eprintln!(
             "auth trace: label={label:?} public_key_len={} first={:02x}",
             identity.public_key().len(),
@@ -204,6 +202,16 @@ fn receive_until(
 /// operation rather than discarding a delivered frame.
 pub fn remaining_until(deadline: Instant) -> std::io::Result<Duration> {
     remaining(deadline)
+}
+
+/// First 8 bytes of SHA-256, hex: identifies a value in a trace without revealing it.
+#[cfg_attr(not(any(debug_assertions, feature = "trace")), allow(dead_code))]
+fn trace_digest(value: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(value)[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[cfg(test)]

@@ -6,6 +6,9 @@
   desktop Secret Service when one is available, and existing plain files are migrated on load.
   Without a Secret Service the 0600 files are used as before (`MOBILE_WEBCAM_KEYRING=off`
   opts out). Releases older than this one cannot read sealed files.
+- `AMB_AUTH_TRACE` and `AMB_USB_TRACE` only work in debug builds or with the new non-default
+  `trace` cargo feature; release builds contain no trace output. The auth trace prints a short
+  digest of the challenge nonce instead of the nonce.
 - The classic C++/Qt host (`host/`) is removed from the tree; it was not shipped in v0.3.x and
   remains in git history (tag `v0.1.2`). The Unity Capture notice moved to `third_party/`, and
   the manual hardware-gates workflow now uses the Rust host (`g1-dump` was dropped).

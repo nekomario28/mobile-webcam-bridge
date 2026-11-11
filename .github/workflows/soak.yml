@@ -1,0 +1,52 @@
+name: soak
+
+# Memory soak of the receive path: a long synthetic TLS stream and many
+# reconnects, with the resident set sampled over time (host-rs/tests/soak.rs).
+# Weekly and on demand; pull requests that touch the soak itself run it briefly.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/soak.yml'
+      - 'host-rs/tests/soak.rs'
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per soak test (two tests run one after the other)
+        required: false
+        default: '600'
+
+permissions:
+  contents: read
+
+jobs:
+  receive-path:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Test dev dependencies still include egui_kittest/eframe, even with the
+      # runtime GUI/video features disabled.
+      - name: Native dependencies for host tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pkg-config libusb-1.0-0-dev libx11-dev libxkbcommon-dev libwayland-dev
+      - name: Soak the receive path
+        working-directory: host-rs
+        env:
+          EVENT: ${{ github.event_name }}
+          REQUESTED: ${{ inputs.seconds }}
+        run: |
+          set -euo pipefail
+          seconds=600
+          if [ "$EVENT" = "pull_request" ]; then
+            seconds=15
+          elif [ -n "${REQUESTED:-}" ]; then
+            [[ "$REQUESTED" =~ ^[1-9][0-9]{1,4}$ ]] || { echo 'invalid seconds'; exit 2; }
+            seconds="$REQUESTED"
+          fi
+          SOAK_SECONDS="$seconds" cargo test --release --no-default-features --locked \
+            --test soak -- --ignored --nocapture --test-threads=1
