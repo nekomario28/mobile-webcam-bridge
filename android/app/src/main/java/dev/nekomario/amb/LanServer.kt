@@ -3,6 +3,8 @@ package dev.nekomario.amb
 import java.io.EOFException
 import java.io.FilterInputStream
 import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
@@ -11,7 +13,6 @@ import javax.net.ssl.SSLSocket
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
-import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -88,7 +89,7 @@ class LanServer(
     private val handshakeWorkers = Executors.newFixedThreadPool(MAX_HANDSHAKES) { task ->
         Thread(task, "mwb-tls-handshake").apply { isDaemon = true }
     }
-    private val handshakeSlots = Semaphore(MAX_HANDSHAKES)
+    private val handshakeSlots = HandshakeAdmission(MAX_HANDSHAKES, MAX_HANDSHAKES_PER_PEER)
     private val unauthenticated = Collections.newSetFromMap(ConcurrentHashMap<Socket, Boolean>())
 
     fun start() {
@@ -113,24 +114,34 @@ class LanServer(
                 if (running.get()) onError(t.message ?: t.javaClass.simpleName)
                 break
             }
+            // The listener follows address changes, so it is bound to the wildcard;
+            // connections that did not arrive on a local-network interface are
+            // closed here, before they reach TLS or a handshake slot.
+            if (!LanAddressPolicy.acceptsLocal(socket.localAddress)) {
+                runCatching { socket.close() }
+                continue
+            }
             // Do not let one stalled TLS handshake monopolize the accept loop.
             // Only a fixed number of untrusted sockets may consume worker slots.
-            if (active.get() != null || !handshakeSlots.tryAcquire()) {
+            // One peer address may hold only part of them, so a single host
+            // cannot keep every slot busy.
+            val peer = socket.inetAddress
+            if (active.get() != null || !handshakeSlots.tryAdmit(peer)) {
                 runCatching { socket.close() }
                 continue
             }
             unauthenticated.add(socket)
             try {
-                handshakeWorkers.execute { completeHandshake(socket) }
+                handshakeWorkers.execute { completeHandshake(socket, peer) }
             } catch (_: java.util.concurrent.RejectedExecutionException) {
                 unauthenticated.remove(socket)
-                handshakeSlots.release()
+                handshakeSlots.release(peer)
                 runCatching { socket.close() }
             }
         }
     }
 
-    private fun completeHandshake(socket: Socket) {
+    private fun completeHandshake(socket: Socket, peer: InetAddress?) {
         // Per-read SO_TIMEOUT is insufficient against a TLS record byte trickle.
         // This task closes the unauthenticated connection after an absolute deadline.
         val timeout = handshakeTimer.schedule(
@@ -170,7 +181,7 @@ class LanServer(
         } finally {
             timeout.cancel(false)
             unauthenticated.remove(socket)
-            handshakeSlots.release()
+            handshakeSlots.release(peer)
         }
     }
 
@@ -211,19 +222,93 @@ class LanServer(
 
     companion object {
         const val DEFAULT_PORT = 48_527
-        private const val MAX_HANDSHAKES = 4
+        private const val MAX_HANDSHAKES = 6
+        private const val MAX_HANDSHAKES_PER_PEER = 2
         private const val HANDSHAKE_TIMEOUT_MS = 5_000L
 
         fun localIpv4Addresses(): List<String> = runCatching {
             NetworkInterface.getNetworkInterfaces().toList()
-                .filter { it.isUp && !it.isLoopback }
+                .filter { it.isUp && !it.isLoopback && !LanAddressPolicy.isCellularName(it.name) }
                 .flatMap { it.inetAddresses.toList() }
                 .filterIsInstance<Inet4Address>()
-                .filter { !it.isLoopbackAddress }
+                .filter { !it.isLoopbackAddress && LanAddressPolicy.isLocalNetworkAddress(it) }
                 .map { it.hostAddress ?: "" }
                 .filter { it.isNotBlank() }
                 .distinct()
         }.getOrDefault(emptyList())
+    }
+}
+
+/**
+ * Bounded admission for unauthenticated handshakes: at most [maxTotal] in
+ * flight, and at most [maxPerPeer] from any one remote address.
+ */
+internal class HandshakeAdmission(private val maxTotal: Int, private val maxPerPeer: Int) {
+    init {
+        require(maxTotal > 0 && maxPerPeer in 1..maxTotal)
+    }
+
+    private val lock = Any()
+    private var total = 0
+    private val perPeer = HashMap<InetAddress?, Int>()
+
+    fun tryAdmit(peer: InetAddress?): Boolean = synchronized(lock) {
+        val held = perPeer[peer] ?: 0
+        if (total >= maxTotal || held >= maxPerPeer) return false
+        total++
+        perPeer[peer] = held + 1
+        true
+    }
+
+    fun release(peer: InetAddress?) {
+        synchronized(lock) {
+            val held = perPeer[peer] ?: return
+            if (held <= 1) perPeer.remove(peer) else perPeer[peer] = held - 1
+            total--
+        }
+    }
+
+    fun inFlight(): Int = synchronized(lock) { total }
+
+    fun inFlight(peer: InetAddress?): Int = synchronized(lock) { perPeer[peer] ?: 0 }
+}
+
+/**
+ * Which local addresses the Wi-Fi listener answers on: the phone's own local
+ * networks (Wi-Fi, hotspot, USB/Ethernet tethering) and loopback (adb forward),
+ * never a mobile-data interface or a publicly routed address.
+ */
+internal object LanAddressPolicy {
+    // Kernel names Android vendors use for mobile-data links (incl. their 464xlat).
+    private val cellularPrefixes = listOf(
+        "rmnet", "r_rmnet", "rev_rmnet", "v4-rmnet", "ccmni", "v4-ccmni", "cc2mni", "ccinet",
+        "pdp", "seth_lte", "wwan", "qmi",
+    )
+
+    fun isCellularName(name: String?): Boolean {
+        val lower = name?.lowercase() ?: return false
+        return cellularPrefixes.any { lower.startsWith(it) }
+    }
+
+    /** RFC 1918 / link-local IPv4, IPv6 link-local and unique-local, or loopback. */
+    fun isLocalNetworkAddress(address: InetAddress): Boolean = when {
+        address.isLoopbackAddress -> true
+        address is Inet4Address -> address.isSiteLocalAddress || address.isLinkLocalAddress
+        address is Inet6Address -> address.isLinkLocalAddress ||
+            (address.address[0].toInt() and 0xfe) == 0xfc
+        else -> false
+    }
+
+    /** Whether a connection accepted on [local] may proceed to TLS. */
+    fun acceptsLocal(
+        local: InetAddress?,
+        interfaceName: (InetAddress) -> String? = { address ->
+            runCatching { NetworkInterface.getByInetAddress(address)?.name }.getOrNull()
+        },
+    ): Boolean {
+        if (local == null || !isLocalNetworkAddress(local)) return false
+        if (local.isLoopbackAddress) return true
+        return !isCellularName(interfaceName(local))
     }
 }
 

@@ -40,7 +40,7 @@ AI が `main` `791568606368da074529701ac3a2bdcf78dfc2e4` を読み、この PR �
 | 単回性 | 確認済み。ローテーションまで再利用される。HELLO の再送は、キーを持つ者には新しい TLS 上でも通る形である。PC 証明の nonce とは別 |
 | スマホの保存 | 確認済み。`encrypted_secret_v1` は AES-GCM。平文キー `secret` は `persist` の commit で消す。Keystore 鍵がないバックアップからの復元は、このレビューでは実行していない（未確認） |
 | `allowBackup` | 確認済み。`AndroidManifest.xml` は `false` |
-| Linux の設定ファイル | 確認済み。`read_file` は `lanKey=` を含み mode の group/other ビットが立つファイルを拒否する。0600 は暗号化ではない（`docs/security.md` と同じ） |
+| Linux の設定ファイル | 確認済み。`read_file` は `lanKey=` を含み mode の group/other ビットが立つファイルを拒否する。0600 は暗号化ではない。Secret Service があれば `lanKey` と Identity は `mwss1:` で封印される（`docs/security.md` と同じ） |
 | システム全体のフォールバック | 確認済み。`settings.rs` の読込はフォールバックから `lanKey` と `lanFingerprint` を採用しない、とコメントと `system_fallback_never_supplies_pairing_credentials` がある。このレビューではそのテストを実行する（PR 本文） |
 | Windows | 確認済み（ソース）。`lanKey` は `lanKeyProtected` の DPAPI を優先し、HKLM からは読まない。`lanFingerprint` も HKLM を飛ばす。レガシー平文 `lanKey` は HKCU からのみ読み、保存成功後に消す。DPAPI 呼び出しはこの環境では未確認 |
 | ローテーション | 確認済み。`rotate` は新しいキーを保存し、Wi-Fi サーバを閉じる。認可レコードは消さない（ダイアログ文言と `per-pc-authorization.md`） |
