@@ -594,4 +594,180 @@ mod tests {
         assert!(consumer.latest().is_none(), "an oversized frame is dropped");
         std::fs::remove_file(path).ok();
     }
+
+    fn unique_path(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "mwb-preview-{tag}-{}-{nanos}.bin",
+            std::process::id()
+        ))
+    }
+
+    fn seq_at(path: &Path) -> u64 {
+        let file = OpenOptions::new().read(true).open(path).unwrap();
+        let mut bytes = [0u8; 8];
+        read_at(&file, 8, &mut bytes).unwrap();
+        u64::from_le_bytes(bytes)
+    }
+
+    /// A short existing record must be grown to HEADER+CAPACITY, and a
+    /// larger one must be left alone: open only extends, it never truncates,
+    /// and the length is the sum of the header and the body, not their product.
+    #[test]
+    fn open_extends_a_short_record_and_leaves_a_larger_one() {
+        let short_path = unique_path("short");
+        drop(posio::private_create(&short_path).unwrap());
+        assert_eq!(std::fs::metadata(&short_path).unwrap().len(), 0);
+        Producer::open(&short_path).unwrap();
+        assert_eq!(
+            std::fs::metadata(&short_path).unwrap().len(),
+            (HEADER + CAPACITY) as u64
+        );
+        std::fs::remove_file(&short_path).ok();
+
+        let large_path = unique_path("large");
+        let large = posio::private_create(&large_path).unwrap();
+        let larger = (HEADER + CAPACITY) as u64 + 4096;
+        large.set_len(larger).unwrap();
+        drop(large);
+        Producer::open(&large_path).unwrap();
+        assert_eq!(std::fs::metadata(&large_path).unwrap().len(), larger);
+        std::fs::remove_file(&large_path).ok();
+    }
+
+    /// Errors other than "already exists" must not be treated as a reopen.
+    /// A missing parent is NotFound; if the AlreadyExists guard were replaced
+    /// with `true`, open would call reopen and still fail, but a non-writable
+    /// parent fails create with PermissionDenied and reopen with NotFound.
+    #[cfg(unix)]
+    #[test]
+    fn open_does_not_reopen_when_create_fails_for_another_reason() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("mwb-preview-noreopen-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let record = dir.join("record.bin");
+        let mut permissions = std::fs::metadata(&dir).unwrap().permissions();
+        permissions.set_mode(0o555);
+        std::fs::set_permissions(&dir, permissions).unwrap();
+
+        let error = match Producer::open(&record) {
+            Err(error) => error,
+            Ok(_) => panic!("create must fail"),
+        };
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::PermissionDenied,
+            "a create failure that is not AlreadyExists must be returned as-is, not turned into a reopen"
+        );
+
+        let mut permissions = std::fs::metadata(&dir).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&dir, permissions).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The seqlock writes an odd sequence while the frame is in flight and
+    /// then the next even number when it is complete, so a reader never sees
+    /// a torn frame as finished. The bitwise ops that force those parities
+    /// must actually advance 0 → 2 → 4, not get stuck or jump to a wrapped
+    /// bit pattern.
+    #[test]
+    fn publish_advances_the_sequence_by_two() {
+        let (path, mut producer, consumer) = record();
+        assert_eq!(seq_at(&path), 0, "a new record has not been written yet");
+        producer.publish(&frame(4, 2, 1)).unwrap();
+        assert_eq!(seq_at(&path), 2);
+        assert!(consumer.latest().unwrap().pixels.iter().all(|v| *v == 1));
+        producer.publish(&frame(4, 2, 2)).unwrap();
+        assert_eq!(seq_at(&path), 4);
+        assert!(consumer.latest().unwrap().pixels.iter().all(|v| *v == 2));
+        std::fs::remove_file(path).ok();
+    }
+
+    /// A frame whose buffer does not match its declared shape, but is still
+    /// small enough to fit, must be dropped. Using && instead of || would
+    /// publish it and wipe the previous complete frame.
+    #[test]
+    fn a_mismatched_buffer_is_dropped_and_the_previous_frame_remains() {
+        let (path, mut producer, consumer) = record();
+        producer.publish(&frame(4, 2, 1)).unwrap();
+        let mismatched = Frame {
+            width: 4,
+            height: 2,
+            pixels: vec![9; 8],
+        };
+        producer.publish(&mismatched).unwrap();
+        let read = consumer.latest().expect("the previous frame must remain");
+        assert!(
+            read.pixels.iter().all(|v| *v == 1),
+            "a short buffer must not replace a complete frame"
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn yuyv_step_samples_later_rows_from_the_middle_of_their_block() {
+        // step 2 on a 4-row source: the second output row must come from
+        // source row 3 (oy * step + step/2), not row 1 (oy / step + step/2).
+        let mut packed = Vec::new();
+        for y in 0..4u8 {
+            for x in (0..4u8).step_by(2) {
+                packed.push(16 + x * 10 + y * 20);
+                packed.push(128);
+                packed.push(16 + (x + 1) * 10 + y * 20);
+                packed.push(128);
+            }
+        }
+        let grey = |luma: u8| (luma as f32 - 16.0).mul_add(1.164_383, 0.0).round() as u8;
+        let (width, height, pixels) = yuyv_to_rgba(&packed, 4, 4, 8, 2);
+        assert_eq!((width, height), (2, 2));
+        // First output row: y = 1, x = 1 and x = 3.
+        assert_eq!(pixels[0], grey(16 + 10 + 20));
+        assert_eq!(pixels[4], grey(16 + 30 + 20));
+        // Second output row: y = 3, not y = 1.
+        assert_eq!(pixels[8], grey(16 + 10 + 60));
+        assert_eq!(pixels[12], grey(16 + 30 + 60));
+    }
+
+    #[test]
+    fn yuyv_writes_each_rgba_channel_to_its_own_offset() {
+        // Exact BT.709 values: r and g differ, so writing green at
+        // out_index * 1 (instead of out_index + 1) would overwrite red
+        // and leave the green slot as the zero the buffer was filled with.
+        assert_eq!(yuv_to_rgb(81, 90, 240), (255, 24, 0));
+        let src = [81u8, 90, 81, 240];
+        let (width, height, pixels) = yuyv_to_rgba(&src, 2, 1, 4, 1);
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(&pixels[..4], &[255, 24, 0, 255]);
+        assert_eq!(&pixels[4..], &[255, 24, 0, 255]);
+    }
+
+    #[test]
+    fn rgba_step_reports_the_divided_shape_and_samples_later_rows() {
+        let mut rgba = Vec::new();
+        for y in 0..4u8 {
+            for x in 0..4u8 {
+                rgba.extend_from_slice(&[x * 40, y * 40, 7, 255]);
+            }
+        }
+        let (width, height, pixels) = rgba_to_rgba(&rgba, 4, 4, 16, 2);
+        // step is a divisor, not a multiplier: 4/2, not 4*2.
+        assert_eq!((width, height), (2, 2));
+        // First output row from source row 1; second from source row 3.
+        assert_eq!(&pixels[..4], &[40, 40, 7, 255]);
+        assert_eq!(&pixels[4..8], &[120, 40, 7, 255]);
+        assert_eq!(&pixels[8..12], &[40, 120, 7, 255]);
+        assert_eq!(&pixels[12..], &[120, 120, 7, 255]);
+    }
+
+    #[test]
+    fn a_short_rgba_frame_reads_as_black_instead_of_panicking() {
+        let (width, height, pixels) = rgba_to_rgba(&[], 2, 1, 8, 1);
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(&pixels[..4], &[0, 0, 0, 255]);
+        assert_eq!(&pixels[4..], &[0, 0, 0, 255]);
+    }
 }
