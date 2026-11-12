@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- USB probe no longer falls back to the first unrelated USB peripheral when
+  no phone is detected. It now refuses ambiguous/missing candidates and offers
+  an explicit `--device VID:PID` selector that rejects duplicate matches.
+  Synthetic selection and CLI parsing tests cover this safety behavior.
 - USB reconnect alignment now consumes stale endpoint transfers with the same 1 MiB
   scratch buffer as normal frame reception, instead of a 1024-byte read that
   can overflow on queued video payloads. A complete valid header is required

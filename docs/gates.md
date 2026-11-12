@@ -28,9 +28,13 @@ PASS requires:
    identity itself, so the transition is read off the device rather than assumed.
 6. Android obtains accessory permission and `UsbManager.openAccessory()` succeeds.
 
-Capture exact stdout and `lsusb` before/after as evidence. Prefer selecting the
-pre-AOA device explicitly with `--device VID:PID`; do not spray vendor requests
-across unrelated USB peripherals when a selector is available.
+Capture exact stdout and `lsusb` before/after as evidence. The
+`--usb-probe --device VID:PID` selector accepts 4-digit hexadecimal VID and PID.
+Without it the probe selects a **unique** AOA accessory, or a **unique**
+Android/MTP candidate; it fails closed if none or multiple are detected
+instead of sending AOA requests to an arbitrary peripheral. An explicit
+VID:PID also fails if multiple connected devices share it; disconnect the
+extras before retrying.
 
 **Instrument (2026-10-24):** `mobile-webcam --usb-probe [--frames N] [--budget-ms N] [--rate N]` runs
 this gate against an attached phone: the AOA transition, the per-PC authorization, then N

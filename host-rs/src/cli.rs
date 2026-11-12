@@ -12,7 +12,7 @@ Usage: mobile-webcam [--help]
        mobile-webcam --worker <parent-pid>
        mobile-webcam --replace-identity [--force]
        mobile-webcam --headless [--transport usb|lan] [--host ADDRESS] [--seconds N]
-       mobile-webcam --usb-probe [--frames N] [--budget-ms N]
+       mobile-webcam --usb-probe [--frames N] [--budget-ms N] [--rate N] [--device VID:PID]
 
   --help               Show this text.
   --headless           Run a session without a window and print every event as one
@@ -28,6 +28,9 @@ Usage: mobile-webcam [--help]
                        transition, the per-PC authorization, then N synchronous
                        PING/PONG round trips with sequence and payload checked on every
                        one. Exits 0 on PASS, 1 on FAIL, 2 if it could not start.
+  --device VID:PID     Explicit phone VID:PID in hexadecimal; fails if more than one
+                       device matches. Without it, auto-selects only one Android
+                       accessory/MTP candidate, never an unrelated peripheral.
   --frames N           Round trips for --usb-probe (default 1000, the G0.5 count).
   --budget-ms N        Per-exchange timeout for --usb-probe (default 2000).
   --rate N             Round trips per second for --usb-probe (default 32, half the
@@ -102,13 +105,32 @@ fn headless(rest: &[&str]) -> Result<Command, String> {
     Ok(Command::Headless(options))
 }
 
-/// `--usb-probe` followed by any order of `--frames` and `--budget-ms`.
+/// `--usb-probe` followed by any order of `--device`, `--frames` and limits.
 fn usb_probe(rest: &[&str]) -> Result<Command, String> {
     let mut options = crate::usb_probe::Options::default();
     let mut index = 0;
     while index < rest.len() {
         let value = rest.get(index + 1).copied();
         match (rest[index], value) {
+            ("--device", Some(spec)) => {
+                let parts = spec.split_once(':');
+                options.device = match parts {
+                    Some((vid, pid))
+                        if vid.len() == 4
+                            && pid.len() == 4
+                            && !pid.contains(':') =>
+                    {
+                        match (
+                            u16::from_str_radix(vid, 16),
+                            u16::from_str_radix(pid, 16),
+                        ) {
+                            (Ok(vid), Ok(pid)) => Some((vid, pid)),
+                            _ => return Err(format!("--device requires hex VID:PID, got {spec:?}")),
+                        }
+                    }
+                    _ => return Err(format!("--device requires hex VID:PID, got {spec:?}")),
+                };
+            }
             ("--frames", Some(n)) => match n.parse::<u64>() {
                 Ok(frames) if frames > 0 => options.frames = frames,
                 _ => return Err(format!("--frames needs a positive number, got {n:?}")),
@@ -206,6 +228,7 @@ mod tests {
             panic!("expected a probe");
         };
         assert_eq!(defaults.frames, 1000, "G0.5 asks for 1000 round trips");
+        assert_eq!(defaults.device, None);
 
         let Command::UsbProbe(options) =
             parse_words(&["--usb-probe", "--budget-ms", "500", "--frames", "20"]).unwrap()
@@ -215,6 +238,16 @@ mod tests {
         assert_eq!(options.frames, 20);
         assert_eq!(options.budget, std::time::Duration::from_millis(500));
 
+        let Command::UsbProbe(selected) = parse_words(&[
+            "--usb-probe", "--rate", "32", "--device", "18d1:2D01", "--frames", "5",
+        ]).unwrap() else {
+            panic!("expected selected probe");
+        };
+        assert_eq!(selected.device, Some((0x18d1, 0x2d01)));
+        for invalid in ["", "bad", "18d1", "18d1:", "18d1:2d01:abcd",
+                        "0x18d1:2d01", "18d1:2zz1"] {
+            assert!(parse_words(&["--usb-probe", "--device", invalid]).is_err());
+        }
         assert!(parse_words(&["--usb-probe", "--frames", "0"]).is_err());
         assert!(parse_words(&["--usb-probe", "--frames"]).is_err());
         assert!(parse_words(&["--usb-probe", "stray"]).is_err());
