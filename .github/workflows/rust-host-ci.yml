@@ -16,6 +16,18 @@ env:
   CARGO_BUILD_JOBS: '1'
   MOBILE_WEBCAM_REQUIRE_MINIMAL: '1'
 jobs:
+  usb-reconnect-script:
+    # No hardware in CI: exercise the repeated-process gate with a fake host
+    # and prove one failed round prevents a false PASS.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify USB reconnect gate result accounting
+        run: bash host-rs/tools/test-usb-reconnect-gate.sh
+
   linux:
     # Measured (job 120309340125, 2026-10-23): the dependency step alone took **17 min
     # 1 s** on this runner, and the job was canceled at the 30-minute limit while still
