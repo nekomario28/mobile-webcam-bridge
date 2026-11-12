@@ -66,6 +66,13 @@ Do not coalesce both pieces into one host bulk transfer.
 
 No cross-device latency claim is allowed at this gate.
 
+**Reconnect alignment regression (host-only):** `cargo test --manifest-path host-rs/Cargo.toml --lib usb::tests::alignment_`
+checks that a queued 96 KiB payload (including a false AMB1 magic prefix) is drained
+through the full 1 MiB USB receive scratch and that the next valid challenge is
+preserved. This is a deterministic buffer/decoder regression check, **not**
+evidence of repeated physical reconnections. Repeat the hardware G0.5 probe
+across fresh host connections before claiming that reliability gate.
+
 ## G1 — 720p30
 
 - H.264, 1280x720, 30 fps.
