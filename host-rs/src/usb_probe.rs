@@ -609,8 +609,7 @@ mod tests {
         assert!(choose_probe_device(&[accessory.clone(), accessory.clone()], None).is_err());
         assert!(choose_probe_device(&[], None).is_err());
         assert!(
-            choose_probe_device(&[keyboard.clone(), phone.clone()], Some((0x1234, 0xabcd)))
-                .is_ok(),
+            choose_probe_device(&[keyboard.clone(), phone.clone()], Some((0x1234, 0xabcd))).is_ok(),
             "an explicit unique VID:PID selects that exact device"
         );
         assert!(choose_probe_device(&[phone], Some((0xabcd, 0x1234))).is_err());
