@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- USB reconnect alignment now consumes stale endpoint transfers with the same 1 MiB
+  scratch buffer as normal frame reception, instead of a 1024-byte read that
+  can overflow on queued video payloads. A complete valid header is required
+  before retaining a transfer. Synthetic transfer tests cover the regression;
+  an actual disconnect/reconnect device run is still required for acceptance.
 - Linux: the PC identity and the saved Wi-Fi key are sealed under a storage key kept in the
   desktop Secret Service when one is available, and existing plain files are migrated on load.
   Without a Secret Service the 0600 files are used as before (`MOBILE_WEBCAM_KEYRING=off`
