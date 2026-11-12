@@ -356,8 +356,9 @@ pub fn a_hello_would_help(error: &str) -> bool {
 }
 
 /// Pick one phone; never issue AOA vendor requests to an arbitrary first USB device.
-/// The preferred order is a *unique* already-switched accessory, then a *unique*
-/// suggested Android/MTP device. An explicit VID:PID must also be unique.
+/// Auto-select only a *unique* already-switched AOA accessory. Generic
+/// still-image/MTP interface codes are shared by non-phone cameras, so an
+/// unswitched phone requires an explicit unique VID:PID from the operator.
 pub fn choose_probe_device(
     candidates: &[crate::usb::Candidate],
     requested: Option<(u16, u16)>,
@@ -372,21 +373,13 @@ pub fn choose_probe_device(
             }
         })
         .collect();
-    let matching = if matching.is_empty() && requested.is_none() {
-        candidates
-            .iter()
-            .filter(|candidate| candidate.suggested)
-            .collect::<Vec<_>>()
-    } else {
-        matching
-    };
     match matching.as_slice() {
         [only] => Ok(only.id.clone()),
         [] => {
             let message = if requested.is_some() {
                 "requested VID:PID not found; check connected USB devices"
             } else {
-                "no unambiguous Android accessory/MTP device found; specify --device VID:PID"
+                "no unique AOA accessory found; specify --device VID:PID for a pre-AOA phone"
             };
             Err(message.into())
         }
@@ -596,7 +589,12 @@ mod tests {
         let phone = candidate(0x0fce, 0x020d, 2, true);
         let accessory = candidate(0x18d1, 0x2d01, 3, true);
         assert!(choose_probe_device(std::slice::from_ref(&keyboard), None).is_err());
-        let selected = choose_probe_device(&[keyboard.clone(), phone.clone()], None).unwrap();
+        // A single suggested MTP/PTP device could be a standalone camera.
+        // Pre-AOA phones require explicit selection, even if they are unique.
+        assert!(choose_probe_device(&[keyboard.clone(), phone.clone()], None).is_err());
+        let selected =
+            choose_probe_device(&[keyboard.clone(), phone.clone()], Some((0x0fce, 0x020d)))
+                .unwrap();
         assert_eq!(selected, phone.id);
         let selected =
             choose_probe_device(&[keyboard.clone(), phone.clone(), accessory.clone()], None)

@@ -30,11 +30,11 @@ PASS requires:
 
 Capture exact stdout and `lsusb` before/after as evidence. The
 `--usb-probe --device VID:PID` selector accepts 4-digit hexadecimal VID and PID.
-Without it the probe selects a **unique** AOA accessory, or a **unique**
-Android/MTP candidate; it fails closed if none or multiple are detected
-instead of sending AOA requests to an arbitrary peripheral. An explicit
-VID:PID also fails if multiple connected devices share it; disconnect the
-extras before retrying.
+Without it the probe selects only a **unique already-switched AOA accessory**.
+For a phone still in its original USB mode, provide `--device VID:PID`:
+a generic MTP/PTP still-image descriptor is also used by standalone cameras
+and is not proof that a peripheral is an Android phone. If the requested
+VID:PID has multiple matches, disconnect extras before retrying.
 
 **Instrument (2026-10-24):** `mobile-webcam --usb-probe [--frames N] [--budget-ms N] [--rate N]` runs
 this gate against an attached phone: the AOA transition, the per-PC authorization, then N

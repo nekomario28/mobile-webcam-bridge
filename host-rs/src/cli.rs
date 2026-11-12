@@ -29,8 +29,8 @@ Usage: mobile-webcam [--help]
                        PING/PONG round trips with sequence and payload checked on every
                        one. Exits 0 on PASS, 1 on FAIL, 2 if it could not start.
   --device VID:PID     Explicit phone VID:PID in hexadecimal; fails if more than one
-                       device matches. Without it, auto-selects only one Android
-                       accessory/MTP candidate, never an unrelated peripheral.
+                       device matches. Required before AOA mode; without it,
+                       auto-selects only an already-switched AOA accessory.
   --frames N           Round trips for --usb-probe (default 1000, the G0.5 count).
   --budget-ms N        Per-exchange timeout for --usb-probe (default 2000).
   --rate N             Round trips per second for --usb-probe (default 32, half the

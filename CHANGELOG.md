@@ -3,8 +3,9 @@
 ## Unreleased
 
 - USB probe no longer falls back to the first unrelated USB peripheral when
-  no phone is detected. It now refuses ambiguous/missing candidates and offers
-  an explicit `--device VID:PID` selector that rejects duplicate matches.
+  no phone is detected. Automatic selection is limited to a unique AOA accessory;
+  pre-AOA phones require an explicit `--device VID:PID` (rejecting duplicate matches).
+  Generic MTP/PTP camera interfaces are no longer treated as proof of a phone.
   Synthetic selection and CLI parsing tests cover this safety behavior.
 - USB reconnect alignment now consumes stale endpoint transfers with the same 1 MiB
   scratch buffer as normal frame reception, instead of a 1024-byte read that
