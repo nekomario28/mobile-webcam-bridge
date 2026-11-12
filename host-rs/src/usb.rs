@@ -215,6 +215,45 @@ pub fn switched_identity(id: &DeviceId) -> crate::Result<DeviceId> {
 /// Room for one transfer, whatever the phone's stack decided to coalesce into it.
 const TRANSFER_SCRATCH: usize = 1024 * 1024;
 
+/// Find a complete, valid AMB1 header at the start of a USB transfer.
+///
+/// This operates on the same 1 MiB scratch used by normal frame reception.
+/// An AOA endpoint may still contain a large payload from the previous host;
+/// a 1024-byte alignment read would make libusb report Overflow and prevent
+/// the next challenge from being recovered. A matching magic prefix by itself
+/// is not a header: inspect the complete 24-byte header before saving it.
+fn align_transfers(
+    scratch: &mut [u8],
+    pending: &mut Vec<u8>,
+    mut read: impl FnMut(&mut [u8], Duration) -> std::io::Result<usize>,
+) -> std::io::Result<bool> {
+    for _ in 0..64 {
+        let count = match read(scratch, Duration::from_millis(200)) {
+            Ok(count) => count,
+            Err(_) => return Ok(false),
+        };
+        let transfer = scratch.get(..count).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "USB alignment read exceeded its buffer",
+            )
+        })?;
+        if transfer.is_empty() {
+            // Silence after draining queued transfers suggests a fresh boundary.
+            return Ok(true);
+        }
+        if transfer.len() >= wire::HEADER_SIZE
+            && wire::Header::decode(&transfer[..wire::HEADER_SIZE]).is_ok()
+        {
+            // Preserve the full transfer, including coalesced payload bytes.
+            pending.extend_from_slice(transfer);
+            return Ok(true);
+        }
+        // A stale payload, or an invalid/partial header: discard this transfer.
+    }
+    Ok(false)
+}
+
 pub struct Usb {
     handle: DeviceHandle<Context>,
     interface: u8,
@@ -336,30 +375,20 @@ impl Usb {
     /// `66 bytes` then `24 bytes` forever — every header is read as garbage and the reader
     /// can never complete a frame ("incomplete frame deadline expired").
     ///
-    /// This reads transfers until one begins with `AMB1` (a header), then discards that
-    /// frame's payload transfer, leaving the reader at the next header. Dropping a whole
-    /// frame keeps an already-aligned stream aligned, so this is safe to call once after
-    /// opening — which is where it is called from.
+    /// This drains stale transfers and preserves the first complete AMB1 header it finds.
+    /// Use the full receive scratch: a queued video payload can exceed 1024 bytes,
+    /// and reading it into a smaller buffer produces libusb Overflow instead of
+    /// a chance to skip it. Silence remains only a provisional boundary.
     pub fn align_stream(&mut self) -> std::io::Result<bool> {
-        let mut buffer = [0u8; 1024];
-        for _ in 0..64 {
-            let count = match self.read_raw(Duration::from_millis(200), &mut buffer) {
-                Ok(count) => count,
-                Err(_) => return Ok(false),
-            };
-            if count == 0 {
-                // Nothing queued: the next thing this host reads is a fresh header.
-                return Ok(true);
+        let handle = &self.handle;
+        let input = self.input;
+        align_transfers(&mut self.scratch, &mut self.pending, |buffer, timeout| {
+            match handle.read_bulk(input, buffer, timeout) {
+                Ok(count) => Ok(count),
+                Err(rusb::Error::Timeout) => Ok(0),
+                Err(error) => Err(std::io::Error::other(format!("{error:?}"))),
             }
-            if count >= 4 && &buffer[..4] == b"AMB1" {
-                // This is a frame's beginning. Keep it — the reader consumes `pending`
-                // first, so nothing is lost and no payload has to be guessed at.
-                self.pending.extend_from_slice(&buffer[..count]);
-                return Ok(true);
-            }
-            // Anything else is the tail of somebody else's frame: drop it and look again.
-        }
-        Ok(false)
+        })
     }
 
     /// Forget what the reader is holding and start at a frame boundary again.
@@ -492,6 +521,60 @@ pub fn reconcile_selection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+
+    #[test]
+    fn alignment_skips_large_stale_transfer_and_preserves_the_next_complete_header() {
+        // The old 1024-byte alignment read could not consume this transfer:
+        // libusb reports Overflow, and a reconnect cannot find its challenge.
+        // A payload beginning with the AMB1 magic is not a header without a
+        // valid version, type and length.
+        let mut stale = vec![0x5a; 96 * 1024];
+        stale[..4].copy_from_slice(b"AMB1");
+        stale[4] = 0xff;
+
+        let challenge = wire::Frame::new(wire::CLIENT_CHALLENGE, 1, vec![0x42; 66]).unwrap();
+        let mut live = challenge.header.encode().unwrap().to_vec();
+        live.extend_from_slice(&challenge.payload);
+        let mut transfers = VecDeque::from([stale, live.clone()]);
+        let mut scratch = vec![0; TRANSFER_SCRATCH];
+        let mut pending = Vec::new();
+        let mut reads = 0;
+
+        let aligned = align_transfers(&mut scratch, &mut pending, |buffer, timeout| {
+            assert_eq!(buffer.len(), TRANSFER_SCRATCH);
+            assert_eq!(timeout, Duration::from_millis(200));
+            reads += 1;
+            let transfer = transfers.pop_front().unwrap_or_default();
+            if transfer.len() > buffer.len() {
+                return Err(std::io::Error::other("USB transfer larger than the read buffer"));
+            }
+            buffer[..transfer.len()].copy_from_slice(&transfer);
+            Ok(transfer.len())
+        })
+        .unwrap();
+
+        assert!(aligned);
+        assert_eq!(reads, 2, "one stale transfer, then the intact challenge");
+        assert_eq!(pending, live, "never discard or truncate a live transfer");
+    }
+
+    #[test]
+    fn alignment_silence_is_provisional_and_read_errors_do_not_claim_success() {
+        let mut scratch = vec![0; TRANSFER_SCRATCH];
+        let mut pending = Vec::new();
+        let quiet = align_transfers(&mut scratch, &mut pending, |_, _| Ok(0)).unwrap();
+        assert!(quiet, "silence is the existing provisional boundary");
+        assert!(pending.is_empty());
+
+        let errored = align_transfers(&mut scratch, &mut pending, |_, _| {
+            Err(std::io::Error::other("device disconnected"))
+        })
+        .unwrap();
+        assert!(!errored);
+        assert!(pending.is_empty());
+    }
+
     #[test]
     fn file_transfer_phone_without_debugging_is_suggested() {
         // Standard still-image/MTP interface, with no ADB interface.
