@@ -66,6 +66,18 @@ Do not coalesce both pieces into one host bulk transfer.
 
 No cross-device latency claim is allowed at this gate.
 
+**Repeat the same-cable host-process gate (Issue #181):** after building the
+Rust host, leave the Android app running and run
+`bash host-rs/tools/usb-reconnect-gate.sh --runs 5 --out ./usb-evidence`.
+The script starts five independent `--usb-probe --frames 1000 --rate 32`
+processes, saves each complete output in a private evidence directory, and
+exits nonzero if any attempt fails. It does not clear pairing, force-stop the
+phone or change USB configuration. Record the phone model, Android build and
+APK version in `metadata.txt` before sharing appropriately redacted evidence.
+**This does not exercise physical cable reattachment**: the unplug/replug and
+released-APK rows in Issue #181 remain manual hardware gates. CI runs only the
+script's fake-host success/failure self-test.
+
 ## G1 — 720p30
 
 - H.264, 1280x720, 30 fps.
