@@ -382,13 +382,15 @@ impl Usb {
     pub fn align_stream(&mut self) -> std::io::Result<bool> {
         let handle = &self.handle;
         let input = self.input;
-        align_transfers(&mut self.scratch, &mut self.pending, |buffer, timeout| {
-            match handle.read_bulk(input, buffer, timeout) {
+        align_transfers(
+            &mut self.scratch,
+            &mut self.pending,
+            |buffer, timeout| match handle.read_bulk(input, buffer, timeout) {
                 Ok(count) => Ok(count),
                 Err(rusb::Error::Timeout) => Ok(0),
                 Err(error) => Err(std::io::Error::other(format!("{error:?}"))),
-            }
-        })
+            },
+        )
     }
 
     /// Forget what the reader is holding and start at a frame boundary again.
@@ -547,7 +549,9 @@ mod tests {
             reads += 1;
             let transfer = transfers.pop_front().unwrap_or_default();
             if transfer.len() > buffer.len() {
-                return Err(std::io::Error::other("USB transfer larger than the read buffer"));
+                return Err(std::io::Error::other(
+                    "USB transfer larger than the read buffer",
+                ));
             }
             buffer[..transfer.len()].copy_from_slice(&transfer);
             Ok(transfer.len())
