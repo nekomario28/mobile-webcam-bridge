@@ -193,6 +193,23 @@ read the stand-in's silence as "no broken relative link", nothing wider.
 
 ## Local host gate (the Rust host's tests, clippy and fmt, without CI)
 
+**Repeat the same-cable host-process gate (Issue #181):** after building the
+Rust host, leave the Android app running and run
+`bash host-rs/tools/usb-reconnect-gate.sh --runs 5`.
+By default, logs stay outside the Git checkout under a private temporary
+folder. If `--out ./usb-evidence` is used deliberately, Git ignores the
+evidence directory; **review and redact all logs before sharing**.
+The script starts five independent `--usb-probe --frames 1000 --rate 32`
+processes, saves each complete output in a private evidence directory, and
+exits nonzero if any attempt fails. The evidence records each attempt's UTC
+start/end and the executable SHA-256 separately from the checkout commit;
+a checkout SHA alone does not identify the binary that was actually run. It does not clear pairing, force-stop the
+phone or change USB configuration. Record the phone model, Android build and
+APK version in `metadata.txt` before sharing appropriately redacted evidence.
+**This does not exercise physical cable reattachment**: the unplug/replug and
+released-APK rows in Issue #181 remain manual hardware gates. CI runs only the
+script's fake-host success/failure self-test.
+
 The host legs run from the repository root with the crate's own manifest:
 
 ```
