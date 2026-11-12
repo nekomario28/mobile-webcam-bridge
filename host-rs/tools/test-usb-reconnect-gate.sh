@@ -37,30 +37,15 @@ FAKE_FAIL_AT=2 "$root/usb-reconnect-gate.sh" --bin "$work/fake-mobile-webcam" --
 summary="$(find "$work" -name summary.tsv -print -quit)"
 [[ "$(grep -c $'\tPASS$' "$summary")" -eq 2 ]]
 [[ "$(grep -c $'\tFAIL$' "$summary")" -eq 1 ]]
-[[ "$(grep -c  a PC client ID: they must remain ignored if
-# the operator saves them under the repository directory.
-git -C "$root/../.." check-ignore -q usb-evidence/mwb-usb-reconnect.test/run-01.log
-git -C "$root/../.." check-ignore -q mwb-usb-reconnect.test/run-01.log
-echo 'PASS usb reconnect gate script success and failure paths'
-\t' "$summary")" -eq 4 ]]
+[[ "$(grep -c $'\t' "$summary")" -eq 4 ]]
 rm -f "$FAKE_COUNTER"
-# The pre-AOA VID:PID belongs only to the first host process. On entry to
-# accessory mode the USB identity changes and subsequent runs use AOA auto-pick.
+# The initial VID:PID applies only to the first host process. AOA changes
+# the USB identity; subsequent runs must discover the unique AOA accessory.
 EXPECT_FIRST_DEVICE=1 "$root/usb-reconnect-gate.sh" --bin "$work/fake-mobile-webcam" --runs 3 --device 0fce:020d --out "$work" > "$work/explicit.log"
 explicit_dir="$(sed -n 's/^Evidence: //p' "$work/explicit.log")"
 summary="$explicit_dir/summary.tsv"
 [[ "$(cat "$FAKE_COUNTER")" -eq 3 ]]
-[[ "$(grep -c  a PC client ID: they must remain ignored if
-# the operator saves them under the repository directory.
-git -C "$root/../.." check-ignore -q usb-evidence/mwb-usb-reconnect.test/run-01.log
-git -C "$root/../.." check-ignore -q mwb-usb-reconnect.test/run-01.log
-echo 'PASS usb reconnect gate script success and failure paths'
-\tPASS a PC client ID: they must remain ignored if
-# the operator saves them under the repository directory.
-git -C "$root/../.." check-ignore -q usb-evidence/mwb-usb-reconnect.test/run-01.log
-git -C "$root/../.." check-ignore -q mwb-usb-reconnect.test/run-01.log
-echo 'PASS usb reconnect gate script success and failure paths'
- "$summary")" -eq 3 ]]
+[[ "$(grep -c $'\tPASS$' "$summary")" -eq 3 ]]
 status=0
 "$root/usb-reconnect-gate.sh" --bin "$work/fake-mobile-webcam" --device wrong --out "$work" > "$work/invalid.log" 2>&1 || status=$?
 [[ "$status" -eq 2 ]]
