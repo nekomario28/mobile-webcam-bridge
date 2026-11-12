@@ -34,4 +34,8 @@ summary="$(find "$work" -name summary.tsv -print -quit)"
 [[ "$(grep -c $'\tPASS$' "$summary")" -eq 2 ]]
 [[ "$(grep -c $'\tFAIL$' "$summary")" -eq 1 ]]
 [[ "$(grep -c $'\t' "$summary")" -eq 4 ]]
+# Evidence logs may include a PC client ID: they must remain ignored if
+# the operator saves them under the repository directory.
+git -C "$root/../.." check-ignore -q usb-evidence/mwb-usb-reconnect.test/run-01.log
+git -C "$root/../.." check-ignore -q mwb-usb-reconnect.test/run-01.log
 echo 'PASS usb reconnect gate script success and failure paths'
