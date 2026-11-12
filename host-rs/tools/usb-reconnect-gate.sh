@@ -51,10 +51,21 @@ fi
 mkdir -p -- "$output_parent"
 evidence_dir="$(mktemp -d "$output_parent/mwb-usb-reconnect.XXXXXXXX")"
 summary="$evidence_dir/summary.tsv"
-printf 'iteration\texit_code\tverdict\n' > "$summary"
+printf 'iteration\tutc_start\tutc_end\texit_code\tverdict\n' > "$summary"
 {
   printf 'utc_start=%s\n' "$(date -u +%FT%TZ)"
-  printf 'host_git_sha=%s\n' "$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
+  # Checkout SHA is not proof that this particular executable came from it.
+  printf 'checkout_git_sha=%s\n' "$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
+  if command -v sha256sum >/dev/null 2>&1; then
+    executable_hash="$(sha256sum -- "$program")"
+    executable_hash="${executable_hash%% *}"
+  elif command -v shasum >/dev/null 2>&1; then
+    executable_hash="$(shasum -a 256 -- "$program")"
+    executable_hash="${executable_hash%% *}"
+  else
+    executable_hash=NOT_RECORDED
+  fi
+  printf 'host_executable_sha256=%s\n' "$executable_hash"
   printf 'runs=%s\nframes=1000\nrate_per_second=32\nbudget_ms=2000\n' "$runs"
   printf 'phone_model=NOT_RECORDED\nandroid_build=NOT_RECORDED\napk_version=NOT_RECORDED\n'
 } > "$evidence_dir/metadata.txt"
@@ -64,6 +75,7 @@ failures=0
 for (( run=1; run<=runs; run++ )); do
   printf -v run_id '%02d' "$run"
   log="$evidence_dir/run-$run_id.log"
+  utc_run_start="$(date -u +%FT%TZ)"
   status=0
   "$program" --usb-probe --frames 1000 --rate 32 --budget-ms 2000 > "$log" 2>&1 || status=$?
   verdict=FAIL
@@ -72,7 +84,8 @@ for (( run=1; run<=runs; run++ )); do
   else
     failures=$((failures+1))
   fi
-  printf '%s\t%s\t%s\n' "$run_id" "$status" "$verdict" >> "$summary"
+  utc_run_end="$(date -u +%FT%TZ)"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$run_id" "$utc_run_start" "$utc_run_end" "$status" "$verdict" >> "$summary"
   printf 'Run %s/%s: %s (exit %s)\n' "$run" "$runs" "$verdict" "$status"
 done
 printf 'utc_end=%s\n' "$(date -u +%FT%TZ)" >> "$evidence_dir/metadata.txt"
