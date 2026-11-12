@@ -382,13 +382,18 @@ pub fn choose_probe_device(
     };
     match matching.as_slice() {
         [only] => Ok(only.id.clone()),
-        [] => Err(if requested.is_some() {
-            "requested VID:PID not found; check connected USB devices"
-        } else {
-            "no unambiguous Android accessory/MTP device found; specify --device VID:PID"
+        [] => {
+            let message = if requested.is_some() {
+                "requested VID:PID not found; check connected USB devices"
+            } else {
+                "no unambiguous Android accessory/MTP device found; specify --device VID:PID"
+            };
+            Err(message.into())
         }
-        .into()),
-        _ => Err("multiple matching USB devices; disconnect extras or select a unique --device VID:PID".into()),
+        _ => Err(
+            "multiple matching USB devices; disconnect extras or select a unique --device VID:PID"
+                .into(),
+        ),
     }
 }
 
@@ -596,15 +601,20 @@ mod tests {
         let selected =
             choose_probe_device(&[keyboard.clone(), phone.clone(), accessory.clone()], None)
                 .unwrap();
-        assert_eq!(selected, accessory.id, "prefer the already-switched accessory");
+        assert_eq!(
+            selected, accessory.id,
+            "prefer the already-switched accessory"
+        );
         assert!(choose_probe_device(&[phone.clone(), phone.clone()], None).is_err());
         assert!(choose_probe_device(&[accessory.clone(), accessory.clone()], None).is_err());
         assert!(choose_probe_device(&[], None).is_err());
-        assert!(choose_probe_device(&[keyboard.clone(), phone.clone()], Some((0x1234, 0xabcd)))
-            .is_ok(), "an explicit unique VID:PID selects that exact device");
+        assert!(
+            choose_probe_device(&[keyboard.clone(), phone.clone()], Some((0x1234, 0xabcd)))
+                .is_ok(),
+            "an explicit unique VID:PID selects that exact device"
+        );
         assert!(choose_probe_device(&[phone], Some((0xabcd, 0x1234))).is_err());
     }
-
 
     /// A transport that answers PINGs the way the phone does — or wrongly, on request.
     struct Fake {

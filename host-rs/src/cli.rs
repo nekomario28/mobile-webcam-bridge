@@ -113,23 +113,14 @@ fn usb_probe(rest: &[&str]) -> Result<Command, String> {
         let value = rest.get(index + 1).copied();
         match (rest[index], value) {
             ("--device", Some(spec)) => {
-                let parts = spec.split_once(':');
-                options.device = match parts {
-                    Some((vid, pid))
-                        if vid.len() == 4
-                            && pid.len() == 4
-                            && !pid.contains(':') =>
-                    {
-                        match (
-                            u16::from_str_radix(vid, 16),
-                            u16::from_str_radix(pid, 16),
-                        ) {
-                            (Ok(vid), Ok(pid)) => Some((vid, pid)),
-                            _ => return Err(format!("--device requires hex VID:PID, got {spec:?}")),
-                        }
-                    }
-                    _ => return Err(format!("--device requires hex VID:PID, got {spec:?}")),
-                };
+                let error = || format!("--device requires hex VID:PID, got {spec:?}");
+                let (vid, pid) = spec.split_once(':').ok_or_else(error)?;
+                if vid.len() != 4 || pid.len() != 4 {
+                    return Err(error());
+                }
+                let vid = u16::from_str_radix(vid, 16).map_err(|_| error())?;
+                let pid = u16::from_str_radix(pid, 16).map_err(|_| error())?;
+                options.device = Some((vid, pid));
             }
             ("--frames", Some(n)) => match n.parse::<u64>() {
                 Ok(frames) if frames > 0 => options.frames = frames,
@@ -239,13 +230,27 @@ mod tests {
         assert_eq!(options.budget, std::time::Duration::from_millis(500));
 
         let Command::UsbProbe(selected) = parse_words(&[
-            "--usb-probe", "--rate", "32", "--device", "18d1:2D01", "--frames", "5",
-        ]).unwrap() else {
+            "--usb-probe",
+            "--rate",
+            "32",
+            "--device",
+            "18d1:2D01",
+            "--frames",
+            "5",
+        ])
+        .unwrap() else {
             panic!("expected selected probe");
         };
         assert_eq!(selected.device, Some((0x18d1, 0x2d01)));
-        for invalid in ["", "bad", "18d1", "18d1:", "18d1:2d01:abcd",
-                        "0x18d1:2d01", "18d1:2zz1"] {
+        for invalid in [
+            "",
+            "bad",
+            "18d1",
+            "18d1:",
+            "18d1:2d01:abcd",
+            "0x18d1:2d01",
+            "18d1:2zz1",
+        ] {
             assert!(parse_words(&["--usb-probe", "--device", invalid]).is_err());
         }
         assert!(parse_words(&["--usb-probe", "--frames", "0"]).is_err());
