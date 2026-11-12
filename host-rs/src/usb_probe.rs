@@ -595,7 +595,7 @@ mod tests {
         let keyboard = candidate(0x1234, 0xabcd, 1, false);
         let phone = candidate(0x0fce, 0x020d, 2, true);
         let accessory = candidate(0x18d1, 0x2d01, 3, true);
-        assert!(choose_probe_device(&[keyboard.clone()], None).is_err());
+        assert!(choose_probe_device(std::slice::from_ref(&keyboard), None).is_err());
         let selected = choose_probe_device(&[keyboard.clone(), phone.clone()], None).unwrap();
         assert_eq!(selected, phone.id);
         let selected =
