@@ -1,6 +1,6 @@
 use crate::{
     transport::{FrameReader, Transport, remaining},
-    wire::Frame,
+    wire::{self, Frame},
 };
 use rusb::{Context, Device, DeviceHandle, UsbContext};
 use serde::{Deserialize, Serialize};
