@@ -28,9 +28,13 @@ PASS requires:
    identity itself, so the transition is read off the device rather than assumed.
 6. Android obtains accessory permission and `UsbManager.openAccessory()` succeeds.
 
-Capture exact stdout and `lsusb` before/after as evidence. Prefer selecting the
-pre-AOA device explicitly with `--device VID:PID`; do not spray vendor requests
-across unrelated USB peripherals when a selector is available.
+Capture exact stdout and `lsusb` before/after as evidence. The
+`--usb-probe --device VID:PID` selector accepts 4-digit hexadecimal VID and PID.
+Without it the probe selects only a **unique already-switched AOA accessory**.
+For a phone still in its original USB mode, provide `--device VID:PID`:
+a generic MTP/PTP still-image descriptor is also used by standalone cameras
+and is not proof that a peripheral is an Android phone. If the requested
+VID:PID has multiple matches, disconnect extras before retrying.
 
 **Instrument (2026-10-24):** `mobile-webcam --usb-probe [--frames N] [--budget-ms N] [--rate N]` runs
 this gate against an attached phone: the AOA transition, the per-PC authorization, then N
@@ -196,6 +200,12 @@ read the stand-in's silence as "no broken relative link", nothing wider.
 **Repeat the same-cable host-process gate (Issue #181):** after building the
 Rust host, leave the Android app running and run
 `bash host-rs/tools/usb-reconnect-gate.sh --runs 5`.
+If the phone has not entered AOA mode yet, use
+`--device VID:PID` with the **phone's measured original VID:PID**.
+The selector applies only to the first probe: a successful switch to AOA
+changes VID:PID, and subsequent fresh host processes auto-detect the unique
+AOA accessory. If the device reverts to its original mode between attempts,
+a failed run must remain a FAIL, not be silently retried as a success.
 By default, logs stay outside the Git checkout under a private temporary
 folder. If `--out ./usb-evidence` is used deliberately, Git ignores the
 evidence directory; **review and redact all logs before sharing**.

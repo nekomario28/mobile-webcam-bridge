@@ -35,6 +35,9 @@ pub struct Options {
     /// killed by the instrument. Half the phone's limit leaves room for its own 1-second
     /// window and keeps 1000 round trips inside the gate's intent.
     pub rate_per_second: u32,
+    /// Explicit VID:PID of the phone to test (hexadecimal). Never guess if
+    /// several devices match; USB vendor requests must target only that phone.
+    pub device: Option<(u16, u16)>,
 }
 
 impl Default for Options {
@@ -43,6 +46,7 @@ impl Default for Options {
             frames: 1000,
             budget: Duration::from_millis(2000),
             rate_per_second: 32,
+            device: None,
         }
     }
 }
@@ -55,9 +59,26 @@ pub fn cli(options: &Options) -> i32 {
         options.budget.as_millis(),
         options.rate_per_second
     );
+    // A selector resolves against the currently attached USB devices before
+    // attempting AOA vendor requests. The normal unselected path uses the same
+    // fail-closed selection below in end_to_end.
+    let selected = match options.device {
+        Some(selector) => {
+            let chosen = crate::usb::list()
+                .and_then(|devices| choose_probe_device(&devices, Some(selector)));
+            match chosen {
+                Ok(device) => Some(device),
+                Err(error) => {
+                    eprintln!("usb probe could not choose device: {error}");
+                    return 2;
+                }
+            }
+        }
+        None => None,
+    };
     let announced = std::cell::Cell::new(false);
     let result = end_to_end(
-        None,
+        selected,
         options.frames,
         options.budget,
         options.rate_per_second,
@@ -334,6 +355,41 @@ pub fn a_hello_would_help(error: &str) -> bool {
         || lowered.contains("expected authorization outcome before")
 }
 
+/// Pick one phone; never issue AOA vendor requests to an arbitrary first USB device.
+/// Auto-select only a *unique* already-switched AOA accessory. Generic
+/// still-image/MTP interface codes are shared by non-phone cameras, so an
+/// unswitched phone requires an explicit unique VID:PID from the operator.
+pub fn choose_probe_device(
+    candidates: &[crate::usb::Candidate],
+    requested: Option<(u16, u16)>,
+) -> crate::Result<crate::usb::DeviceId> {
+    let matching: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| {
+            if let Some((vid, pid)) = requested {
+                candidate.id.vid == vid && candidate.id.pid == pid
+            } else {
+                crate::usb::accessory(candidate.id.vid, candidate.id.pid)
+            }
+        })
+        .collect();
+    match matching.as_slice() {
+        [only] => Ok(only.id.clone()),
+        [] => {
+            let message = if requested.is_some() {
+                "requested VID:PID not found; check connected USB devices"
+            } else {
+                "no unique AOA accessory found; specify --device VID:PID for a pre-AOA phone"
+            };
+            Err(message.into())
+        }
+        _ => Err(
+            "multiple matching USB devices; disconnect extras or select a unique --device VID:PID"
+                .into(),
+        ),
+    }
+}
+
 /// Run the whole gate against a real phone: AOA transition, authorization, then the
 /// synchronous exchange.
 ///
@@ -351,17 +407,7 @@ pub fn end_to_end(
 ) -> crate::Result<(Report, crate::usb::DeviceId)> {
     let target = match device {
         Some(id) => id,
-        None => {
-            // Prefer an accessory (already switched), else the phone in its normal mode.
-            let candidates = crate::usb::list()?;
-            let chosen = candidates
-                .iter()
-                .find(|candidate| crate::usb::accessory(candidate.id.vid, candidate.id.pid))
-                .or_else(|| candidates.iter().find(|candidate| candidate.suggested))
-                .or_else(|| candidates.first())
-                .ok_or("no USB device is attached")?;
-            chosen.id.clone()
-        }
+        None => choose_probe_device(&crate::usb::list()?, None)?,
     };
     let before = target.clone();
     let mut transport = crate::usb::Usb::connect(&target)?;
@@ -522,6 +568,50 @@ pub fn run(
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+
+    fn candidate(vid: u16, pid: u16, bus: u8, suggested: bool) -> crate::usb::Candidate {
+        crate::usb::Candidate {
+            id: crate::usb::DeviceId {
+                bus,
+                address: bus,
+                vid,
+                pid,
+                ports: vec![bus],
+            },
+            name: "test USB device".to_string(),
+            suggested,
+        }
+    }
+
+    #[test]
+    fn usb_probe_never_guesses_an_unrelated_peripheral_or_multiple_phones() {
+        let keyboard = candidate(0x1234, 0xabcd, 1, false);
+        let phone = candidate(0x0fce, 0x020d, 2, true);
+        let accessory = candidate(0x18d1, 0x2d01, 3, true);
+        assert!(choose_probe_device(std::slice::from_ref(&keyboard), None).is_err());
+        // A single suggested MTP/PTP device could be a standalone camera.
+        // Pre-AOA phones require explicit selection, even if they are unique.
+        assert!(choose_probe_device(&[keyboard.clone(), phone.clone()], None).is_err());
+        let selected =
+            choose_probe_device(&[keyboard.clone(), phone.clone()], Some((0x0fce, 0x020d)))
+                .unwrap();
+        assert_eq!(selected, phone.id);
+        let selected =
+            choose_probe_device(&[keyboard.clone(), phone.clone(), accessory.clone()], None)
+                .unwrap();
+        assert_eq!(
+            selected, accessory.id,
+            "prefer the already-switched accessory"
+        );
+        assert!(choose_probe_device(&[phone.clone(), phone.clone()], None).is_err());
+        assert!(choose_probe_device(&[accessory.clone(), accessory.clone()], None).is_err());
+        assert!(choose_probe_device(&[], None).is_err());
+        assert!(
+            choose_probe_device(&[keyboard.clone(), phone.clone()], Some((0x1234, 0xabcd))).is_ok(),
+            "an explicit unique VID:PID selects that exact device"
+        );
+        assert!(choose_probe_device(&[phone], Some((0xabcd, 0x1234))).is_err());
+    }
 
     /// A transport that answers PINGs the way the phone does — or wrongly, on request.
     struct Fake {
