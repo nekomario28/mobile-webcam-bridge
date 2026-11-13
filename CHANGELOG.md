@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a Linux operator-assisted physical USB reattach gate that requires
+  the same sysfs USB port to disappear and reappear before each host G0.5
+  probe. Records an independent verdict for five replug cycles, while
+  synthetic sysfs CI cannot be presented as physical-device evidence.
 - USB probe no longer falls back to the first unrelated USB peripheral when
   no phone is detected. Automatic selection is limited to a unique AOA accessory;
   pre-AOA phones require an explicit `--device VID:PID` (rejecting duplicate matches).

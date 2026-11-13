@@ -27,6 +27,9 @@ jobs:
           persist-credentials: false
       - name: Verify USB reconnect gate result accounting
         run: bash host-rs/tools/test-usb-reconnect-gate.sh
+      - name: Verify physical reattach helper without hardware
+        # Synthetic sysfs only. This is not proof of a real cable reattachment.
+        run: python3 host-rs/tools/test-usb-physical-reattach-gate.py
 
   linux:
     # Measured (job 120309340125, 2026-10-23): the dependency step alone took **17 min
