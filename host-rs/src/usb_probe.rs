@@ -608,7 +608,9 @@ mod tests {
             "an explicit unique VID:PID selects that exact device"
         );
         assert!(choose_probe_device(&[phone], Some((0xabcd, 0x1234))).is_err());
-        assert!(choose_probe_device(&[keyboard.clone(), keyboard], Some((0x1234, 0xabcd))).is_err());
+        assert!(
+            choose_probe_device(&[keyboard.clone(), keyboard], Some((0x1234, 0xabcd))).is_err()
+        );
     }
 
     /// A transport that answers PINGs the way the phone does — or wrongly, on request.
