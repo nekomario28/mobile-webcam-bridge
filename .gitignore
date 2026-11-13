@@ -20,3 +20,4 @@ local.properties
 # Kept outside Git even if the caller chooses --out inside this checkout.
 usb-evidence/
 mwb-usb-reconnect.*/
+mwb-usb-physical.*/

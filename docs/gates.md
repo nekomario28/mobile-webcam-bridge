@@ -220,6 +220,29 @@ APK version in `metadata.txt` before sharing appropriately redacted evidence.
 released-APK rows in Issue #181 remain manual hardware gates. CI runs only the
 script's fake-host success/failure self-test.
 
+**Operator-assisted physical reattach (Linux only):** run
+`bash host-rs/tools/usb-physical-reattach-gate.sh --device VID:PID --runs 5`
+with the measured phone VID:PID that `lsusb` initially shows. The script
+requires a *single* matching device, identifies its USB sysfs **physical
+port**, and prompts for five unplug/replug cycles. After each prompt, it
+checks that the port actually disappeared and reappeared before launching an
+independent `--usb-probe`; the probe selects the freshly observed VID:PID,
+which may differ after the phone returns from AOA mode. A false/missing
+detach, wrong port, unexpected probe exit, mismatch, or timeout is a failure,
+not a skipped run counted as success. It records per-attempt UTC timestamps,
+observed VID:PID, exit code, verdict and complete host output in a private
+directory. Follow prompts at the console, and fill in actual APK/phone metadata
+before sharing appropriately **redacted** logs. Do not unplug the USB during
+an active 1000-frame probe; the prompt appears after that probe exits.
+
+This helper **cannot prove that a human physically removed the cable** from
+sysfs evidence alone: a logical USB reset can also make a port disappear.
+Operator observation is required. A substitute sysfs root used by tests is
+explicitly marked `SYNTHETIC`, never as hardware evidence. This test covers
+only physical reattachments, **not** stale-video boundary, negative
+authorization, or signed release APK acceptance. CI exercises only fake
+sysfs and fake-host success and failure cases.
+
 The host legs run from the repository root with the crate's own manifest:
 
 ```
