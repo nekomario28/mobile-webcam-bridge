@@ -13,6 +13,8 @@ Usage: mobile-webcam [--help]
        mobile-webcam --replace-identity [--force]
        mobile-webcam --headless [--transport usb|lan] [--host ADDRESS] [--seconds N]
        mobile-webcam --usb-probe [--frames N] [--budget-ms N] [--rate N] [--device VID:PID]
+       mobile-webcam --usb-frames SECONDS [--device VID:PID]
+       mobile-webcam --usb-dump SECONDS [--device VID:PID]
 
   --help               Show this text.
   --headless           Run a session without a window and print every event as one
@@ -30,7 +32,11 @@ Usage: mobile-webcam [--help]
                        one. Exits 0 on PASS, 1 on FAIL, 2 if it could not start.
   --device VID:PID     Explicit phone VID:PID in hexadecimal; fails if more than one
                        device matches. Required before AOA mode; without it,
-                       auto-selects only an already-switched AOA accessory.
+                       auto-selects only a unique already-switched AOA accessory.
+  --usb-frames         Diagnose parsed USB frames for SECONDS (no media authorization).
+  --usb-dump           Diagnose raw USB bytes for SECONDS (may contain device data).
+                       Both diagnostic modes require an explicit --device before AOA,
+                       and never guess which device to open.
   --frames N           Round trips for --usb-probe (default 1000, the G0.5 count).
   --budget-ms N        Per-exchange timeout for --usb-probe (default 2000).
   --rate N             Round trips per second for --usb-probe (default 32, half the
@@ -55,14 +61,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             .map_err(|_| format!("--worker needs a numeric parent PID, got {parent:?}")),
         ["--headless", rest @ ..] => headless(rest),
         ["--usb-probe", rest @ ..] => usb_probe(rest),
-        ["--usb-frames", seconds] => seconds
-            .parse::<u64>()
-            .map(|seconds| Command::UsbFrames { seconds })
-            .map_err(|_| format!("--usb-frames needs seconds, got {seconds:?}")),
-        ["--usb-dump", seconds] => seconds
-            .parse::<u64>()
-            .map(|seconds| Command::UsbDump { seconds })
-            .map_err(|_| format!("--usb-dump needs seconds, got {seconds:?}")),
+        ["--usb-frames", rest @ ..] => usb_diagnostic(rest, true),
+        ["--usb-dump", rest @ ..] => usb_diagnostic(rest, false),
         ["--replace-identity"] => Ok(Command::ReplaceIdentity { force: false }),
         ["--replace-identity", "--force"] => Ok(Command::ReplaceIdentity { force: true }),
         ["--force"] => Err("--force only applies together with --replace-identity".into()),
@@ -112,16 +112,7 @@ fn usb_probe(rest: &[&str]) -> Result<Command, String> {
     while index < rest.len() {
         let value = rest.get(index + 1).copied();
         match (rest[index], value) {
-            ("--device", Some(spec)) => {
-                let error = || format!("--device requires hex VID:PID, got {spec:?}");
-                let (vid, pid) = spec.split_once(':').ok_or_else(error)?;
-                if vid.len() != 4 || pid.len() != 4 {
-                    return Err(error());
-                }
-                let vid = u16::from_str_radix(vid, 16).map_err(|_| error())?;
-                let pid = u16::from_str_radix(pid, 16).map_err(|_| error())?;
-                options.device = Some((vid, pid));
-            }
+            ("--device", Some(spec)) => options.device = Some(parse_usb_device(spec)?),
             ("--frames", Some(n)) => match n.parse::<u64>() {
                 Ok(frames) if frames > 0 => options.frames = frames,
                 _ => return Err(format!("--frames needs a positive number, got {n:?}")),
@@ -140,6 +131,40 @@ fn usb_probe(rest: &[&str]) -> Result<Command, String> {
         index += 2;
     }
     Ok(Command::UsbProbe(options))
+}
+
+/// Parse the exact USB device address shared by probe and diagnostic modes.
+fn parse_usb_device(spec: &str) -> Result<(u16, u16), String> {
+    let error = || format!("--device requires hex VID:PID, got {spec:?}");
+    let (vid, pid) = spec.split_once(':').ok_or_else(error)?;
+    if vid.len() != 4 || pid.len() != 4 {
+        return Err(error());
+    }
+    let vid = u16::from_str_radix(vid, 16).map_err(|_| error())?;
+    let pid = u16::from_str_radix(pid, 16).map_err(|_| error())?;
+    Ok((vid, pid))
+}
+
+/// Diagnostic modes accept a duration plus at most one explicit USB selector.
+fn usb_diagnostic(rest: &[&str], frames: bool) -> Result<Command, String> {
+    let flag = if frames { "--usb-frames" } else { "--usb-dump" };
+    let Some((seconds, trailing)) = rest.split_first() else {
+        return Err(format!("{flag} needs seconds"));
+    };
+    let seconds = seconds
+        .parse::<u64>()
+        .map_err(|_| format!("{flag} needs seconds, got {seconds:?}"))?;
+    let device = match trailing {
+        [] => None,
+        ["--device", spec] => Some(parse_usb_device(spec)?),
+        ["--device"] => return Err("--device needs a VID:PID".to_string()),
+        [extra, ..] => return Err(format!("unexpected argument after {flag}: {extra:?}")),
+    };
+    if frames {
+        Ok(Command::UsbFrames { seconds, device })
+    } else {
+        Ok(Command::UsbDump { seconds, device })
+    }
 }
 
 #[cfg(test)]
@@ -256,6 +281,43 @@ mod tests {
         assert!(parse_words(&["--usb-probe", "--frames", "0"]).is_err());
         assert!(parse_words(&["--usb-probe", "--frames"]).is_err());
         assert!(parse_words(&["--usb-probe", "stray"]).is_err());
+    }
+
+    #[test]
+    fn usb_diagnostics_require_unambiguous_explicit_selector_syntax() {
+        assert!(matches!(
+            parse_words(&["--usb-frames", "3"]),
+            Ok(Command::UsbFrames {
+                seconds: 3,
+                device: None
+            })
+        ));
+        assert!(matches!(
+            parse_words(&["--usb-frames", "5", "--device", "18D1:2d00"]),
+            Ok(Command::UsbFrames {
+                seconds: 5,
+                device: Some((0x18d1, 0x2d00))
+            })
+        ));
+        assert!(matches!(
+            parse_words(&["--usb-dump", "7", "--device", "0FCE:020D"]),
+            Ok(Command::UsbDump {
+                seconds: 7,
+                device: Some((0x0fce, 0x020d))
+            })
+        ));
+        for flag in ["--usb-frames", "--usb-dump"] {
+            for args in [
+                vec![flag],
+                vec![flag, "bad"],
+                vec![flag, "2", "--device"],
+                vec![flag, "2", "--device", "not-a-device"],
+                vec![flag, "2", "--device", "0fce:020d", "--device", "18d1:2d00"],
+                vec![flag, "2", "--frames", "1000"],
+            ] {
+                assert!(parse_words(&args).is_err(), "accepted {args:?}");
+            }
+        }
     }
 
     #[test]

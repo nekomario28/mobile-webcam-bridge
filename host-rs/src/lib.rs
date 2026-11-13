@@ -62,11 +62,13 @@ pub enum Command {
     /// parse. Diagnostic only.
     UsbDump {
         seconds: u64,
+        device: Option<(u16, u16)>,
     },
     /// Print the frames the real reader parses, for diagnosing a reader that cannot
     /// complete one. Diagnostic only.
     UsbFrames {
         seconds: u64,
+        device: Option<(u16, u16)>,
     },
     Help,
 }
