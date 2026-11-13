@@ -473,36 +473,49 @@ impl Transport for Usb {
     }
 }
 
-/// Keep the selected phone across unplug, AOA re-enumeration, and replug.
+/// Keep a manually selected phone across *verified* same-port re-enumeration.
 ///
-/// Address and product id change when Android enters accessory mode and again
-/// when the cable is replugged. The physical port (bus + port path) is what
-/// stays. Once the phone has been lost, a single suggested device is that
-/// phone coming back on a hub that renumbered. Two suggested phones are not
-/// a guess.
+/// USB "suggested" only means an interface looks plausible: MTP/PTP devices
+/// include cameras. Do not promote that hint into an automatic selection.
+/// A hub/bus renumbered to a different port needs a new explicit choice.
+///
+/// Same-port continuity accepts unchanged VID:PID (address may change), an
+/// original device entering AOA, or AOA re-enumerating as another AOA variant.
+/// A return from AOA to a different non-AOA VID:PID cannot be safely bound to
+/// the earlier phone without its original identity; require manual selection.
+fn continuous_same_port(previous: &DeviceId, next: &DeviceId) -> bool {
+    previous.bus == next.bus
+        && !previous.ports.is_empty()
+        && previous.ports == next.ports
+        && ((previous.vid == next.vid && previous.pid == next.pid)
+            || accessory(next.vid, next.pid))
+}
+
 pub fn reconcile_selection(
     selected: &mut Option<DeviceId>,
     lost: &mut bool,
     devices: &[Candidate],
 ) {
     if let Some(current) = selected.clone() {
-        if devices.iter().any(|candidate| candidate.id == current) {
-            *lost = false;
-            return;
-        }
-        if let Some(same_port) = devices.iter().find(|candidate| {
-            candidate.id.bus == current.bus && candidate.id.ports == current.ports
-        }) {
-            *selected = Some(same_port.id.clone());
-            *lost = false;
-            return;
-        }
-        let suggested: Vec<_> = devices
+        let matches: Vec<_> = devices
             .iter()
-            .filter(|candidate| candidate.suggested)
+            .filter(|candidate| candidate.id == current)
             .collect();
-        if *lost && suggested.len() == 1 {
-            *selected = Some(suggested[0].id.clone());
+        if matches.len() == 1 {
+            *lost = false;
+            return;
+        }
+        // Even malformed duplicate inventories must not silently pick one.
+        if matches.len() > 1 {
+            *lost = true;
+            return;
+        }
+        let continuous: Vec<_> = devices
+            .iter()
+            .filter(|candidate| continuous_same_port(&current, &candidate.id))
+            .collect();
+        if let [only] = continuous.as_slice() {
+            *selected = Some(only.id.clone());
             *lost = false;
             return;
         }
@@ -510,12 +523,14 @@ pub fn reconcile_selection(
         return;
     }
     if !*lost {
-        let suggested: Vec<_> = devices
+        // An already-switched AOA accessory is the only auto-selected kind.
+        // An unswitched MTP/PTP phone requires the user to pick it in the GUI.
+        let accessories: Vec<_> = devices
             .iter()
-            .filter(|candidate| candidate.suggested)
+            .filter(|candidate| accessory(candidate.id.vid, candidate.id.pid))
             .collect();
-        if suggested.len() == 1 {
-            *selected = Some(suggested[0].id.clone());
+        if let [only] = accessories.as_slice() {
+            *selected = Some(only.id.clone());
         }
     }
 }
@@ -630,22 +645,22 @@ mod tests {
     }
 
     #[test]
-    fn a_renumbered_bus_adopts_the_only_suggested_phone() {
+    fn a_renumbered_hub_requires_explicit_reselection() {
         let original = id(1, 5, 0x0fce, 0x020d, &[2, 1]);
-        let mut selected = Some(original);
+        let mut selected = Some(original.clone());
         let mut lost = false;
         reconcile_selection(&mut selected, &mut lost, &[]);
         assert!(lost);
-        let back = id(3, 2, 0x0fce, 0x020d, &[1]);
-        reconcile_selection(&mut selected, &mut lost, &[phone(back.clone())]);
-        assert!(!lost);
-        assert_eq!(selected.unwrap(), back);
+        let camera = phone(id(3, 2, 0x1234, 0x5678, &[1]));
+        reconcile_selection(&mut selected, &mut lost, &[camera]);
+        assert!(lost, "another port's only MTP device is not the selected phone");
+        assert_eq!(selected, Some(original));
     }
 
     #[test]
     fn two_suggested_phones_are_not_a_guess() {
         let original = id(1, 5, 0x0fce, 0x020d, &[2]);
-        let mut selected = Some(original);
+        let mut selected = Some(original.clone());
         let mut lost = false;
         reconcile_selection(&mut selected, &mut lost, &[]);
         let devices = vec![
@@ -654,16 +669,89 @@ mod tests {
         ];
         reconcile_selection(&mut selected, &mut lost, &devices);
         assert!(lost);
-        assert_eq!(selected.as_ref().map(|device| device.bus), Some(1));
+        assert_eq!(selected, Some(original));
     }
 
     #[test]
-    fn the_first_list_selects_the_only_suggested_phone() {
+    fn fresh_mtp_device_requires_manual_choice_but_unique_aoa_can_be_selected() {
         let mut selected = None;
         let mut lost = false;
-        let only = phone(id(1, 4, 0x0fce, 0x020d, &[1]));
-        reconcile_selection(&mut selected, &mut lost, std::slice::from_ref(&only));
-        assert_eq!(selected.unwrap().address, only.id.address);
+        let camera = phone(id(1, 4, 0x1234, 0x5678, &[1]));
+        reconcile_selection(&mut selected, &mut lost, std::slice::from_ref(&camera));
+        assert!(selected.is_none(), "MTP/PTP does not identify an Android phone");
+        let aoa = phone(id(1, 5, 0x18d1, 0x2d01, &[2]));
+        reconcile_selection(&mut selected, &mut lost, &[camera, aoa.clone()]);
+        assert_eq!(selected, Some(aoa.id));
         assert!(!lost);
     }
+
+    #[test]
+    fn multiple_accessories_require_manual_choice() {
+        let mut selected = None;
+        let mut lost = false;
+        let devices = [
+            phone(id(1, 4, 0x18d1, 0x2d00, &[1])),
+            phone(id(1, 5, 0x18d1, 0x2d01, &[2])),
+        ];
+        reconcile_selection(&mut selected, &mut lost, &devices);
+        assert!(selected.is_none());
+    }
+
+    #[test]
+    fn replacing_selected_phone_with_camera_on_same_port_is_not_a_reconnect() {
+        let original = id(1, 5, 0x0fce, 0x020d, &[2, 1]);
+        let mut selected = Some(original.clone());
+        let mut lost = false;
+        reconcile_selection(&mut selected, &mut lost, &[]);
+        assert!(lost);
+        let camera = phone(id(1, 9, 0x1234, 0x5678, &[2, 1]));
+        reconcile_selection(&mut selected, &mut lost, &[camera]);
+        assert!(lost);
+        assert_eq!(selected, Some(original));
+    }
+
+    #[test]
+    fn return_from_aoa_to_unknown_original_requires_manual_choice() {
+        let aoa = id(1, 9, 0x18d1, 0x2d01, &[2, 1]);
+        let mut selected = Some(aoa.clone());
+        let mut lost = false;
+        reconcile_selection(&mut selected, &mut lost, &[]);
+        let original = phone(id(1, 10, 0x0fce, 0x020d, &[2, 1]));
+        reconcile_selection(&mut selected, &mut lost, &[original]);
+        assert!(lost);
+        assert_eq!(selected, Some(aoa));
+    }
+
+    #[test]
+    fn same_port_and_identity_preserve_selection_even_after_address_changes() {
+        let original = id(1, 5, 0x0fce, 0x020d, &[2, 1]);
+        let mut selected = Some(original);
+        let mut lost = false;
+        reconcile_selection(&mut selected, &mut lost, &[]);
+        let replug = id(1, 6, 0x0fce, 0x020d, &[2, 1]);
+        reconcile_selection(&mut selected, &mut lost, &[phone(replug.clone())]);
+        assert_eq!(selected, Some(replug));
+        assert!(!lost);
+    }
+
+    #[test]
+    fn same_port_ambiguity_and_missing_port_fail_closed() {
+        let original = id(1, 5, 0x0fce, 0x020d, &[2, 1]);
+        let mut selected = Some(original.clone());
+        let mut lost = false;
+        let changed = phone(id(1, 8, 0x18d1, 0x2d00, &[2, 1]));
+        let other = phone(id(1, 9, 0x18d1, 0x2d01, &[2, 1]));
+        reconcile_selection(&mut selected, &mut lost, &[changed, other]);
+        assert!(lost);
+        assert_eq!(selected, Some(original));
+
+        let no_port = id(1, 5, 0x0fce, 0x020d, &[]);
+        let mut selected = Some(no_port.clone());
+        let mut lost = false;
+        let new = phone(id(1, 8, 0x18d1, 0x2d01, &[]));
+        reconcile_selection(&mut selected, &mut lost, &[new]);
+        assert!(lost);
+        assert_eq!(selected, Some(no_port));
+    }
+
 }

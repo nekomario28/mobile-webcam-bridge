@@ -36,6 +36,18 @@ a generic MTP/PTP still-image descriptor is also used by standalone cameras
 and is not proof that a peripheral is an Android phone. If the requested
 VID:PID has multiple matches, disconnect extras before retrying.
 
+**GUI discovery and reconnect:** a generic MTP/PTP peripheral is only a
+candidate in the device picker; it is not auto-selected. Choose an
+un-switched phone explicitly before pressing Connect. A *unique* existing
+AOA accessory may be auto-selected, but a cold USB connection still requires
+the Connect action. A previously chosen phone can be followed automatically
+only across the **same nonempty physical USB bus/port path** with unchanged
+VID:PID or a transition to AOA. After hub/bus renumbering or a return from
+AOA to an unrecognized manufacturer VID:PID, choose the phone again.
+This is USB topology continuity, **not cryptographic device attestation**;
+phone-side per-PC authorization remains mandatory. Do not treat a merely
+suggested camera on another port as the previously selected phone.
+
 **Instrument (2026-10-24):** `mobile-webcam --usb-probe [--frames N] [--budget-ms N] [--rate N]` runs
 this gate against an attached phone: the AOA transition, the per-PC authorization, then N
 synchronous PING/PONG round trips with the sequence and the payload checked on every one,
