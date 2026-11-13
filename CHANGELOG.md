@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- USB GUI discovery no longer silently preselects generic MTP/PTP cameras as
+  phones. Automatic reconnect stays on the same physical port and compatible
+  identity, rather than switching to an unrelated suggested peripheral after
+  hub renumbering. The picker prompts for explicit reselection when continuity
+  cannot be established; this is not USB identity authentication.
 - USB `--usb-dump` and `--usb-frames` diagnostics now share the G0.5
   fail-closed device selector. They no longer target the first suggested MTP/PTP
   peripheral or guess between multiple AOA devices; an explicit `--device

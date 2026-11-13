@@ -734,12 +734,18 @@ fn name_combo(response: egui::Response, label: &str, enabled: bool) {
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, label));
 }
 
-fn usb_idle_hint(phone_ready: bool, japanese: bool) -> &'static str {
+fn usb_idle_hint(phone_ready: bool, devices_available: bool, japanese: bool) -> &'static str {
     if phone_ready {
         if japanese {
             "スマホを認識しました。次: 「接続」を押し、スマホでUSBとこのPCを許可してから「カメラ開始」を押してください。"
         } else {
             "Phone found. Next: press Connect, allow USB and this PC on the phone, then press Start camera."
+        }
+    } else if devices_available {
+        if japanese {
+            "USB機器が見つかりました。接続するスマホを一覧から明示的に選択してください。"
+        } else {
+            "USB devices found. Select your phone explicitly from the list before connecting."
         }
     } else if japanese {
         "次: USBケーブルでスマホをこのPCにつなぎ、スマホでアプリを開いてください。"
@@ -1302,7 +1308,11 @@ impl eframe::App for App {
                                     let ready = self.selected.is_some()
                                         && !self.selection_lost
                                         && !self.devices.is_empty();
-                                    ui.label(usb_idle_hint(ready, self.ja));
+                                    ui.label(usb_idle_hint(
+                                        ready,
+                                        !self.devices.is_empty(),
+                                        self.ja,
+                                    ));
                                     ui.add_space(8.0);
                                 }
                                 let available = &self.devices;
@@ -1897,13 +1907,17 @@ mod tests {
 
     #[test]
     fn usb_idle_hint_changes_when_the_phone_is_already_there() {
-        let waiting = usb_idle_hint(false, false);
-        let ready = usb_idle_hint(true, false);
+        let waiting = usb_idle_hint(false, false, false);
+        let discovered = usb_idle_hint(false, true, false);
+        let ready = usb_idle_hint(true, true, false);
         assert!(waiting.contains("plug the phone"));
+        assert!(discovered.contains("Select your phone explicitly"));
+        assert!(!discovered.contains("press Connect"));
         assert!(ready.contains("press Connect"));
         assert!(!ready.contains("plug the phone"));
-        assert!(usb_idle_hint(false, true).contains("USBケーブル"));
-        assert!(usb_idle_hint(true, true).contains("接続"));
+        assert!(usb_idle_hint(false, false, true).contains("USBケーブル"));
+        assert!(usb_idle_hint(false, true, true).contains("明示的に選択"));
+        assert!(usb_idle_hint(true, true, true).contains("接続"));
     }
 
     #[test]
