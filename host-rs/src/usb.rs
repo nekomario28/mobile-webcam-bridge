@@ -757,4 +757,5 @@ mod tests {
         reconcile_selection(&mut selected, &mut lost, &[new]);
         assert!(lost);
         assert_eq!(selected, Some(no_port));
-    }}
+    }
+}
