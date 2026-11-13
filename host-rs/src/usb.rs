@@ -487,8 +487,7 @@ fn continuous_same_port(previous: &DeviceId, next: &DeviceId) -> bool {
     previous.bus == next.bus
         && !previous.ports.is_empty()
         && previous.ports == next.ports
-        && ((previous.vid == next.vid && previous.pid == next.pid)
-            || accessory(next.vid, next.pid))
+        && ((previous.vid == next.vid && previous.pid == next.pid) || accessory(next.vid, next.pid))
 }
 
 pub fn reconcile_selection(
@@ -653,7 +652,10 @@ mod tests {
         assert!(lost);
         let camera = phone(id(3, 2, 0x1234, 0x5678, &[1]));
         reconcile_selection(&mut selected, &mut lost, &[camera]);
-        assert!(lost, "another port's only MTP device is not the selected phone");
+        assert!(
+            lost,
+            "another port's only MTP device is not the selected phone"
+        );
         assert_eq!(selected, Some(original));
     }
 
@@ -678,7 +680,10 @@ mod tests {
         let mut lost = false;
         let camera = phone(id(1, 4, 0x1234, 0x5678, &[1]));
         reconcile_selection(&mut selected, &mut lost, std::slice::from_ref(&camera));
-        assert!(selected.is_none(), "MTP/PTP does not identify an Android phone");
+        assert!(
+            selected.is_none(),
+            "MTP/PTP does not identify an Android phone"
+        );
         let aoa = phone(id(1, 5, 0x18d1, 0x2d01, &[2]));
         reconcile_selection(&mut selected, &mut lost, &[camera, aoa.clone()]);
         assert_eq!(selected, Some(aoa.id));
@@ -752,6 +757,4 @@ mod tests {
         reconcile_selection(&mut selected, &mut lost, &[new]);
         assert!(lost);
         assert_eq!(selected, Some(no_port));
-    }
-
-}
+    }}
