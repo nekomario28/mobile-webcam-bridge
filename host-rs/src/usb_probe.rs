@@ -220,25 +220,23 @@ pub fn classify(sent_sequence: u32, sent_challenge: &[u8; 8], reply: Option<&Fra
     Verdict::Echoed
 }
 
+/// Resolve a diagnostic target with exactly the same fail-closed policy as G0.5.
+/// No AOA control request is sent before this returns a uniquely selected ID.
+fn diagnostic_target(requested: Option<(u16, u16)>) -> crate::Result<crate::usb::DeviceId> {
+    choose_probe_device(&crate::usb::list()?, requested)
+}
+
 /// Print the frames the real reader parses, with the error it hits.
 ///
 /// Between "the bytes are there" (`--usb-dump`) and "the exchange failed" sits the reader;
 /// this is the only surface that says which of the two is at fault.
-pub fn frames(seconds: u64) -> i32 {
-    let target = match crate::usb::list() {
-        Ok(candidates) => candidates
-            .iter()
-            .find(|candidate| crate::usb::accessory(candidate.id.vid, candidate.id.pid))
-            .or_else(|| candidates.iter().find(|candidate| candidate.suggested))
-            .map(|candidate| candidate.id.clone()),
+pub fn frames(seconds: u64, requested: Option<(u16, u16)>) -> i32 {
+    let target = match diagnostic_target(requested) {
+        Ok(target) => target,
         Err(error) => {
-            eprintln!("cannot list devices: {error}");
+            eprintln!("cannot select USB diagnostic device: {error}");
             return 2;
         }
-    };
-    let Some(target) = target else {
-        eprintln!("no USB device is attached");
-        return 2;
     };
     let mut transport = match crate::usb::Usb::connect(&target) {
         Ok(transport) => transport,
@@ -278,21 +276,13 @@ pub fn frames(seconds: u64) -> i32 {
 /// The gate says what the phone must send; this shows what it does. Added because a run
 /// ended at "incomplete frame deadline expired", which is a fact about the *host's* reader
 /// and could be either a truncated frame or a reader that asked for the wrong size.
-pub fn dump(seconds: u64) -> i32 {
-    let target = match crate::usb::list() {
-        Ok(candidates) => candidates
-            .iter()
-            .find(|candidate| crate::usb::accessory(candidate.id.vid, candidate.id.pid))
-            .or_else(|| candidates.iter().find(|candidate| candidate.suggested))
-            .map(|candidate| candidate.id.clone()),
+pub fn dump(seconds: u64, requested: Option<(u16, u16)>) -> i32 {
+    let target = match diagnostic_target(requested) {
+        Ok(target) => target,
         Err(error) => {
-            eprintln!("cannot list devices: {error}");
+            eprintln!("cannot select USB diagnostic device: {error}");
             return 2;
         }
-    };
-    let Some(target) = target else {
-        eprintln!("no USB device is attached");
-        return 2;
     };
     let transport = match crate::usb::Usb::connect(&target) {
         Ok(transport) => transport,
@@ -605,12 +595,22 @@ mod tests {
         );
         assert!(choose_probe_device(&[phone.clone(), phone.clone()], None).is_err());
         assert!(choose_probe_device(&[accessory.clone(), accessory.clone()], None).is_err());
+        let duplicates = [
+            phone.clone(),
+            phone.clone(),
+            accessory.clone(),
+            accessory.clone(),
+        ];
+        assert!(choose_probe_device(&duplicates, None).is_err());
         assert!(choose_probe_device(&[], None).is_err());
         assert!(
             choose_probe_device(&[keyboard.clone(), phone.clone()], Some((0x1234, 0xabcd))).is_ok(),
             "an explicit unique VID:PID selects that exact device"
         );
         assert!(choose_probe_device(&[phone], Some((0xabcd, 0x1234))).is_err());
+        assert!(
+            choose_probe_device(&[keyboard.clone(), keyboard], Some((0x1234, 0xabcd))).is_err()
+        );
     }
 
     /// A transport that answers PINGs the way the phone does — or wrongly, on request.

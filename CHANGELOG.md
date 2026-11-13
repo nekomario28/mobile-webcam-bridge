@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- USB `--usb-dump` and `--usb-frames` diagnostics now share the G0.5
+  fail-closed device selector. They no longer target the first suggested MTP/PTP
+  peripheral or guess between multiple AOA devices; an explicit `--device
+  VID:PID` is supported for operator-selected, pre-AOA phones.
 - Added a Linux operator-assisted physical USB reattach gate that requires
   the same sysfs USB port to disappear and reappear before each host G0.5
   probe. Records an independent verdict for five replug cycles, while

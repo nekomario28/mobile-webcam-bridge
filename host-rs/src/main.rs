@@ -30,9 +30,11 @@ fn main() {
         Command::Headless(options) => std::process::exit(mobile_webcam::headless::run(options)),
         // The USB gate: AOA transition, authorization, then the synchronous exchange.
         Command::UsbProbe(options) => std::process::exit(mobile_webcam::usb_probe::cli(&options)),
-        Command::UsbDump { seconds } => std::process::exit(mobile_webcam::usb_probe::dump(seconds)),
-        Command::UsbFrames { seconds } => {
-            std::process::exit(mobile_webcam::usb_probe::frames(seconds))
+        Command::UsbDump { seconds, device } => {
+            std::process::exit(mobile_webcam::usb_probe::dump(seconds, device))
+        }
+        Command::UsbFrames { seconds, device } => {
+            std::process::exit(mobile_webcam::usb_probe::frames(seconds, device))
         }
         // Explicit recovery, and the only path that ever replaces a stored key:
         // startup fails closed instead, so an unreadable key is never rotated

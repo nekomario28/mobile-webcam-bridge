@@ -42,7 +42,14 @@ synchronous PING/PONG round trips with the sequence and the payload checked on e
 printing RTT min/avg/p50/p95/max and exiting 0/1/2. The defaults are 1000 round trips,
 2000 ms per exchange and a maximum of 32 round trips per second. The 32/s pacing is
 intentional: the phone refuses a session that exceeds its 64/s PING rate limit.
-`--usb-dump` and `--usb-frames` show what the phone sends and what the reader makes of it.
+`--usb-dump SECONDS [--device VID:PID]` and
+`--usb-frames SECONDS [--device VID:PID]` show what the phone sends and what the
+reader makes of it. These diagnostic modes share the probe's fail-closed
+device selection: only a unique already-switched AOA accessory is selected
+automatically; a phone still in its original mode needs an explicit VID:PID.
+Neither diagnostic opens the first suggested MTP/PTP device or guesses among
+multiple accessories. Diagnostic output may include device data; redact logs
+before sharing.
 
 **Hardware evidence, 2026-10-24:** G0 passes and G0.5 **passed at 1000 round trips** on an
 XQ-GE44 (1000 echoed, 0 mismatches, 0 timeouts, p50 550 µs) after the host's
