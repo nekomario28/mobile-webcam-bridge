@@ -20,7 +20,7 @@ check(!partialReleaseSigning) { "Set all AMB_RELEASE_* signing variables or none
 
 android {
     namespace = "dev.nekomario.amb"
-    compileSdk = 35
+    compileSdk = 37
 
     // Tests use the same public wire/signature fixtures as Rust and JVM tests,
     // packaged only in the instrumentation APK, not the production app.
@@ -29,7 +29,7 @@ android {
     defaultConfig {
         applicationId = "dev.nekomario.amb"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         testInstrumentationRunner = "dev.nekomario.amb.UsbPermissionInstrumentation"
         versionCode = appVersionParts[0] * 1_000_000 +
             appVersionParts[1] * 1_000 + appVersionParts[2]
