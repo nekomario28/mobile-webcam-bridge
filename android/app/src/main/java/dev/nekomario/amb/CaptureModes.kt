@@ -210,7 +210,7 @@ object CaptureModes {
         val encoder = selectAvcSurfaceEncoder() ?: return null
         val videoCapabilities = encoder
             .getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
-            .videoCapabilities
+            .videoCapabilities!!
         val sizes = cameraSizes.map { size ->
             // getOutputMinFrameDuration returns 0 when the duration is unknown;
             // such a mode is kept and verified at start, not assumed.
